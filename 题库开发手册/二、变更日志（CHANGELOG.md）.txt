@@ -6,19 +6,40 @@
 
 ---
 
-## 2026-09-21 07:40 +08:00｜DeepSeek｜仓库已推送 origin/main；补上 test 任务缺失的试卷渲染依赖
+## 2026-09-21 07:45 +08:00｜DeepSeek｜试卷 PDF 导出根因修复：候选字体改为"能注册才算命中"（Noto CJK 是 OTTO/CFF，reportlab 无法嵌入）
+
+- 触发：`test` 任务按上一条补装 `python3 + python3-reportlab + fonts-noto-cjk` 后**仍然红**（run 35544101109、35544913250 均为 1180 用例 / 3 失败，报错同为 `exam_export_renderer_unavailable`）。**上一条"纯环境缺依赖、不是代码缺陷"的判定被推翻**——这是本仓库 `render-exam-pdf.py` 的缺陷，并且**意味着镜像里的试卷导出同样是坏的**（Dockerfile 当时也只装了 Noto CJK）。
+- 证据链（三步排除 + 一步定位，均可复核）：
+  · runner 现场（run 35544913250 日志）：`python 3.12.3 | reportlab 4.1.0` 可用，`/usr/share/fonts/opentype/noto/` 下确实存在 `NotoSansCJK-Regular.ttc` —— "依赖缺失 / 路径不对"假设不成立。
+  · 本机装同版本 reportlab **4.1.0**（`.git/venv-rl41`，`pip install reportlab==4.1.0`）复跑：`.ttf`(simhei) 与 `.ttc`(msjh) 两种字体都 **4/4 通过** —— "版本差异 / .ttc 不被支持"假设也不成立。
+  · 读 reportlab 源码 `pdfbase/ttfonts.py:238-239`：sfnt 版本为 `0x4F54544F`（ASCII `OTTO`，即 CFF/PostScript 轮廓）时**直接抛** `postscript outlines are not supported`。`NotoSansCJK-Regular.ttc` 正是 OTTO 集合；`wqy-zenhei.ttc` 是 TrueType(glyf) 轮廓。
+  · 旧 `find_font()` 只判断 `os.path.isfile()`——**文件存在即选中**，于是选中了一个 reportlab 无法注册的字体，整链失败；错误又被 `apps/api/src/exam-export.js:387` 收进 `error.cause`，日志里只剩 `exam_export_renderer_unavailable` 一句话。
+- 修复（**唯一改动的业务文件**：`apps/api/src/render-exam-pdf.py`）：`find_font()` 并入 `register_font()`，逐个候选**真注册一次**，成功才返回；被拒的候选（TTFError 等）记下原因后继续；全部失败才抛 `exam_export_cjk_font_unavailable`，且消息里带上每个候选被拒的原因。候选顺序把 TrueType 的 `wqy-zenhei`/`wqy-microhei` 提到 Noto CJK 之前。
+- 同步修复：`Dockerfile` 运行层与 CI `test` 任务都补装 `fonts-wqy-zenhei`；`docs/DOCKER.md` 两处字体说明更正（原写"镜像内命中 Noto CJK"，实际 Noto 会被 reportlab 拒绝，真正生效的是 wqy-zenhei）。
+- CI 可见性（commit `2159314`，本条目的前一次提交）：`test` 失败时把失败用例名与错误码以 `::error::` 注解挂到本次 commit 的 check run —— 本次排查中 GitHub Actions 日志主机长时间不可达，而注解走 `api.github.com` 可读，正是靠它拿到 runner 侧的字体/版本现场。同时删掉上一条注释里那句未经核实的"历史偶发失败"表述。
+- 入库卫生：`.smoke-docker/`（按 Dockerfile COPY 清单复制的隔离验证目录）已加入 `.gitignore` 与 `.dockerignore` —— `git add -A` 曾把它的 281 个副本文件误提交进本地 commit，推送前 `git reset --mixed HEAD^` 撤回后重做，**远端从未收到过这批文件**。
+- 已实现 / 已验证（2026-09-21 本机实测，NODE_ENV 清空以贴近 CI）：
+  · 造一个首 4 字节为 `OTTO` 的假字体塞进 `SHUKAO_PDF_FONT_PATH`（精确复现"首个候选不可嵌入"），`node --test tests/exam-export.test.js` → **4/4 通过**；修复前该场景必然整链失败。
+  · 不设 `SHUKAO_PDF_FONT_PATH`、走内置默认候选 → **4/4 通过**；`python -m py_compile` 在 3.11.3 与 3.12.14 两个解释器下均通过。
+  · 全量 `npm test` → **1180 用例 / 1180 通过 / 0 失败**（6.0 秒，node v24.14.1）。
+- 待验证（本机无 Docker，不能自证）：镜像内 `fonts-wqy-zenhei` 的 Debian 路径是否与 bookworm 一致、以及容器内**端到端**试卷导出；剩余证据为 CI `test` 任务转绿 + 镜像实跑。
+- 时间戳修正：本文件最近两条条目标题原写作 `07:40` / `06:45`，均**晚于**各自所在提交（`13041b2` 落盘 07:07:23、`92d53ae` 落盘 06:35:58），已按提交时间改为 `07:07` / `06:36`；内容未删改，只改标题时间。
+
+---
+
+## 2026-09-21 07:07 +08:00｜DeepSeek｜仓库已推送 origin/main；补上 test 任务缺失的试卷渲染依赖
 
 - 远程：`Herder1/potato-text`（**私有仓库**、初始为空）已推送 `main`，远端 `92d53ae` = 本地 HEAD（441 文件 / 16.7 万行）。`origin` 保持 `git@github.com:Herder1/potato-text.git`。
 - 认证通道：本机 `github.com:443` 被运行沙箱重置（`Recv failure: Connection was reset`，HTTPS 走不通），故改用仓库 **Deploy Key**（ed25519、写权限、标题 `dsh-push (DSH agent, write)`、id 163909932）。不再需要时可在仓库 Settings → Deploy keys 删除。
 - CI 首跑（run 35543476623，总耗时 74 秒）：
   · `docker` 任务 **成功**：`ghcr.io/herder1/potato-text` 已推送 `latest`、`main`、`sha-92d53ae6263ed98fba769609d621726c8e8d70fb` 三个标签，digest `sha256:b975b43ddc735b33920e6caaa07e48439d36f0d13b51c4122afe824cbd60b261`，构建段约 35 秒（buildx + gha 缓存生效）。**"提交即出镜像"链路已被真实跑通**。
-  · `test` 任务 **失败**：1180 用例 / 1177 通过 / 3 失败，且全部集中在试卷导出（`exam exporter always creates matching paper and answer PDFs`、`exam export API generates and downloads both files together`、`exam exports remain downloadable through the existing API when stored remotely`），报错 `exam_export_renderer_unavailable` —— runner 上没有 python3 + reportlab + CJK 字体。**同一份代码在本机 4/4 通过**（`node --test tests/exam-export.test.js`，本机 reportlab 4.4.9 + `C:\Windows\Fonts\simhei.ttf`），据此判定为纯环境缺依赖，不是代码缺陷。
+  · `test` 任务 **失败**：1180 用例 / 1177 通过 / 3 失败，且全部集中在试卷导出（`exam exporter always creates matching paper and answer PDFs`、`exam export API generates and downloads both files together`、`exam exports remain downloadable through the existing API when stored remotely`），报错 `exam_export_renderer_unavailable` —— runner 上没有 python3 + reportlab + CJK 字体。**同一份代码在本机 4/4 通过**（`node --test tests/exam-export.test.js`，本机 reportlab 4.4.9 + `C:\Windows\Fonts\simhei.ttf`），据此判定为纯环境缺依赖，不是代码缺陷。**该判定已被 2026-09-21 07:45 条目推翻：根因是候选字体"存在即选中"（Noto CJK 为 OTTO/CFF 轮廓，reportlab 无法嵌入）。**
 - 修复：`test` 任务新增一步安装 `python3`、`python3-reportlab`、`fonts-noto-cjk` —— 与 Dockerfile 运行层装的是同一组包，保证"CI 测到的 ≈ 镜像里跑的"。`continue-on-error` 及"test 不作 docker 前置门禁"的定位保持不变。
 - 仍未验证：本机无 Docker，**未在本机执行过 `docker build`**；镜像行为依据"按 COPY 清单实跑服务"与 CI 真实构建两项间接证据。
 
 ---
 
-## 2026-09-21 06:45 +08:00｜DeepSeek｜新增 Docker 镜像与 GitHub Actions 自动发布；仓库首次初始化为 git 并关联远程
+## 2026-09-21 06:36 +08:00｜DeepSeek｜新增 Docker 镜像与 GitHub Actions 自动发布；仓库首次初始化为 git 并关联远程
 
 - 依据：产品负责人 2026-09-21 要求 —— 把仓库提交到 `git@github.com:Herder1/potato-text.git`，并在提交时自动打包 Docker 镜像。
 - 交付物（**全部为新增文件，未改动任何业务代码、未改任何产品规则**）：

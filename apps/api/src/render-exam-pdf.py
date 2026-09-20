@@ -10,30 +10,45 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 
-def find_font():
+FONT_NAME = "ShuKaoCJK"
+
+
+def font_candidates():
     configured = os.environ.get("SHUKAO_PDF_FONT_PATH", "").strip()
-    candidates = [
+    # 顺序有讲究：先把 TrueType(glyf) 轮廓的排在前面。reportlab 的 TTFont 只支持 glyf，
+    # 遇到 OTTO（CFF/PostScript 轮廓）会直接抛 "postscript outlines are not supported"，
+    # 而 Debian/Ubuntu 的 NotoSansCJK-Regular.ttc 正是 OTTO 字体集合。
+    return [
         configured,
         r"C:\Windows\Fonts\STSONG.TTF",
         r"C:\Windows\Fonts\simhei.ttf",
         r"C:\Windows\Fonts\NotoSansSC-VF.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/System/Library/Fonts/PingFang.ttc",
     ]
-    for candidate in candidates:
-        if candidate and os.path.isfile(candidate):
-            return candidate
-    raise RuntimeError("exam_export_cjk_font_unavailable")
 
 
 def register_font():
-    font_path = find_font()
-    try:
-        pdfmetrics.registerFont(TTFont("ShuKaoCJK", font_path, subfontIndex=0))
-    except TypeError:
-        pdfmetrics.registerFont(TTFont("ShuKaoCJK", font_path))
-    return "ShuKaoCJK"
+    # 不能"文件存在就用"：必须真注册成功一次。否则选中的是不可嵌入的 OTTO 字体时，
+    # 渲染会整体失败（exam_export_renderer_unavailable），而错误信息会被吞进 cause 里。
+    rejected = []
+    for candidate in font_candidates():
+        if not candidate or not os.path.isfile(candidate):
+            continue
+        for kwargs in ({"subfontIndex": 0}, {}):
+            try:
+                pdfmetrics.registerFont(TTFont(FONT_NAME, candidate, **kwargs))
+                return FONT_NAME
+            except TypeError:
+                continue  # 该版本 reportlab 不支持 subfontIndex，换成不带该参数再试
+            except Exception as error:  # TTFError 等：换下一个候选字体
+                rejected.append("%s (%s: %s)" % (candidate, type(error).__name__, error))
+                break
+    detail = "；".join(rejected) if rejected else "候选字体文件均不存在"
+    raise RuntimeError("exam_export_cjk_font_unavailable: " + detail)
+
 
 
 def draw_text(pdf, font_name, text, x, top_y, font_size, page_height, bold=False, gray=0):

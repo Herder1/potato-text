@@ -17,8 +17,10 @@ FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 
 # 试卷 PDF 导出走 apps/api/src/render-exam-pdf.py（reportlab + 中文字体）；
 # 缺字体时该功能会直接抛 exam_export_cjk_font_unavailable，故随镜像一并安装。
-# fonts-noto-cjk 提供 /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc，
-# 正是 render-exam-pdf.py 的默认查找路径之一。
+# 两个字体包都装、且必须装 wqy：reportlab 的 TTFont 只支持 TrueType(glyf) 轮廓，
+# 而 fonts-noto-cjk 的 NotoSansCJK-Regular.ttc 是 OTTO(CFF/PostScript) 集合，
+# 注册时会抛 "postscript outlines are not supported"。
+# fonts-wqy-zenhei 是 TrueType 轮廓，脚本按"能注册成功才算命中"挑选，会落到它上面。
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -26,6 +28,7 @@ RUN apt-get update \
       python3 \
       python3-reportlab \
       fonts-noto-cjk \
+      fonts-wqy-zenhei \
  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \

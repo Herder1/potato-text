@@ -41,17 +41,19 @@ jobs:
           node-version: "22"
           cache: npm
       # 试卷 PDF 导出（apps/api/src/render-exam-pdf.py）依赖 python3 + reportlab + CJK 字体，
-      # runner 默认没有，缺了会让 3 个 exam-export 用例报 exam_export_renderer_unavailable。
-      # 这里装的正是 Dockerfile 运行层那三个包 —— 保持"CI 测到的 = 镜像里跑的"。
+      # runner 默认没有。两个字体包都必须装：Noto Sans CJK 是 OTTO(CFF/PostScript) 轮廓，
+      # reportlab 的 TTFont 只支持 TrueType，真正能被嵌入的是 fonts-wqy-zenhei（TrueType）。
+      # 这里装的正是 Dockerfile 运行层那几个包 —— 保持"CI 测到的 = 镜像里跑的"。
       - name: Install exam PDF renderer deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 python3-reportlab fonts-noto-cjk
+          sudo apt-get install -y --no-install-recommends python3 python3-reportlab fonts-noto-cjk fonts-wqy-zenhei
       - name: Report renderer environment
         run: |
           python3 -c "import sys, reportlab; print('python', sys.version.split()[0], '| reportlab', reportlab.Version)"
-          ls -1 /usr/share/fonts/opentype/noto/ 2>/dev/null || echo "no /usr/share/fonts/opentype/noto"
+          ls -1 /usr/share/fonts/truetype/wqy/ /usr/share/fonts/opentype/noto/ 2>/dev/null || true
           node -e "const fs=require('fs');const p='apps/api/src/render-exam-pdf.py';console.log('render script bytes', fs.statSync(p).size)"
+          python3 -c "import importlib.util;spec=importlib.util.spec_from_file_location('r','apps/api/src/render-exam-pdf.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);print('picked CJK font:', m.register_font())" || echo "FONT PROBE FAILED (见上一行异常)"
       - run: npm ci --no-audit --no-fund
       # 测试失败时把失败用例与错误码以 ::error:: 注解挂到本次 commit 的 check run 上，
       # 这样红叉点进去就能看到"哪几个用例挂了、挂在哪一行"，不必翻整个日志。

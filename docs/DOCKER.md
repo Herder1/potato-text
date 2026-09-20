@@ -13,7 +13,7 @@
 | `apps/miniprogram/utils/` | `server.js` 直接 `require` 的判分等纯函数（不是小程序运行环境） |
 | `packages/domain/`、`scripts/`、`database/`、`knexfile.js` | 领域数据与 PostgreSQL 迁移/导入 |
 | `node_modules`（`npm ci --omit=dev`） | 生产依赖 |
-| `python3` + `python3-reportlab` + `fonts-noto-cjk` | 试卷 PDF 导出（缺字体时该功能直接报 `exam_export_cjk_font_unavailable`） |
+| `python3` + `python3-reportlab` + `fonts-wqy-zenhei`（另装 `fonts-noto-cjk`） | 试卷 PDF 导出。reportlab 只能嵌入 TrueType 轮廓，而 Noto CJK 的 `.ttc` 是 OTTO(CFF/PostScript) 集合、注册即抛错，实际生效的是 wqy-zenhei；两处都找不到可用字体时报 `exam_export_cjk_font_unavailable` |
 
 | 不进镜像 | 原因 |
 | --- | --- |
@@ -75,7 +75,7 @@ docker compose down
 | `FILE_STORAGE_DRIVER` | `local` | `kvault` 仅在 `PERSISTENCE_DRIVER=postgres` 下可用，否则启动即抛错 |
 | `DATABASE_URL` / `DATABASE_SSL` / `DATABASE_POOL_*` | 空 / `false` | 仅 PostgreSQL 模式使用 |
 | `WECHAT_APP_ID` / `WECHAT_APP_SECRET` | 空 | 不配则微信登录不可用，其余功能不受影响 |
-| `SHUKAO_PDF_FONT_PATH` | 空 | 留空时脚本按内置候选路径找字体，镜像内命中 Noto CJK |
+| `SHUKAO_PDF_FONT_PATH` | 空 | 留空时脚本按内置候选逐个"真注册一次"挑选，镜像内命中 `/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc`；指到 OTTO/CFF 字体（如 Noto CJK）会被自动跳过而不是整链失败 |
 
 密钥只从运行环境注入，**不要**写进镜像或提交进仓库。
 
