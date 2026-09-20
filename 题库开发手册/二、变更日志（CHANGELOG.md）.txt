@@ -6,6 +6,18 @@
 
 ---
 
+## 2026-09-21 07:40 +08:00｜DeepSeek｜仓库已推送 origin/main；补上 test 任务缺失的试卷渲染依赖
+
+- 远程：`Herder1/potato-text`（**私有仓库**、初始为空）已推送 `main`，远端 `92d53ae` = 本地 HEAD（441 文件 / 16.7 万行）。`origin` 保持 `git@github.com:Herder1/potato-text.git`。
+- 认证通道：本机 `github.com:443` 被运行沙箱重置（`Recv failure: Connection was reset`，HTTPS 走不通），故改用仓库 **Deploy Key**（ed25519、写权限、标题 `dsh-push (DSH agent, write)`、id 163909932）。不再需要时可在仓库 Settings → Deploy keys 删除。
+- CI 首跑（run 35543476623，总耗时 74 秒）：
+  · `docker` 任务 **成功**：`ghcr.io/herder1/potato-text` 已推送 `latest`、`main`、`sha-92d53ae6263ed98fba769609d621726c8e8d70fb` 三个标签，digest `sha256:b975b43ddc735b33920e6caaa07e48439d36f0d13b51c4122afe824cbd60b261`，构建段约 35 秒（buildx + gha 缓存生效）。**"提交即出镜像"链路已被真实跑通**。
+  · `test` 任务 **失败**：1180 用例 / 1177 通过 / 3 失败，且全部集中在试卷导出（`exam exporter always creates matching paper and answer PDFs`、`exam export API generates and downloads both files together`、`exam exports remain downloadable through the existing API when stored remotely`），报错 `exam_export_renderer_unavailable` —— runner 上没有 python3 + reportlab + CJK 字体。**同一份代码在本机 4/4 通过**（`node --test tests/exam-export.test.js`，本机 reportlab 4.4.9 + `C:\Windows\Fonts\simhei.ttf`），据此判定为纯环境缺依赖，不是代码缺陷。
+- 修复：`test` 任务新增一步安装 `python3`、`python3-reportlab`、`fonts-noto-cjk` —— 与 Dockerfile 运行层装的是同一组包，保证"CI 测到的 ≈ 镜像里跑的"。`continue-on-error` 及"test 不作 docker 前置门禁"的定位保持不变。
+- 仍未验证：本机无 Docker，**未在本机执行过 `docker build`**；镜像行为依据"按 COPY 清单实跑服务"与 CI 真实构建两项间接证据。
+
+---
+
 ## 2026-09-21 06:45 +08:00｜DeepSeek｜新增 Docker 镜像与 GitHub Actions 自动发布；仓库首次初始化为 git 并关联远程
 
 - 依据：产品负责人 2026-09-21 要求 —— 把仓库提交到 `git@github.com:Herder1/potato-text.git`，并在提交时自动打包 Docker 镜像。

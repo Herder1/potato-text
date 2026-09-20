@@ -40,6 +40,13 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      # 试卷 PDF 导出（apps/api/src/render-exam-pdf.py）依赖 python3 + reportlab + CJK 字体，
+      # runner 默认没有，缺了会让 3 个 exam-export 用例报 exam_export_renderer_unavailable。
+      # 这里装的正是 Dockerfile 运行层那三个包 —— 保持"CI 测到的 = 镜像里跑的"。
+      - name: Install exam PDF renderer deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3 python3-reportlab fonts-noto-cjk
       - run: npm ci --no-audit --no-fund
       - run: npm test
 
