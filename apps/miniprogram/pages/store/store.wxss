@@ -1,0 +1,87 @@
+.store-page { min-height: 100vh; padding: 24rpx 28rpx calc(70rpx + env(safe-area-inset-bottom)); background: #f1f3f0; box-sizing: border-box; }
+.store-account-band { display: grid; min-height: 112rpx; padding: 18rpx 0; background: #303633; border-radius: 8rpx; grid-template-columns: repeat(2,1fr); box-sizing: border-box; }
+.store-account-band > view { display: flex; align-items: center; justify-content: center; flex-direction: column; border-right: 1rpx solid rgba(255,255,255,.14); }
+.store-account-band > view:last-child { border-right: 0; }
+.store-account-band text,
+.store-account-band label { display: block; }
+.store-account-band text { color: #fff; font-size: 35rpx; font-weight: 900; }
+.store-account-band label { margin-top: 4rpx; color: rgba(255,255,255,.64); font-size: 18rpx; }
+
+.store-tabs { display: grid; height: 80rpx; margin-top: 22rpx; padding: 6rpx; background: #e4e7e3; border-radius: 7rpx; grid-template-columns: repeat(2,1fr); box-sizing: border-box; }
+.store-tab { display: flex; align-items: center; justify-content: center; color: #737b76; border-radius: 5rpx; font-size: 22rpx; }
+.store-tab-active { color: #202521; background: #fff; font-weight: 850; }
+.store-section-head { display: flex; min-height: 86rpx; padding: 16rpx 2rpx 10rpx; align-items: flex-end; justify-content: space-between; }
+.store-section-head text { color: #242925; font-size: 29rpx; font-weight: 900; }
+.store-section-head label { color: #8b928d; font-size: 19rpx; }
+.account-section-head { min-height: 94rpx; }
+.transaction-section-head { min-height: 82rpx; }
+.product-section-head { margin-top: 12rpx; }
+.store-loading,
+.store-empty { padding: 100rpx 20rpx; color: #878e89; font-size: 21rpx; text-align: center; }
+.account-empty { padding: 42rpx 20rpx; color: #8a918d; background: rgba(255,255,255,.64); border: 1rpx solid #e2e6e2; border-radius: 7rpx; font-size: 21rpx; text-align: center; }
+.account-list { padding: 0 22rpx; background: rgba(255,255,255,.82); border: 1rpx solid #dde2dd; border-radius: 7rpx; }
+.subscription-row,
+.credit-transaction-row { display: flex; min-height: 102rpx; align-items: center; justify-content: space-between; gap: 20rpx; border-bottom: 1rpx solid #e9ece9; }
+.subscription-row:last-child,
+.credit-transaction-row:last-child { border-bottom: 0; }
+.subscription-row > view,
+.credit-transaction-row > view { min-width: 0; flex: 1; }
+.subscription-row > view > text,
+.credit-transaction-row > view > text { display: block; overflow: hidden; color: #2e3833; font-size: 24rpx; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.subscription-row > view > label,
+.credit-transaction-row > view > label { display: block; margin-top: 6rpx; overflow: hidden; color: #8a918d; font-size: 19rpx; text-overflow: ellipsis; white-space: nowrap; }
+.subscription-row > text { color: #267158; font-size: 19rpx; white-space: nowrap; }
+.credit-transaction-row > text { font-size: 23rpx; font-weight: 850; white-space: nowrap; }
+.credit-positive { color: #247157; }
+.credit-negative { color: #a34c44; }
+.credit-balance-strip { display: grid; min-height: 118rpx; padding: 18rpx 0; background: #eef2ef; border: 1rpx solid #dce3de; border-radius: 7rpx; grid-template-columns: repeat(3,1fr); box-sizing: border-box; }
+.credit-balance-strip > view { display: flex; align-items: center; justify-content: center; flex-direction: column; border-right: 1rpx solid #d9dfda; }
+.credit-balance-strip > view:last-child { border-right: 0; }
+.credit-balance-strip text,
+.credit-balance-strip label { display: block; }
+.credit-balance-strip text { color: #24372e; font-size: 32rpx; font-weight: 900; }
+.credit-balance-strip label { margin-top: 5rpx; color: #7d8781; font-size: 18rpx; }
+
+.product-card { margin-bottom: 20rpx; padding: 24rpx; background: #fff; border: 1rpx solid #dce2dd; border-top: 5rpx solid #5a826a; border-radius: 8rpx; box-sizing: border-box; }
+.product-card-featured { border-top-color: #23809c; }
+.product-card-credits { border-top-color: #a77722; }
+.product-topline { display: flex; min-height: 34rpx; align-items: center; justify-content: space-between; }
+.product-topline text { color: #3d7f5a; font-size: 18rpx; font-weight: 850; }
+.product-card-featured .product-topline text { color: #227994; }
+.product-card-credits .product-topline text { color: #966a1f; }
+.product-topline label { padding: 5rpx 9rpx; color: #287251; background: #e6f3eb; border-radius: 4rpx; font-size: 16rpx; }
+.product-name { margin-top: 13rpx; color: #202521; font-size: 29rpx; font-weight: 900; line-height: 1.4; }
+.product-scope { margin-top: 7rpx; color: #7e8580; font-size: 20rpx; line-height: 1.5; }
+.product-benefits { margin-top: 19rpx; padding: 15rpx 0; border-top: 1rpx solid #ecefec; border-bottom: 1rpx solid #ecefec; }
+.product-benefits > view,
+.product-detail-benefits > view { display: grid; min-height: 48rpx; align-items: center; grid-template-columns: 38rpx minmax(0,1fr); }
+.product-benefits text,
+.product-detail-benefits text { color: #31805b; font-size: 18rpx; font-weight: 900; }
+.product-card-credits .product-benefits text { color: #a37323; }
+.product-benefits label,
+.product-detail-benefits label { color: #535b56; font-size: 20rpx; line-height: 1.45; }
+.product-purchase { display: flex; min-height: 88rpx; padding-top: 18rpx; align-items: center; justify-content: space-between; }
+.product-purchase > view,
+.product-detail-action > view { display: flex; align-items: baseline; }
+.product-purchase > view text,
+.product-detail-action > view text { color: #202521; font-size: 38rpx; font-weight: 900; }
+.product-purchase > view label,
+.product-detail-action > view label { margin-left: 7rpx; color: #8b918d; font-size: 17rpx; }
+.product-purchase button,
+.product-detail-action button { width: 180rpx; height: 66rpx; margin: 0; padding: 0; color: #fff; background: #303633; border-radius: 6rpx; font-size: 21rpx; font-weight: 800; line-height: 66rpx; }
+.product-purchase button::after,
+.product-detail-action button::after { border: 0; }
+.store-footnote { padding: 22rpx 6rpx; color: #979d99; font-size: 17rpx; line-height: 1.6; text-align: center; }
+
+.product-detail-mask { position: fixed; z-index: 1600; inset: 0; background: rgba(23,27,24,.38); }
+.product-detail { position: fixed; z-index: 1610; right: 0; bottom: 0; left: 0; padding: 14rpx 30rpx calc(28rpx + env(safe-area-inset-bottom)); background: #fbfbfa; border-radius: 16rpx 16rpx 0 0; box-sizing: border-box; }
+.product-detail-handle { width: 64rpx; height: 7rpx; margin: 0 auto 20rpx; background: #d1d5d1; border-radius: 99rpx; }
+.product-detail-head { display: flex; min-height: 84rpx; align-items: center; justify-content: space-between; }
+.product-detail-head text,
+.product-detail-head > view > view { display: block; }
+.product-detail-head text { color: #438063; font-size: 18rpx; font-weight: 850; }
+.product-detail-head > view > view { margin-top: 7rpx; color: #222723; font-size: 30rpx; font-weight: 900; }
+.product-detail-close { display: flex; width: 58rpx; height: 58rpx; align-items: center; justify-content: center; color: #626a65; font-size: 40rpx; }
+.product-detail-scope { margin-top: 16rpx; color: #727a75; font-size: 21rpx; }
+.product-detail-benefits { margin-top: 20rpx; padding: 16rpx 0; border-top: 1rpx solid #e7eae7; border-bottom: 1rpx solid #e7eae7; }
+.product-detail-action { display: flex; min-height: 100rpx; padding-top: 20rpx; align-items: center; justify-content: space-between; }

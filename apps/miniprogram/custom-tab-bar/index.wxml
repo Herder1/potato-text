@@ -1,0 +1,22 @@
+<view class="tab-shell">
+  <view class="tab-item {{selected === 0 ? 'tab-selected' : ''}}" data-index="0" data-path="/pages/library/library" bindtap="switchTab">
+    <view class="tab-icon grid-icon"><view class="grid-cell"></view><view class="grid-cell"></view><view class="grid-cell"></view><view class="grid-cell"></view></view>
+    <text>题库</text>
+  </view>
+  <view class="tab-item {{selected === 1 ? 'tab-selected' : ''}}" data-index="1" data-path="/pages/knowledge/knowledge" bindtap="switchTab">
+    <view class="tab-icon knowledge-icon"><view></view></view>
+    <text>知识库</text>
+  </view>
+  <view class="tab-item review-slot {{selected === 2 ? 'tab-selected' : ''}}" data-index="2" data-path="/pages/review/review" bindtap="switchTab">
+    <view class="review-focus"><view class="tab-icon review-icon"><view></view></view></view>
+    <text>复习</text>
+  </view>
+  <view class="tab-item {{selected === 3 ? 'tab-selected' : ''}}" data-index="3" data-path="/pages/home/home" bindtap="switchTab">
+    <view class="tab-icon discover-icon"><view></view></view>
+    <text>发现</text>
+  </view>
+  <view class="tab-item {{selected === 4 ? 'tab-selected' : ''}}" data-index="4" data-path="/pages/profile/profile" bindtap="switchTab">
+    <view class="tab-icon user-icon"><view></view></view>
+    <text>我的</text>
+  </view>
+</view>

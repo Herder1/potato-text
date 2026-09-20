@@ -1,0 +1,40 @@
+.packs-page { padding-bottom: calc(150rpx + env(safe-area-inset-bottom)); }
+.page-title { font-size: 42rpx; font-weight: 900; }
+.page-subtitle { margin-top: 7rpx; color: #747b77; font-size: 22rpx; }
+.stats-row { display: grid; margin: 34rpx 0 26rpx; grid-template-columns: repeat(3, 1fr); }
+.stats-row view { display: flex; min-width: 0; padding-left: 24rpx; flex-direction: column; border-left: 1rpx solid #dddfdc; }
+.stats-row view:first-child { padding-left: 2rpx; border-left: 0; }
+.stats-row text { font-size: 48rpx; font-weight: 900; line-height: 1.15; }
+.stats-row label { margin-top: 7rpx; color: #7b827e; font-size: 19rpx; }
+.search-box { display: flex; height: 82rpx; padding: 0 24rpx; align-items: center; background: #e9eae8; border-radius: 41rpx; box-sizing: border-box; }
+.search-box input { min-width: 0; height: 100%; flex: 1; font-size: 23rpx; }
+.search-icon { position: relative; width: 28rpx; height: 28rpx; margin-right: 18rpx; border: 3rpx solid #777d79; border-radius: 50%; box-sizing: border-box; }
+.search-icon::after { position: absolute; right: -10rpx; bottom: -6rpx; width: 14rpx; height: 3rpx; background: #777d79; transform: rotate(45deg); content: ""; }
+.filter-scroll { margin-top: 22rpx; white-space: nowrap; }
+.filters { display: inline-flex; gap: 10rpx; }
+.filter { padding: 12rpx 20rpx; color: #6c746f; background: #e9eae8; border-radius: 6rpx; font-size: 21rpx; }
+.filter-active { color: #ffffff; background: #303330; }
+.pack-list { margin-top: 22rpx; border-top: 1rpx solid #e3e4e1; }
+.pack-row { display: flex; min-height: 154rpx; padding: 24rpx 4rpx; align-items: center; border-bottom: 1rpx solid #e3e4e1; box-sizing: border-box; }
+.pack-row-pressed { background: #eeeeeb; }
+.pack-symbol { display: flex; width: 70rpx; height: 82rpx; margin-right: 22rpx; flex: 0 0 70rpx; align-items: center; justify-content: center; color: #186c87; background: #dff3f7; border-radius: 7rpx; font-size: 25rpx; font-weight: 900; }
+.pack-main { min-width: 0; flex: 1; }
+.pack-name { overflow: hidden; font-size: 28rpx; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
+.pack-description { margin-top: 7rpx; overflow: hidden; color: #747b77; font-size: 20rpx; text-overflow: ellipsis; white-space: nowrap; }
+.pack-meta { display: flex; margin-top: 11rpx; color: #858b87; font-size: 19rpx; gap: 18rpx; }
+.row-chevron { width: 13rpx; height: 13rpx; margin: 0 8rpx 0 16rpx; border-top: 3rpx solid #989d99; border-right: 3rpx solid #989d99; transform: rotate(45deg); }
+.empty { padding: 110rpx 34rpx 0; text-align: center; }
+.empty-mark { display: flex; width: 84rpx; height: 96rpx; margin: 0 auto; align-items: center; justify-content: center; color: #757c78; background: #e5e7e4; border-radius: 7rpx; font-size: 30rpx; font-weight: 900; }
+.empty-title { margin-top: 26rpx; font-size: 29rpx; font-weight: 850; }
+.empty-desc { margin-top: 10rpx; color: #7c837f; font-size: 21rpx; }
+.empty-action { display: flex; width: 260rpx; height: 76rpx; margin: 26rpx auto 0; padding: 0; align-items: center; justify-content: center; color: #ffffff; background: #303330; border-radius: 7rpx; font-size: 22rpx; font-weight: 700; line-height: 1; box-sizing: border-box; }
+.fab { position: fixed; z-index: 60; right: 30rpx; bottom: calc(42rpx + env(safe-area-inset-bottom)); display: flex; width: 92rpx; height: 92rpx; margin: 0; padding: 0; align-items: center; justify-content: center; color: #fff; background: #303330; border-radius: 50%; box-sizing: border-box; }
+.fab-glyph { position: relative; width: 32rpx; height: 32rpx; flex: 0 0 32rpx; transform: rotate(0); transform-origin: center; transition: transform .2s ease; }
+.fab-stroke { position: absolute; top: 50%; left: 50%; display: block; background: #fff; border-radius: 2rpx; transform: translate(-50%, -50%); }
+.fab-stroke-horizontal { width: 32rpx; height: 3rpx; }
+.fab-stroke-vertical { width: 3rpx; height: 32rpx; }
+.fab-glyph-close { transform: rotate(45deg); }
+.fab-menu { position: fixed; z-index: 59; right: 34rpx; bottom: calc(146rpx + env(safe-area-inset-bottom)); display: flex; visibility: hidden; flex-direction: column; align-items: flex-end; opacity: 0; gap: 12rpx; transform: translateY(16rpx); transition: 160ms ease; }
+.fab-menu-open { visibility: visible; opacity: 1; transform: translateY(0); }
+.fab-menu > view { display: flex; align-items: center; color: #3d433f; font-size: 21rpx; gap: 12rpx; }
+.fab-menu > view > view { display: flex; width: 68rpx; height: 68rpx; align-items: center; justify-content: center; color: #303330; background: #fff; border: 1rpx solid #dfe1de; border-radius: 50%; font-weight: 800; }

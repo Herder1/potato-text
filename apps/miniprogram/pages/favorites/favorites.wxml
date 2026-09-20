@@ -1,0 +1,69 @@
+<view class="favorites-page">
+  <view class="favorites-head">
+    <view>
+      <view class="page-title">我的收藏</view>
+      <view class="page-subtitle">收藏的公开内容是引用关系，取消收藏不会影响原作者的内容</view>
+    </view>
+  </view>
+
+  <view class="favorites-section">
+    <view class="favorites-section-head">
+      <view class="favorites-section-title">收藏的公开内容</view>
+      <text class="favorites-section-count">{{communityItems.length}} 项</text>
+    </view>
+
+    <view class="favorites-login" wx:if="{{!loggedIn}}">
+      <text>{{communityError || '登录后可查看你在社区收藏的公开内容'}}</text>
+      <button class="favorites-action" bindtap="goLogin">去登录</button>
+    </view>
+
+    <view class="favorites-tip" wx:elif="{{loadingCommunity}}">正在加载…</view>
+
+    <view class="favorites-login" wx:elif="{{communityError}}">
+      <text>{{communityError}}</text>
+      <button class="favorites-action" bindtap="retryCommunity">重试</button>
+    </view>
+
+    <view class="favorites-empty" wx:elif="{{!communityItems.length}}">
+      <text>还没有收藏公开内容</text>
+      <button class="favorites-action" bindtap="browseCommunity">去知识库看看</button>
+    </view>
+
+    <view class="favorites-list" wx:else>
+      <view class="favorite-card" wx:for="{{communityItems}}" wx:key="id">
+        <view class="favorite-card-head">
+          <text class="favorite-type">{{item.typeLabel}}</text>
+          <text class="favorite-status" wx:if="{{item.statusLabel}}">{{item.statusLabel}}</text>
+          <text class="favorite-count">{{item.favoriteCount}} 人收藏</text>
+        </view>
+        <view class="favorite-title">{{item.title}}</view>
+        <view class="favorite-excerpt" wx:if="{{item.excerpt}}">{{item.excerpt}}</view>
+        <view class="favorite-card-foot">
+          <text class="favorite-contributor">{{item.contributor}}</text>
+          <button class="favorites-action" data-id="{{item.id}}" catchtap="removeCommunityFavorite">取消收藏</button>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="favorites-section">
+    <view class="favorites-section-head">
+      <view class="favorites-section-title">收藏的题目</view>
+      <text class="favorites-section-count">{{questionItems.length}} 项</text>
+    </view>
+
+    <view class="favorites-empty" wx:if="{{!questionItems.length}}">
+      <text>还没有收藏题目</text>
+    </view>
+
+    <view class="favorites-list" wx:else>
+      <view class="favorite-question" wx:for="{{questionItems}}" wx:key="id">
+        <view class="favorite-question-main" data-id="{{item.id}}" bindtap="openQuestion">
+          <view class="favorite-title">{{item.stem}}</view>
+          <view class="favorite-breadcrumb" wx:if="{{item.breadcrumb}}">{{item.breadcrumb}}</view>
+        </view>
+        <button class="favorites-action" data-id="{{item.id}}" catchtap="removeQuestionFavorite">取消收藏</button>
+      </view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,74 @@
+<view class="page-shell exams-page">
+  <view class="page-title">组卷</view>
+  <view class="page-subtitle">按学习范围生成一套独立试卷</view>
+
+  <view class="builder-type-row">
+    <view class="builder-type {{builderMode === 'custom' ? 'builder-type-active' : ''}}" data-mode="custom" bindtap="selectBuilderMode">
+      <view class="builder-type-mark">自</view>
+      <view><text>自定义组卷</text><label>自由选择范围、题量和时长</label></view>
+    </view>
+    <view class="builder-type {{builderMode === 'rule' ? 'builder-type-active' : ''}}" data-mode="rule" bindtap="selectBuilderMode">
+      <view class="builder-type-mark {{builderMode === 'rule' ? '' : 'builder-type-mark-muted'}}">规</view>
+      <view><text>规则组卷</text><label>按真题结构一比一复刻</label></view>
+    </view>
+  </view>
+
+  <view class="builder" wx:if="{{builderMode === 'custom'}}">
+    <view class="builder-section panel">
+      <view class="builder-title">选择范围</view>
+      <view class="range-row">
+        <view class="{{customScope === 'all' ? 'range-active' : 'range-item'}}" bindtap="selectAllSubjects">五科综合</view>
+        <picker class="range-picker" mode="selector" range="{{subjectOptions}}" range-key="displayName" bindchange="selectCustomSubject">
+          <view class="{{customScope === 'subject' ? 'range-active' : 'range-item'}}">按科目</view>
+        </picker>
+        <picker class="range-picker" mode="selector" range="{{bookOptions}}" range-key="displayName" bindchange="selectCustomBook">
+          <view class="{{customScope === 'book' ? 'range-active' : 'range-item'}}">按教材</view>
+        </picker>
+      </view>
+      <view class="range-selection"><text>{{customScopeLabel}}</text><text>{{customAvailableCount}} 题可用</text></view>
+    </view>
+    <view class="builder-section panel">
+      <view class="slider-heading"><text>题目数量</text><text>{{questionCount}} 题</text></view>
+      <slider min="10" max="100" step="10" value="{{questionCount}}" activeColor="#159bc4" bindchange="changeCount" />
+      <view class="slider-heading duration-heading"><text>考试时长</text><text>{{duration}} 分钟</text></view>
+      <slider min="15" max="180" step="15" value="{{duration}}" activeColor="#159bc4" bindchange="changeDuration" />
+    </view>
+    <view class="builder-section panel">
+      <view class="builder-title">组卷偏好</view>
+      <view class="rule-row"><text>错题优先</text><switch color="#159bc4" /></view>
+      <view class="rule-row"><text>自动平衡题型</text><switch checked color="#159bc4" /></view>
+    </view>
+    <button class="primary-button build-button" bindtap="startCustomExam">生成并开始考试</button>
+  </view>
+
+  <view class="rule-builder" wx:else>
+    <view class="rule-section panel">
+      <view class="builder-title">选择真题母版</view>
+      <picker wx:if="{{ruleTemplates.length}}" mode="selector" range="{{ruleTemplates}}" range-key="title" value="{{ruleTemplateIndex}}" bindchange="changeRuleTemplate">
+        <view class="template-picker"><view><text>{{ruleTemplates[ruleTemplateIndex].title}}</text><label>复刻题型、题量、分值、顺序与选答规则</label></view><view>⌄</view></view>
+      </picker>
+      <view class="rule-empty" wx:else>发布历年真题后，才能作为规则组卷母版。</view>
+    </view>
+
+    <view class="rule-loading" wx:if="{{ruleLoading}}">正在分析真题结构…</view>
+    <view class="rule-empty panel" wx:elif="{{ruleLoadFailed}}" bindtap="retryRuleTemplate">真题结构读取失败，点击重试。</view>
+
+    <block wx:if="{{selectedRuleTemplate}}">
+      <view class="template-summary">
+        <view><text>{{selectedRuleTemplate.questionCount}}</text><label>卷面题数</label></view>
+        <view><text>{{selectedRuleTemplate.totalScore}}</text><label>满分</label></view>
+        <view><text>{{selectedRuleTemplate.durationMinutes}}</text><label>分钟</label></view>
+      </view>
+
+      <view class="rule-section panel">
+        <view class="rule-heading"><view class="builder-title">复刻结构</view><text>{{ruleBlueprint.length}} 种题型分值组合</text></view>
+        <view class="blueprint-row" wx:for="{{ruleBlueprint}}" wx:key="key"><text>{{item.typeLabel}}</text><label>{{item.summary}}</label></view>
+        <view class="selection-rule" wx:for="{{selectedRuleTemplate.selectionRules}}" wx:key="id"><text>{{item.title}}</text><label>{{item.questionIds.length}} 选 {{item.requiredCount}}</label></view>
+      </view>
+
+      <view class="pool-state pool-state-ready" wx:if="{{ruleCanGenerate}}"><text>题池充足</text><label>可生成一份与母版结构一致的新试卷</label></view>
+      <view class="pool-state pool-state-short" wx:else><text>题池尚缺题</text><label wx:for="{{ruleShortages}}" wx:key="key">{{item.summary}}</label><label wx:if="{{ruleShortageMoreCount}}">另有 {{ruleShortageMoreCount}} 种题型分值组合尚未补足</label></view>
+      <button class="primary-button build-button" bindtap="startRuleExam" disabled="{{!ruleCanGenerate}}">按此真题结构生成</button>
+    </block>
+  </view>
+</view>

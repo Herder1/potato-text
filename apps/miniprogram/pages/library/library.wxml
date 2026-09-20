@@ -1,0 +1,412 @@
+<view class="library-page">
+  <view class="custom-nav" style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;">
+    <view class="project-trigger" bindtap="openProjectDrawer" aria-label="打开题库目录">
+      <view class="project-grid-icon"><view></view><view></view><view></view><view></view></view>
+      <text class="project-title">{{activeProjectName}}</text>
+      <view
+        class="nav-source-trigger {{sourceMenuOpen ? 'nav-source-trigger-active' : ''}}"
+        wx:if="{{activeContentTab === 'books' || activeContentTab === 'packs' || activeContentTab === 'materials'}}"
+        catchtap="toggleSourceMenu"
+        role="button"
+        aria-label="切换内容来源"
+      >
+        <text>{{activeSourceLabel}}</text>
+        <view class="nav-source-chevron {{sourceMenuOpen ? 'nav-source-chevron-open' : ''}}"></view>
+      </view>
+    </view>
+  </view>
+
+  <block wx:if="{{sourceMenuOpen}}">
+    <view class="source-menu-mask" bindtap="closeSourceMenu"></view>
+    <view class="source-menu" style="top: {{navTotalHeight + 6}}px; right: {{capsuleSafeRight}}px;">
+      <view
+        wx:for="{{sourceOptions}}"
+        wx:key="id"
+        class="source-menu-item {{activeSource === item.id ? 'source-menu-item-active' : ''}}"
+        data-id="{{item.id}}"
+        catchtap="selectQuickSource"
+      >
+        <text>{{item.label}}</text>
+        <view class="source-menu-check" wx:if="{{activeSource === item.id}}"></view>
+      </view>
+    </view>
+  </block>
+
+  <view class="nav-spacer" style="height: {{navTotalHeight}}px;"></view>
+
+  <view class="page-shell tab-page library-content">
+
+  <view class="search-box" bindtap="openLibrarySearch" role="button" aria-label="进入题库搜索">
+    <view class="search-mark"></view>
+    <text>搜索题目、题包、试卷或资料</text>
+    <view class="search-enter">›</view>
+  </view>
+
+  <view class="content-tabs">
+    <view
+      wx:for="{{contentTabs}}"
+      wx:key="id"
+      class="content-tab {{activeContentTab === item.id ? 'content-tab-active' : ''}}"
+      data-id="{{item.id}}"
+      bindtap="selectContentTab"
+    >{{item.label}}</view>
+  </view>
+
+  <block wx:if="{{activeContentTab === 'books'}}">
+    <view class="empty panel" wx:if="{{activeSource === 'private'}}">我的题目请先归入题包，再从“题包”中开始练习。</view>
+    <view class="empty panel" wx:elif="{{visibleBooks.length === 0}}">暂无可用教材</view>
+
+    <view class="book-list" wx:if="{{activeSource !== 'private'}}">
+      <view class="book-card" wx:for="{{visibleBooks}}" wx:key="id" data-id="{{item.id}}" bindtap="startBook" hover-class="book-card-pressed">
+        <view class="book-topline">
+          <view class="book-title-group">
+            <text class="book-title">{{item.displayTitle}}</text>
+            <text class="book-edition" wx:if="{{item.editionInfo}}">{{item.editionInfo}}</text>
+          </view>
+          <text class="book-status {{item.isCompleted ? 'status-completed' : item.studiedCount > 0 ? 'status-learning' : 'status-pending'}}">{{item.stateLabel}}</text>
+        </view>
+        <view class="book-author">{{item.author}}</view>
+        <view class="book-progress">
+          <view class="progress-meta">
+            <text>{{item.progressLabel}}</text>
+            <text class="review-action" wx:if="{{item.reviewCount > 0}}">{{item.reviewCount}}题待复习</text>
+          </view>
+          <view class="progress-track" wx:if="{{item.progress > 0}}"><view class="progress-value" style="width: {{item.progress}}%;"></view></view>
+        </view>
+      </view>
+    </view>
+  </block>
+
+  <block wx:elif="{{activeContentTab === 'packs'}}">
+    <view class="section-meta"><text>{{activeSource === 'private' ? activePrivateCategoryName : activeSource === 'official' ? '平台精选题包' : '社区公开题包'}}</text><text>{{activeSource === 'private' ? visiblePrivatePacks.length : visiblePublicPacks.length}} 个题包</text></view>
+    <view class="private-empty" wx:if="{{activeSource === 'private' && visiblePrivatePacks.length === 0}}">
+      <view class="private-empty-mark">题</view>
+      <view class="private-empty-title">还没有我的题包</view>
+      <view class="private-empty-desc">社区导入和自己创建的题包都会出现在这里。</view>
+      <button bindtap="openPrivatePacks">管理我的题包</button>
+    </view>
+    <view
+      wx:if="{{activeSource === 'private'}}"
+      id="private-pack-{{item.id}}"
+      class="private-pack-card {{selectedPack && selectedPack.id === item.id ? 'private-pack-card-selected' : ''}}"
+      wx:for="{{visiblePrivatePacks}}"
+      wx:key="id"
+      data-id="{{item.id}}"
+      bindtap="openPrivatePack"
+      bindlongpress="openPrivatePackActions"
+      hover-class="book-card-pressed"
+    >
+      <view class="private-pack-main">
+        <view class="private-pack-name"><text class="private-pinned-label" wx:if="{{item.pinned}}">置顶</text>{{item.name}}</view>
+        <view class="private-pack-desc" wx:if="{{item.description}}">{{item.description}}</view>
+        <view class="private-pack-meta"><text>{{item.questionIds.length}} 题</text><text>{{item.categoryName}}</text><text>{{item.visibilityLabel}}</text></view>
+      </view>
+      <view class="private-pack-chevron"></view>
+    </view>
+
+    <view class="empty panel" wx:if="{{activeSource !== 'private' && !contentLoading && visiblePublicPacks.length === 0}}">该来源暂无公开题包</view>
+    <view class="content-loading" wx:if="{{activeSource !== 'private' && contentLoading && visiblePublicPacks.length === 0}}">正在读取题包…</view>
+    <view class="resource-card" wx:if="{{activeSource !== 'private'}}" wx:for="{{visiblePublicPacks}}" wx:key="id" data-id="{{item.id}}" bindtap="openPublicPack" hover-class="book-card-pressed">
+      <view class="resource-card-head"><text>{{item.featured ? '精选' : item.sourceLabel}}</text><label>{{item.questionCount}} 题</label></view>
+      <view class="resource-card-title">{{item.name}}</view>
+      <view class="resource-card-desc">{{item.description || '点击查看题包详情'}}</view>
+      <view class="resource-card-foot"><text>{{item.creatorName}}</text><text>{{item.favoriteCount}} 人收藏</text></view>
+    </view>
+  </block>
+
+  <block wx:elif="{{activeContentTab === 'exams'}}">
+    <view class="section-meta"><text>{{activeExamCategoryName}}</text><text>{{visibleExams.length}} 份</text></view>
+    <view class="content-loading" wx:if="{{examLoading && exams.length === 0}}">正在读取试卷…</view>
+    <view class="empty panel" wx:elif="{{examLoadFailed && exams.length === 0}}" bindtap="retryLibraryContent">试卷加载失败，点击重试。</view>
+    <view class="empty panel" wx:elif="{{!examLoading && visibleExams.length === 0}}">该分类暂时没有已发布试卷。</view>
+    <view class="exam-card" wx:for="{{visibleExams}}" wx:key="id" data-id="{{item.id}}" bindtap="startPublishedExam" hover-class="book-card-pressed">
+      <view class="exam-card-top"><text>{{item.kindLabel}}</text><label>{{item.year}}</label></view>
+      <view class="resource-card-title">{{item.title}}</view>
+      <view class="exam-card-meta"><text>{{item.questionCount}} 题</text><text>{{item.durationMinutes}} 分钟</text><text>{{item.totalScore}} 分</text></view>
+      <view class="exam-card-source">来源：{{item.sourceLabel}}</view>
+      <view class="resource-card-desc">{{item.summary}}</view>
+    </view>
+  </block>
+
+  <block wx:else>
+    <block wx:if="{{activeSource === 'official'}}">
+      <view class="section-meta"><text>平台资料</text><text>{{materials.length}} 项</text></view>
+      <view class="content-loading" wx:if="{{contentLoading && materials.length === 0}}">正在读取平台资料…</view>
+      <view class="empty panel" wx:elif="{{!contentLoading && materials.length === 0}}">平台资料正在整理中。</view>
+      <view class="material-card" wx:for="{{materials}}" wx:key="id" data-id="{{item.id}}" bindtap="openMaterial" hover-class="book-card-pressed">
+        <view class="material-mark">资</view>
+        <view class="material-main"><view class="resource-card-head"><text>{{item.kindLabel}}</text><label>{{item.badge}}</label></view><view class="resource-card-title">{{item.title}}</view><view class="resource-card-desc">{{item.subtitle || item.description}}</view></view>
+        <view class="private-pack-chevron"></view>
+      </view>
+    </block>
+    <block wx:elif="{{activeSource === 'private'}}">
+      <view class="section-meta"><text>我的资料</text><text>{{ownedMaterials.length}} 项</text></view>
+      <view class="empty panel" wx:if="{{ownedMaterials.length === 0}}">还没有资料，可新建笔记或从知识库复制内容。</view>
+      <view class="material-card" wx:for="{{ownedMaterials}}" wx:key="id" data-id="{{item.id}}" bindtap="openOwnedMaterial" hover-class="book-card-pressed">
+        <view class="material-mark">{{item.type === 'note' ? '记' : '资'}}</view>
+        <view class="material-main"><view class="resource-card-head"><text>{{item.kindLabel}}</text><label>{{item.badge}}</label></view><view class="resource-card-title">{{item.title}}</view><view class="resource-card-desc">{{item.subtitle}}</view></view>
+        <view class="private-pack-chevron"></view>
+      </view>
+    </block>
+    <block wx:else>
+      <view class="section-meta"><text>共创资料</text><text>0 项</text></view>
+      <view class="empty panel">暂无已公开的共创资料。</view>
+    </block>
+  </block>
+</view>
+
+  <view class="library-fab-menu {{actionMenuOpen ? 'library-fab-menu-open' : ''}}" wx:if="{{activeContentTab === 'packs' || activeContentTab === 'materials'}}">
+    <block wx:if="{{activeContentTab === 'packs'}}">
+      <view class="library-fab-action" bindtap="contributeQuestionFromLibrary"><text>录入题目</text><view class="library-fab-small">题</view></view>
+      <view class="library-fab-action" bindtap="createLibraryPack"><text>新建题包</text><view class="library-fab-small">包</view></view>
+    </block>
+    <view wx:else class="library-fab-action" bindtap="createNoteFromLibrary"><text>新建笔记</text><view class="library-fab-small">记</view></view>
+  </view>
+  <view class="library-fab" wx:if="{{activeContentTab === 'packs' || activeContentTab === 'materials'}}" bindtap="toggleActionMenu" role="button" aria-label="创建我的内容">
+    <view class="library-fab-glyph {{actionMenuOpen ? 'library-fab-glyph-close' : ''}}">
+      <view class="library-fab-stroke library-fab-stroke-horizontal"></view>
+      <view class="library-fab-stroke library-fab-stroke-vertical"></view>
+    </view>
+    <text class="library-fab-label">{{actionMenuOpen ? '收起' : '新建'}}</text>
+  </view>
+
+  <view class="resource-detail-layer" wx:if="{{selectedPublicPack}}" bindtap="closePublicPack">
+    <view class="resource-detail" catchtap="stopTouchMove">
+      <view class="detail-drag"></view>
+      <view class="detail-label">{{selectedPublicPack.sourceLabel}}</view>
+      <view class="detail-title">{{selectedPublicPack.name}}</view>
+      <view class="detail-desc">{{selectedPublicPack.description || '该题包暂未填写说明。'}}</view>
+      <view class="detail-stats"><text>{{selectedPublicPack.questionCount}} 道题</text><text>{{selectedPublicPack.favoriteCount}} 人收藏</text><text>{{selectedPublicPack.creatorName}}</text></view>
+      <view class="detail-tags"><text wx:for="{{selectedPublicPack.tags}}" wx:key="*this">#{{item}}</text></view>
+      <button class="detail-primary" bindtap="importPublicPack">导入我的题库</button>
+    </view>
+  </view>
+
+  <view class="resource-detail-layer" wx:if="{{selectedMaterial}}" bindtap="closeMaterial">
+    <view class="resource-detail" catchtap="stopTouchMove">
+      <view class="detail-drag"></view>
+      <view class="detail-label">{{selectedMaterial.kindLabel}} · {{selectedMaterial.badge}}</view>
+      <view class="detail-title">{{selectedMaterial.title}}</view>
+      <view class="detail-desc">{{selectedMaterial.description}}</view>
+      <view class="material-availability">{{selectedMaterial.priceLabel}} · 当前为内容预览</view>
+    </view>
+  </view>
+
+  <view class="pack-action-layer" wx:if="{{packActionsOpen}}">
+    <view class="pack-action-mask" bindtap="closePrivatePackActions"></view>
+    <view class="pack-action-panel" style="top: {{packActionTop}}px;">
+      <view class="pack-action-toolbar">
+        <view class="pack-action-item" bindtap="editPrivatePack" aria-label="编辑题包名"><image src="/assets/icons/pack-edit.svg" mode="aspectFit" /><label>编辑</label></view>
+        <view class="pack-action-item {{selectedPack.pinned ? 'pack-action-item-active' : ''}}" bindtap="togglePrivatePackPin" aria-label="置顶题包"><image src="/assets/icons/pack-pin.svg" mode="aspectFit" /><label>{{selectedPack.pinned ? '取消置顶' : '置顶'}}</label></view>
+        <view class="pack-action-item {{categoryActionsOpen ? 'pack-action-item-active' : ''}}" bindtap="toggleCategoryActions" aria-label="移动到分类"><image src="/assets/icons/pack-folder.svg" mode="aspectFit" /><label>分类</label></view>
+        <view class="pack-action-item pack-delete-action" bindtap="deleteSelectedPack" aria-label="删除题包"><image src="/assets/icons/pack-trash.svg" mode="aspectFit" /><label>删除</label></view>
+      </view>
+      <view class="pack-category-actions" wx:if="{{categoryActionsOpen}}">
+        <view class="pack-category-action {{!selectedPack.categoryId ? 'pack-category-action-current' : ''}}" data-id="" bindtap="moveSelectedPackToCategory">
+          <text class="folder-mark"></text><text>未分类</text><label wx:if="{{!selectedPack.categoryId}}">✓</label>
+        </view>
+        <view
+          class="pack-category-action pack-category-action-level-{{category.level}} {{selectedPack.categoryId === category.id ? 'pack-category-action-current' : ''}}"
+          wx:for="{{privateCategoryOptions}}"
+          wx:key="id"
+          wx:for-item="category"
+          data-id="{{category.id}}"
+          bindtap="moveSelectedPackToCategory"
+        >
+          <text class="folder-mark"></text><text>{{category.name}}</text><label wx:if="{{selectedPack.categoryId === category.id}}">✓</label>
+        </view>
+        <view class="pack-category-action pack-category-create" bindtap="createCategoryFromActions"><text>＋</text><text>新建分类</text></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="category-manage-layer" wx:if="{{categoryManageOpen}}">
+    <view class="category-manage-mask" bindtap="closePrivateCategoryActions"></view>
+    <view class="category-manage-panel" style="top: {{categoryManageTop}}px;">
+      <view class="category-manage-item" bindtap="editPrivateCategory" aria-label="修改分类名称"><image src="/assets/icons/pack-edit.svg" mode="aspectFit" /><label>重命名</label></view>
+      <view class="category-manage-item category-manage-delete" bindtap="deleteSelectedCategory" aria-label="删除分类"><image src="/assets/icons/pack-trash.svg" mode="aspectFit" /><label>删除</label></view>
+    </view>
+  </view>
+
+  <view class="drawer-layer drawer-visible" wx:if="{{drawerOpen}}" catchtouchmove="stopTouchMove">
+    <view class="drawer-mask" bindtap="closeProjectDrawer"></view>
+    <view class="project-drawer" style="padding-top: {{statusBarHeight}}px;">
+      <view class="drawer-head" style="padding-right: {{drawerHeadSafeRight}}px;">
+        <view class="drawer-head-tools">
+          <view class="drawer-title">题库目录</view>
+        </view>
+        <button bindtap="closeProjectDrawer" aria-label="关闭项目目录">×</button>
+      </view>
+
+      <scroll-view class="drawer-scroll" scroll-y="true">
+        <block wx:if="{{activeSource === 'private' && activeContentTab === 'packs'}}">
+          <view class="drawer-section-label">我的题库</view>
+          <view class="private-drawer-summary" data-id="all" bindtap="selectPrivateCategory">
+            <view class="private-drawer-mark">题</view>
+            <view><text>我的题包</text><label>{{privatePacks.length}} 个题包 · 独立于教材目录</label></view>
+            <view class="private-pack-chevron"></view>
+          </view>
+          <view class="private-all-subdirectory">
+            <view
+              class="private-folder-row private-unclassified-row {{activePrivateCategoryId === systemFolder.id ? 'private-folder-row-active' : ''}}"
+              wx:for="{{privateSystemRows}}"
+              wx:key="id"
+              wx:for-item="systemFolder"
+              data-id="{{systemFolder.id}}"
+              bindtap="selectPrivateCategory"
+            >
+              <view class="private-folder-icon"></view>
+              <text>{{systemFolder.name}}</text>
+            </view>
+          </view>
+          <view class="drawer-section-label private-folder-label"><text>考试项目</text><text bindtap="createPrivateCategory">＋ 新建考试项目</text></view>
+          <view class="private-folder-directory">
+            <block wx:for="{{privateCategoryTree}}" wx:key="id" wx:for-item="projectCategory">
+              <view
+                id="private-category-{{projectCategory.id}}"
+                class="project-option private-category-project {{activePrivateCategoryId === projectCategory.id ? 'project-option-active' : ''}} {{selectedCategory && selectedCategory.id === projectCategory.id ? 'private-category-managing' : ''}}"
+                data-id="{{projectCategory.id}}"
+                bindtap="selectPrivateCategory"
+                bindlongpress="openPrivateCategoryActions"
+              >
+                <view class="project-option-main">
+                  <view class="project-option-icon"><view></view><view></view><view></view><view></view></view>
+                  <view>
+                    <view class="project-option-name">{{projectCategory.name}}</view>
+                    <view class="project-option-detail">我的考试项目</view>
+                  </view>
+                </view>
+                <view class="private-project-tools">
+                  <text class="private-subcategory-add" data-id="{{projectCategory.id}}" catchtap="createPrivateSubcategory">＋</text>
+                  <view
+                    class="folder-chevron {{projectCategory.expanded ? 'folder-chevron-open' : ''}}"
+                    wx:if="{{projectCategory.children.length}}"
+                    data-id="{{projectCategory.id}}"
+                    catchtap="togglePrivateCategory"
+                  ></view>
+                </view>
+              </view>
+              <view class="private-subfolder-list private-subject-list" wx:if="{{projectCategory.expanded}}">
+                <block wx:for="{{projectCategory.children}}" wx:key="id" wx:for-item="subjectCategory">
+                  <view
+                    id="private-category-{{subjectCategory.id}}"
+                    class="private-folder-row private-subject-row {{activePrivateCategoryId === subjectCategory.id ? 'private-folder-row-active' : ''}} {{selectedCategory && selectedCategory.id === subjectCategory.id ? 'private-category-managing' : ''}}"
+                    data-id="{{subjectCategory.id}}"
+                    bindtap="selectPrivateCategory"
+                    bindlongpress="openPrivateCategoryActions"
+                  >
+                    <view class="private-folder-icon"></view>
+                    <text>{{subjectCategory.name}}</text>
+                    <view class="private-folder-tools">
+                      <text class="private-subcategory-add" data-id="{{subjectCategory.id}}" catchtap="createPrivateSubcategory">＋</text>
+                      <view
+                        class="folder-chevron {{subjectCategory.expanded ? 'folder-chevron-open' : ''}}"
+                        wx:if="{{subjectCategory.children.length}}"
+                        data-id="{{subjectCategory.id}}"
+                        catchtap="togglePrivateCategory"
+                      ></view>
+                    </view>
+                  </view>
+                  <view class="private-book-list" wx:if="{{subjectCategory.expanded}}">
+                    <view
+                      id="private-category-{{bookCategory.id}}"
+                      class="private-folder-row private-book-row {{activePrivateCategoryId === bookCategory.id ? 'private-folder-row-active' : ''}} {{selectedCategory && selectedCategory.id === bookCategory.id ? 'private-category-managing' : ''}}"
+                      wx:for="{{subjectCategory.children}}"
+                      wx:key="id"
+                      wx:for-item="bookCategory"
+                      data-id="{{bookCategory.id}}"
+                      bindtap="selectPrivateCategory"
+                      bindlongpress="openPrivateCategoryActions"
+                    >
+                      <view class="private-folder-branch"></view>
+                      <text>{{bookCategory.name}}</text>
+                    </view>
+                  </view>
+                </block>
+              </view>
+            </block>
+          </view>
+        </block>
+
+        <block wx:else>
+          <view class="drawer-section-label">当前项目</view>
+          <block wx:for="{{projects}}" wx:key="id">
+          <view
+            wx:if="{{item.enabled}}"
+            class="project-option {{activeProjectId === item.id ? 'project-option-active' : ''}}"
+            data-id="{{item.id}}"
+            bindtap="selectProject"
+          >
+            <view class="project-option-main">
+              <view class="project-option-icon"><view></view><view></view><view></view><view></view></view>
+              <view>
+                <view class="project-option-name">{{item.name}}</view>
+                <view class="project-option-detail">{{item.detail}}</view>
+              </view>
+            </view>
+            <view class="current-mark" wx:if="{{activeProjectId === item.id}}">当前</view>
+          </view>
+          </block>
+
+          <view class="drawer-section-label" wx:if="{{activeContentTab === 'exams'}}">试卷分类</view>
+          <view class="exam-category-directory" wx:if="{{activeContentTab === 'exams'}}">
+            <view
+              class="exam-category-row {{activeExamCategoryId === examCategory.id ? 'exam-category-row-active' : ''}}"
+              wx:for="{{examCategoryOptions}}"
+              wx:key="id"
+              wx:for-item="examCategory"
+              data-id="{{examCategory.id}}"
+              bindtap="selectExamCategory"
+            >
+              <view class="exam-category-icon"></view>
+              <text>{{examCategory.name}}</text>
+              <label>{{examCategory.count}} 份</label>
+            </view>
+          </view>
+
+          <view class="drawer-section-label" wx:if="{{activeContentTab === 'books'}}">科目与教材</view>
+          <view class="catalog-directory" wx:if="{{activeContentTab === 'books'}}">
+            <block wx:for="{{catalogDirectory}}" wx:key="id" wx:for-item="subject">
+              <view class="catalog-subject-row {{activeCatalogSubjectId === subject.id && !activeCatalogBookId ? 'catalog-row-active' : ''}}" data-id="{{subject.id}}" bindtap="selectCatalogSubject">
+                <view class="catalog-folder-icon"></view>
+                <text>{{subject.name}}</text>
+                <view class="folder-chevron {{subject.expanded ? 'folder-chevron-open' : ''}}" data-id="{{subject.id}}" catchtap="toggleCatalogSubject"></view>
+              </view>
+              <view class="catalog-book-list" wx:if="{{subject.expanded}}">
+                <view
+                  class="catalog-book-row {{activeCatalogBookId === book.id ? 'catalog-row-active' : ''}}"
+                  wx:for="{{subject.books}}"
+                  wx:key="id"
+                  wx:for-item="book"
+                  data-id="{{book.id}}"
+                  bindtap="selectCatalogBook"
+                >
+                  <view class="catalog-branch"></view><text>{{book.name}}</text>
+                </view>
+              </view>
+            </block>
+          </view>
+
+          <view class="drawer-section-label upcoming-label">其他项目</view>
+          <block wx:for="{{projects}}" wx:key="id">
+            <view
+              wx:if="{{!item.enabled}}"
+              class="project-option project-option-disabled"
+              data-id="{{item.id}}"
+              bindtap="selectProject"
+            >
+              <view class="project-option-main">
+                <view class="project-option-placeholder">{{item.shortName}}</view>
+                <view>
+                  <view class="project-option-name">{{item.name}}</view>
+                  <view class="project-option-detail">{{item.detail}}</view>
+                </view>
+              </view>
+              <view class="pending-mark">筹备中</view>
+            </view>
+          </block>
+        </block>
+      </scroll-view>
+    </view>
+  </view>
+</view>

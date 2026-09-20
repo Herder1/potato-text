@@ -1,0 +1,66 @@
+<view class="page-shell contribute-page">
+  <view class="page-title">{{editingAsset ? '编辑题目' : '录入题目'}}</view>
+  <view class="page-subtitle">{{packId ? (cardId ? '保存后写入当前卡片' : '保存后归入当前题包') : '建立完整目录、来源和公开状态，保存后仍可管理'}}</view>
+
+  <view class="pack-context" wx:if="{{packId}}">
+    <text>{{cardId ? '当前卡片' : '归入题包'}}</text>
+    <view>{{packName}}</view>
+  </view>
+
+  <view class="method-row">
+    <view wx:for="{{methods}}" wx:key="*this" class="method {{activeMethod === item ? 'method-active' : ''}}" data-method="{{item}}" bindtap="switchMethod">{{item}}</view>
+  </view>
+
+  <view wx:if="{{activeMethod === '图片 OCR'}}" class="ocr-panel panel">
+    <image wx:if="{{imagePath}}" class="preview" src="{{imagePath}}" mode="aspectFill" />
+    <view wx:else class="upload-placeholder"><view class="upload-title">拍照或选择题目图片</view><view class="upload-desc">OCR 免费，识别结果不会自动公开</view></view>
+    <button class="secondary-button" bindtap="chooseImage">{{imagePath ? '重新选择图片' : '选择图片'}}</button>
+    <view wx:if="{{ocrStatus}}" class="ocr-status">{{ocrStatus}}</view>
+  </view>
+
+  <view class="form-section">
+    <view class="section-title">目录标签</view>
+    <view class="section-note">正式目录用于归档，自定义标签用于补充检索</view>
+    <view class="directory-panel">
+      <picker range="{{subjects}}" range-key="name" value="{{subjectIndex}}" bindchange="chooseSubject"><view class="directory-row"><text>科目</text><view>{{subjects[subjectIndex].name}} <text>›</text></view></view></picker>
+      <picker range="{{books}}" range-key="title" value="{{bookIndex}}" bindchange="chooseBook"><view class="directory-row"><text>教材</text><view>{{books[bookIndex].title}} {{books[bookIndex].volume}} <text>›</text></view></view></picker>
+      <picker range="{{chapters}}" range-key="title" value="{{chapterIndex}}" bindchange="chooseChapter"><view class="directory-row"><text>单元 / 章</text><view>{{chapters[chapterIndex].title || '请选择'}} <text>›</text></view></view></picker>
+      <picker range="{{sections}}" range-key="title" value="{{sectionIndex}}" bindchange="chooseSection"><view class="directory-row"><text>节</text><view>{{sections[sectionIndex].title || '暂未设置'}} <text>›</text></view></view></picker>
+    </view>
+    <!-- DEC-057：投稿只复用已确认教材目录，不再有自造章节兜底；没同步过就提示先同步 -->
+    <view class="section-note" wx:if="{{!catalogReady}}">目录未同步：请先在「刷题」里打开一本教材，等目录同步完成后再回来投稿。</view>
+    <view class="tag-area" wx:if="{{knowledgePointOptions.length}}">
+      <view class="tag-label">知识点</view>
+      <view class="tag-list"><view wx:for="{{knowledgePointOptions}}" wx:key="label" class="catalog-tag {{item.selected ? 'tag-selected' : ''}}" data-value="{{item.label}}" bindtap="toggleKnowledgePoint">{{item.label}}</view></view>
+    </view>
+    <view class="custom-tag-row"><input value="{{tagDraft}}" placeholder="添加自定义标签，如：易错题" maxlength="16" bindinput="updateTagDraft" bindconfirm="addTag" /><button bindtap="addTag">添加</button></view>
+    <view class="tag-list" wx:if="{{customTags.length}}"><view class="custom-tag" wx:for="{{customTags}}" wx:key="*this" data-value="{{item}}" bindtap="removeTag">#{{item}} ×</view></view>
+  </view>
+
+  <view class="form-section">
+    <view class="section-title">题目内容</view>
+    <view class="directory-panel">
+      <picker range="{{types}}" value="{{typeIndex}}" bindchange="chooseType"><view class="directory-row"><text>题型</text><view>{{types[typeIndex]}} <text>›</text></view></view></picker>
+      <view class="input-block"><text>题干</text><textarea value="{{stem}}" placeholder="输入或粘贴题目内容" maxlength="5000" bindinput="updateStem" /></view>
+      <view class="input-block" wx:if="{{typeIndex === 0 || typeIndex === 1}}"><text>选项</text><textarea class="short-textarea" value="{{optionsText}}" placeholder="每行一个选项，例如：A. ……" bindinput="updateOptions" /></view>
+      <view class="input-block"><text>参考答案</text><textarea class="short-textarea" value="{{referenceAnswer}}" placeholder="填写答案或参考作答方案" bindinput="updateReferenceAnswer" /></view>
+      <view class="input-block"><text>得分点</text><textarea class="short-textarea" value="{{scoringPointsText}}" placeholder="主观题建议每行填写一个得分点及分值" bindinput="updateScoringPoints" /></view>
+    </view>
+  </view>
+
+  <view class="form-section">
+    <view class="section-title">来源与权限</view>
+    <view class="choice-grid originality-grid">
+      <view wx:for="{{originalityOptions}}" wx:key="id" class="choice-item {{originality === item.id ? 'choice-active' : ''}}" data-value="{{item.id}}" bindtap="selectOriginality"><text>{{item.label}}</text><view>{{item.note}}</view></view>
+    </view>
+    <view class="source-input" wx:if="{{originality !== 'original'}}"><input value="{{sourceReference}}" placeholder="填写教材、试卷或原作者来源" bindinput="updateSourceReference" /></view>
+    <checkbox-group wx:if="{{originality === 'original'}}" bindchange="confirmOriginal"><label class="declaration"><checkbox value="confirmed" checked="{{originalConfirmed}}" color="#303330" />我确认拥有该内容的发布权，并对原创声明负责</label></checkbox-group>
+    <view class="visibility-grid">
+      <view class="visibility-item {{visibility === 'private' ? 'visibility-active' : ''}}" data-value="private" bindtap="selectVisibility"><text>私密</text><view>仅自己可见，可直接使用</view></view>
+      <view class="visibility-item {{visibility === 'public' ? 'visibility-active' : ''}}" data-value="public" bindtap="selectVisibility"><text>申请公开</text><view>通过初筛后进入社区</view></view>
+    </view>
+  </view>
+
+  <button class="primary-button save-button" bindtap="saveQuestion">{{visibility === 'public' ? '保存并提交公共初筛' : '保存为私密题目'}}</button>
+  <view class="privacy-note">公开内容会进行重复、完整性、敏感内容、广告和答案自洽性检查；信心不足时转人工审核。</view>
+</view>

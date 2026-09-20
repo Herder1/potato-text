@@ -1,0 +1,89 @@
+<view class="page-shell help-page">
+  <view class="help-heading">
+    <view class="help-title">遇到什么问题？</view>
+    <view class="help-subtitle">先查找答案，也可以直接告诉我们</view>
+  </view>
+
+  <view class="help-tabs">
+    <view class="help-tab {{activeTab === item.id ? 'help-tab-active' : ''}}" wx:for="{{tabs}}" wx:key="id" data-id="{{item.id}}" bindtap="switchTab">{{item.label}}</view>
+  </view>
+
+  <block wx:if="{{activeTab === 'help'}}">
+    <view class="help-search">
+      <view class="search-icon"></view>
+      <input value="{{query}}" placeholder="搜索问题" bindinput="searchFaq" confirm-type="search" />
+    </view>
+
+    <view class="section-label">常见问题</view>
+    <view class="faq-list" wx:if="{{visibleFaqs.length}}">
+      <view class="faq-row" wx:for="{{visibleFaqs}}" wx:key="id" data-id="{{item.id}}" bindtap="toggleFaq">
+        <view class="faq-question">
+          <view><text>{{item.category}}</text><view>{{item.question}}</view></view>
+          <view class="faq-chevron {{expandedFaqId === item.id ? 'faq-chevron-open' : ''}}"></view>
+        </view>
+        <view class="faq-answer" wx:if="{{expandedFaqId === item.id}}">{{item.answer}}</view>
+      </view>
+    </view>
+    <view class="help-empty" wx:else>没有找到相关问题</view>
+
+    <view class="feedback-entry" bindtap="openSubmit">
+      <view><text>仍未解决</text><view>提交问题，我们会保留处理进度</view></view>
+      <view class="entry-arrow"></view>
+    </view>
+  </block>
+
+  <block wx:if="{{activeTab === 'submit'}}">
+    <view class="login-notice" wx:if="{{!loggedIn}}">
+      <view><text>登录后提交反馈</text><view>便于查看处理进度和结果</view></view>
+      <button bindtap="login">微信登录</button>
+    </view>
+
+    <view class="feedback-form">
+      <view class="form-label">问题类型</view>
+      <view class="category-grid">
+        <view class="category-option {{feedbackCategory === item.id ? 'category-option-active' : ''}}" wx:for="{{categories}}" wx:key="id" data-id="{{item.id}}" bindtap="selectCategory">{{item.label}}</view>
+      </view>
+
+      <view class="form-label form-label-spaced"><text>问题描述</text><text>{{feedbackContent.length}} / 1000</text></view>
+      <textarea class="feedback-textarea" value="{{feedbackContent}}" maxlength="1000" placeholder="请说明发生了什么、如何操作可以复现" bindinput="updateContent" />
+
+      <view class="form-label form-label-spaced"><text>截图</text><text>最多 3 张，每张不超过 200KB</text></view>
+      <view class="image-list">
+        <view class="image-item" wx:for="{{feedbackImages}}" wx:key="path">
+          <image src="{{item.path}}" mode="aspectFill" data-path="{{item.path}}" bindtap="previewImage" />
+          <button data-index="{{index}}" catchtap="removeImage" aria-label="删除截图">×</button>
+        </view>
+        <view class="image-add" wx:if="{{feedbackImages.length < 3}}" bindtap="chooseImages" aria-label="添加截图"><text>＋</text><view>截图</view></view>
+      </view>
+
+      <view class="form-label form-label-spaced">联系方式（选填）</view>
+      <input class="contact-input" value="{{feedbackContact}}" maxlength="120" placeholder="微信号或手机号，仅用于问题沟通" bindinput="updateContact" />
+
+      <button class="submit-button" bindtap="submitFeedback" loading="{{submitting}}" disabled="{{submitting || !loggedIn}}">{{submitting ? '提交中' : '提交反馈'}}</button>
+    </view>
+  </block>
+
+  <block wx:if="{{activeTab === 'history'}}">
+    <view class="login-notice" wx:if="{{!loggedIn}}">
+      <view><text>登录后查看处理进度</text><view>反馈记录只对提交账号可见</view></view>
+      <button bindtap="login">微信登录</button>
+    </view>
+
+    <view class="history-loading" wx:if="{{loggedIn && historyLoading && !feedbackItems.length}}">正在读取反馈记录</view>
+    <view class="history-empty" wx:elif="{{loggedIn && !feedbackItems.length}}">
+      <view>还没有反馈记录</view>
+      <button bindtap="openSubmit">提交第一条反馈</button>
+    </view>
+    <view class="feedback-history" wx:elif="{{loggedIn}}">
+      <view class="history-item" wx:for="{{feedbackItems}}" wx:key="id">
+        <view class="history-head">
+          <view><text>{{item.categoryLabel}}</text><label>{{item.dateText}}</label></view>
+          <text class="history-status status-{{item.status}}">{{item.statusLabel}}</text>
+        </view>
+        <view class="history-content">{{item.content}}</view>
+        <view class="history-meta" wx:if="{{item.attachmentCount}}">已附 {{item.attachmentCount}} 张截图</view>
+        <view class="history-response" wx:if="{{item.response && item.status !== 'pending'}}"><text>处理说明</text><view>{{item.response}}</view></view>
+      </view>
+    </view>
+  </block>
+</view>

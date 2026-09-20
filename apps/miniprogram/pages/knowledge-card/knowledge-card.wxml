@@ -1,0 +1,96 @@
+<view class="page" wx:if="{{card}}">
+  <!-- DEC-088：面包屑左侧、当前卡片位置（第 x / y 张）右侧；只有一张卡时不显示。 -->
+  <view class="crumb-row">
+    <view class="crumb">{{setTitle}} · {{card.section}}</view>
+    <view class="crumb-position" wx:if="{{cardTotal > 1}}" aria-label="第 {{cardIndex + 1}} 张，共 {{cardTotal}} 张">{{cardIndex + 1}} / {{cardTotal}}</view>
+  </view>
+  <!-- ②「来源题目」：默认只显示题干，点开才看整道题 -->
+  <view class="source-bar" wx:if="{{card.questionId}}" bindtap="openQuestionSource" role="button" aria-label="查看来源题目">
+    <view class="source-icon">题</view>
+    <text class="source-summary">{{card.questionStem || card.question}}</text>
+    <text class="source-detail">详情</text>
+  </view>
+  <!-- 笔记卡没有正反面：上方标题、下方内容，内容长了在卡片内向下滚动。 -->
+  <view
+    class="card-shell {{slideDirection ? 'card-slide-' + slideDirection : ''}}"
+    bindtap="flip"
+    bindtouchstart="handleCardSwipeStart"
+    bindtouchend="handleCardSwipeEnd"
+    bindtouchcancel="handleCardSwipeEnd"
+  >
+    <view class="side note-side" wx:if="{{card.type === 'note'}}">
+      <text class="side-label">笔记卡片</text>
+      <view class="question note-title">{{card.question}}</view>
+      <scroll-view class="note-body" scroll-y="true">
+        <rich-text class="answer answer-rich" nodes="{{card.answerNodes}}"></rich-text>
+      </scroll-view>
+    </view>
+    <view class="side front" wx:elif="{{!flipped}}">
+      <text class="side-label">问题</text>
+      <view class="question">{{card.question}}</view>
+      <view class="tap-tip">轻点卡片查看答案 · 左右滑动切换卡片</view>
+    </view>
+    <view class="side back" wx:else>
+      <text class="side-label">答案</text>
+      <rich-text class="answer answer-rich" nodes="{{card.answerNodes}}"></rich-text>
+      <view class="tap-tip">轻点卡片翻回正面</view>
+    </view>
+  </view>
+
+  <view class="mnemonic" wx:if="{{card.type !== 'note' && !flipped && showMnemonic && card.mnemonic}}"><text>口诀</text>{{card.mnemonic}}</view>
+  <view class="hint-card" wx:if="{{card.type !== 'note' && !flipped && hintLevel}}">
+    <view><text>提示 {{hintLevel}}</text><text>{{hintLevel === 3 ? '已显示最多提示' : '继续点击可展开更多'}}</text></view>
+    <view class="hint-lines">
+      <view class="hint-line" wx:for="{{hintLines}}" wx:key="key" wx:for-item="line">
+        <text class="hint-marker">{{line.marker}}</text>
+        <text class="hint-parts"><text class="{{part.type === 'gap' ? 'hint-gap' : 'hint-fragment'}}" wx:for="{{line.parts}}" wx:key="key" wx:for-item="part" aria-hidden="{{part.type === 'gap'}}">{{part.text}}</text></text>
+      </view>
+    </view>
+  </view>
+
+  <view class="tool-row">
+    <view bindtap="openAssociations"><image class="tool-icon" src="/assets/icons/card-link.svg" mode="aspectFit"/><label>关联</label></view>
+    <view wx:if="{{card.type !== 'note'}}" bindtap="hint"><image class="tool-icon" src="/assets/icons/card-lightbulb.svg" mode="aspectFit"/><label>提示</label></view>
+    <view wx:if="{{card.type !== 'note'}}" bindtap="toggleMnemonic"><image class="tool-icon" src="/assets/icons/card-ear.svg" mode="aspectFit"/><label>口诀</label></view>
+    <view wx:if="{{card.type !== 'note'}}" bindtap="flip"><image class="tool-icon" src="/assets/icons/card-flip.svg" mode="aspectFit"/><label>翻页</label></view>
+  </view>
+
+  <view class="mastery" wx:if="{{card.type !== 'note' && flipped}}">
+    <view class="{{selectedMastery === 'again' ? 'mastery-active' : ''}}" data-state="again" bindtap="rate" hover-class="mastery-press">忘记了</view>
+    <view class="{{selectedMastery === 'hard' ? 'mastery-active' : ''}}" data-state="hard" bindtap="rate" hover-class="mastery-press">有点难</view>
+    <view class="{{selectedMastery === 'good' ? 'mastery-active' : ''}}" data-state="good" bindtap="rate" hover-class="mastery-press">记住了</view>
+    <view class="{{selectedMastery === 'easy' ? 'mastery-active' : ''}}" data-state="easy" bindtap="rate" hover-class="mastery-press">很熟练</view>
+  </view>
+
+  <view class="mask" wx:if="{{showAssociations}}" bindtap="closeAssociations"></view>
+  <view class="association-sheet" wx:if="{{showAssociations}}">
+    <view class="handle"></view>
+    <view class="sheet-title">关联知识</view>
+    <view class="association-row" wx:for="{{card.associations}}" wx:key="*this"><image src="/assets/icons/card-link.svg" mode="aspectFit"/><text>{{item}}</text><label>›</label></view>
+    <view class="association-empty" wx:if="{{!card.associations.length}}">暂未关联其他知识卡</view>
+  </view>
+
+  <!-- ②「来源题目」弹层：题干 + 选项 + 参考答案，可跳到刷题页看整道题 -->
+  <view class="source-layer" wx:if="{{questionSourceOpen}}" bindtap="closeQuestionSource">
+    <view class="source-dialog" catchtap="noop">
+      <view class="source-dialog-head">
+        <text>来源题目</text>
+        <view class="source-close" bindtap="closeQuestionSource" role="button" aria-label="关闭">×</view>
+      </view>
+      <scroll-view class="source-scroll" scroll-y="true">
+        <view class="source-path" wx:if="{{card.questionCatalogPath}}">{{card.questionCatalogPath}}</view>
+        <view class="source-stem">{{card.questionStem || card.question}}</view>
+        <view class="source-options" wx:if="{{questionOptions.length}}">
+          <view class="source-option" wx:for="{{questionOptions}}" wx:key="key"><text>{{item.key}}</text><label>{{item.text}}</label></view>
+        </view>
+        <view class="source-answer" wx:if="{{questionAnswerText}}"><text>参考答案</text>{{questionAnswerText}}</view>
+        <view class="source-notice" wx:if="{{questionSourceLoading}}">正在读取题目…</view>
+        <view class="source-notice" wx:elif="{{questionSourceNotice}}">{{questionSourceNotice}}</view>
+      </scroll-view>
+      <view class="source-actions">
+        <button class="source-practice" bindtap="goToPracticeQuestion">去刷题看整道题</button>
+        <button class="source-dismiss" bindtap="closeQuestionSource">关闭</button>
+      </view>
+    </view>
+  </view>
+</view>

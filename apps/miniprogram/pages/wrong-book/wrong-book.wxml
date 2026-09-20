@@ -1,0 +1,79 @@
+<view class="page-shell wrong-book-page">
+  <view class="wrong-book-intro">
+    <view><view class="wrong-book-title">循序纠正，直到掌握</view><text>共 {{historyCount}} 道错题 · 本项目 {{subjectCount}} 个科目</text></view>
+    <view class="wrong-book-mark"><view></view></view>
+  </view>
+
+  <view class="wrong-status-tabs">
+    <view class="wrong-status-tab {{activeStatus === item.key ? 'wrong-status-tab-active' : ''}}" wx:for="{{statusOptions}}" wx:key="key" data-status="{{item.key}}" bindtap="selectStatus">
+      <view>{{item.count}}</view><text>{{item.label}}</text>
+    </view>
+  </view>
+
+  <view class="wrong-directory-head">
+    <view>{{selectedChapter ? '章节错题' : '错题目录'}}</view>
+    <view class="wrong-directory-actions">
+      <view class="wrong-group-modes" wx:if="{{!selectedChapter}}">
+        <view class="{{groupMode === 'directory' ? 'wrong-group-mode-active' : ''}}" data-mode="directory" bindtap="selectGroupMode">按目录</view>
+        <view class="{{groupMode === 'knowledge' ? 'wrong-group-mode-active' : ''}}" data-mode="knowledge" bindtap="selectGroupMode">按知识点</view>
+      </view>
+      <view class="wrong-filter-button {{filterCount ? 'wrong-filter-button-active' : ''}}" bindtap="openFilterPanel"><view class="wrong-filter-icon"></view><text>筛选{{filterCount ? ' ' + filterCount : ''}}</text></view>
+    </view>
+  </view>
+
+  <scroll-view class="wrong-filter-tags" scroll-x="true" wx:if="{{filterTags.length}}">
+    <view class="wrong-filter-tags-inner"><view class="wrong-filter-tag" wx:for="{{filterTags}}" wx:key="value" data-key="{{item.key}}" data-value="{{item.value}}" bindtap="removeFilterTag"><text>{{item.label}}</text><view>×</view></view></view>
+  </scroll-view>
+
+  <view class="wrong-chapter-focus" wx:if="{{selectedChapter}}">
+    <view class="wrong-chapter-focus-head"><view class="wrong-chapter-back" bindtap="closeChapter" role="button" aria-label="返回错题目录"><image src="/assets/icons/arrow-left.svg" mode="aspectFit" /></view><view class="wrong-chapter-path">{{selectedChapterPath}}</view><text>{{selectedChapter.count}} 道</text></view>
+    <view class="wrong-focus-list">
+      <view class="wrong-focus-question" wx:for="{{selectedChapter.items}}" wx:key="id" data-question-id="{{item.id}}" bindtap="startQuestionReview">
+        <view class="wrong-focus-index">{{index + 1}}</view>
+        <view class="wrong-focus-stem">{{item.stem}}</view>
+        <view class="wrong-focus-status">{{item.wrongStatusLabel}}</view>
+        <view class="wrong-question-chevron"></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="wrong-group-list" wx:elif="{{groups.length}}">
+    <view class="wrong-group" wx:for="{{groups}}" wx:key="id">
+      <view class="wrong-group-row" data-group-id="{{item.id}}" bindtap="toggleGroup">
+        <view class="wrong-group-arrow" style="background: {{item.color}};"><view class="{{item.expanded ? 'wrong-group-arrow-open' : ''}}"></view></view>
+        <view class="wrong-group-main"><view>{{item.label}}</view><text>{{item.secondary}}</text></view>
+        <view class="wrong-group-count">{{item.count}} 道</view>
+        <view class="wrong-group-chevron {{item.expanded ? 'wrong-group-chevron-open' : ''}}"></view>
+      </view>
+      <view class="wrong-question-list" wx:if="{{item.expanded}}">
+        <block wx:if="{{groupMode === 'directory'}}">
+          <view class="wrong-child" wx:for="{{item.children}}" wx:for-item="child" wx:key="id">
+            <view class="wrong-child-row" data-child-id="{{child.id}}" bindtap="openChapter"><view class="wrong-child-main"><view>{{child.label}}</view></view><view class="wrong-group-count">{{child.count}} 道</view><view class="wrong-question-chevron"></view></view>
+          </view>
+        </block>
+        <block wx:else>
+        <view class="wrong-question" wx:for="{{item.items}}" wx:for-item="question" wx:key="id" data-question-id="{{question.id}}" bindtap="startQuestionReview">
+          <view><view>{{question.stem}}</view><text>{{question.subjectName}} · {{question.knowledgePoint}}</text></view>
+          <view class="wrong-question-chevron"></view>
+        </view>
+        <button class="wrong-group-review" data-group-id="{{item.id}}" bindtap="startGroupReview">练习本组 {{item.count}} 道题</button>
+        </block>
+      </view>
+    </view>
+  </view>
+  <view class="wrong-empty" wx:else><view>这里暂时没有错题</view><text>完成练习后，错题会按状态、科目和知识点自动归档。</text></view>
+  <view class="wrong-book-tip" wx:if="{{!selectedChapter}}">点击章节后进入错题列表，也可以直接按知识点查看</view>
+
+  <view class="wrong-filter-layer" wx:if="{{filterPanelOpen}}" bindtap="closeFilterPanel">
+    <view class="wrong-filter-panel" catchtap="stopPropagation">
+      <view class="wrong-filter-panel-head"><view><view>筛选错题</view><text>科目、教材、章节和知识点可多选</text></view><view class="wrong-filter-close" bindtap="closeFilterPanel">×</view></view>
+      <scroll-view class="wrong-filter-scroll" scroll-y="true">
+        <view class="wrong-filter-section" wx:for="{{draftFilterSections}}" wx:key="key">
+          <view class="wrong-filter-section-title"><view>{{item.label}}</view><text wx:if="{{!item.options.length}}">请先选择上一级</text></view>
+          <view class="wrong-filter-options"><view class="wrong-filter-option {{option.selected ? 'wrong-filter-option-selected' : ''}}" wx:for="{{item.options}}" wx:for-item="option" wx:key="value" data-section="{{item.key}}" data-value="{{option.value}}" bindtap="toggleDraftFilter"><text>{{option.label}}</text><label>{{option.count}}</label></view></view>
+        </view>
+      </scroll-view>
+      <view class="wrong-filter-footer"><button bindtap="resetDraftFilters">重置</button><button bindtap="applyFilters">应用筛选</button></view>
+    </view>
+  </view>
+</view>

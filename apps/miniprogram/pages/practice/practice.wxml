@@ -1,0 +1,855 @@
+<view class="practice-page" wx:if="{{practiceReady}}">
+  <view
+    class="custom-practice-nav"
+    style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;"
+  >
+    <button class="nav-icon-button" bindtap="goBack" hover-class="nav-icon-pressed" aria-label="返回">
+      <image class="nav-icon-image" src="/assets/icons/arrow-left.svg" mode="aspectFit" />
+    </button>
+    <button wx:if="{{practiceMode !== 'pack'}}" class="nav-icon-button" bindtap="openCatalog" hover-class="nav-icon-pressed" aria-label="章节目录">
+      <image class="nav-icon-image" src="/assets/icons/list.svg" mode="aspectFit" />
+    </button>
+    <view wx:else class="pack-nav-title">{{practiceScopeTitle}}</view>
+    <view class="nav-toolbar-spacer"></view>
+    <button class="nav-icon-button {{searchOpen ? 'nav-icon-active' : ''}}" bindtap="openSearch" hover-class="nav-icon-pressed" aria-label="题库内搜索">
+      <image class="nav-icon-image" src="/assets/icons/search.svg" mode="aspectFit" />
+    </button>
+    <button class="nav-icon-button" bindtap="openSharePanel" hover-class="nav-icon-pressed" aria-label="分享与导出">
+      <image class="nav-icon-image" src="/assets/icons/share.svg" mode="aspectFit" />
+    </button>
+    <button class="nav-icon-button" data-panel="feedback" bindtap="openUtilityPanel" hover-class="nav-icon-pressed" aria-label="题目反馈">
+      <image class="nav-icon-image" src="/assets/icons/message-warning.svg" mode="aspectFit" />
+    </button>
+    <button class="nav-icon-button" data-panel="settings" bindtap="openUtilityPanel" hover-class="nav-icon-pressed" aria-label="练习设置">
+      <image class="nav-icon-image" src="/assets/icons/sliders.svg" mode="aspectFit" />
+    </button>
+  </view>
+
+  <view class="practice-head">
+    <view class="head-row">
+      <text class="breadcrumb">{{question.breadcrumb}}</text>
+      <view class="head-status">
+        <text class="exam-timer" wx:if="{{practiceMode === 'exam'}}">{{examTimeText}}</text>
+        <text class="question-count" wx:if="{{settings.showProgress && question.isQuestionGroup}}">题组 {{question.questionUnitNumber}} / {{question.questionUnitTotal}} · 小题 {{question.groupItemNumber}} / {{question.groupItemTotal}}</text>
+        <text class="question-count" wx:elif="{{settings.showProgress}}">{{question.number}} / {{question.total}}</text>
+      </view>
+    </view>
+    <view class="progress-track" wx:if="{{settings.showProgress}}"><view class="progress-value" style="width: {{question.progressPercent}}%;"></view></view>
+  </view>
+
+  <scroll-view class="question-scroll" scroll-y="true" bindtouchstart="handleQuestionSwipeStart" bindtouchmove="handleQuestionSwipeMove" bindtouchend="handleQuestionSwipeEnd" bindtouchcancel="handleQuestionSwipeCancel">
+    <view class="question-swipe-stage {{questionSwipeAnimating ? 'question-swipe-animating' : ''}}" style="transform: translate3d({{questionSwipeOffset}}px, 0, 0); opacity: {{questionSwipeOpacity}};">
+      <view class="question-body">
+      <view class="question-topline">
+        <view class="question-meta">
+          <text class="tag tag-green">{{question.typeLabel}}</text>
+          <text class="score">{{question.score}} 分</text>
+          <text class="difficulty-stars" aria-label="难度 {{question.difficultyStars}} 星">{{question.difficultyLabel}}</text>
+        </view>
+        <view wx:if="{{question.knowledgePoint || question.frequencyLabel}}" class="question-detail-line" bindtap="showKnowledgePoint" hover-class="question-detail-line-pressed" role="button" aria-label="查看完整知识点">
+          <text class="knowledge">{{question.knowledgePoint || '知识点待补充'}}</text>
+          <text wx:if="{{question.frequencyLabel}}" class="frequency-label">{{question.frequencyLabel}}</text>
+          <text class="question-detail-chevron">›</text>
+        </view>
+      </view>
+      <view class="question-material" wx:if="{{question.material}}">
+        <view class="question-material-label">材料</view>
+        <view class="question-material-text" style="font-size: {{settings.fontSize}}rpx;">
+          <text wx:for="{{question.materialSegments}}" wx:key="id" class="material-segment material-mark-{{item.type}}">{{item.text}}</text>
+        </view>
+      </view>
+      <view class="stem" style="font-size: {{settings.fontSize}}rpx;">{{question.displaySubNumber ? '（' + question.displaySubNumber + '）' : ''}}{{question.stem}}</view>
+
+      <view class="options" wx:if="{{question.answerMode !== 'text'}}">
+        <view
+          wx:for="{{question.options}}"
+          wx:key="key"
+          class="option {{selectedMap[item.key] ? 'option-selected' : ''}} {{submitted && correctAnswerMap[item.key] ? 'option-correct' : ''}} {{submitted && selectedMap[item.key] && !correctAnswerMap[item.key] ? 'option-wrong' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="chooseOption"
+        >
+          <view class="option-key">{{item.key}}</view>
+          <view class="option-text">{{item.text}}</view>
+        </view>
+      </view>
+
+      <view class="annotation-response" wx:elif="{{practiceMode !== 'memorize' && question.responseMode === 'annotation'}}">
+        <view class="annotation-toolbar" data-swipe-block="true">
+          <button class="{{annotationTool === 'underline' ? 'annotation-tool-active' : ''}}" data-tool="underline" bindtap="selectAnnotationTool">下划线</button>
+          <button class="{{annotationTool === 'wave' ? 'annotation-tool-active' : ''}}" data-tool="wave" bindtap="selectAnnotationTool">波浪线</button>
+          <button class="{{annotationTool === 'dot' ? 'annotation-tool-active' : ''}}" data-tool="dot" bindtap="selectAnnotationTool">着重号</button>
+          <button class="{{annotationTool === 'subscript' ? 'annotation-tool-active' : ''}}" data-tool="subscript" bindtap="selectAnnotationTool">下标点</button>
+          <button bindtap="clearAnnotationMarks">清除</button>
+        </view>
+        <view class="annotation-paper" data-swipe-block="true" style="font-size: {{settings.fontSize}}rpx;">
+          <view class="annotation-character annotation-{{item.mark}}" wx:for="{{annotationTokens}}" wx:key="id" data-index="{{index}}" bindtap="markAnnotationCharacter">
+            <text>{{item.character}}</text><text class="annotation-symbol" wx:if="{{item.symbol}}">{{item.symbol}}</text>
+          </view>
+        </view>
+        <textarea data-swipe-block="true" value="{{annotationNote}}" placeholder="可补充说明标记依据" maxlength="2000" disabled="{{submitted || subjectiveScoring}}" bindinput="updateAnnotationNote"></textarea>
+        <view class="subjective-response-meta"><text>点击文字添加当前标记</text><text>AI 评分消耗 1 点额度</text></view>
+      </view>
+
+      <view class="subjective-response" wx:elif="{{practiceMode !== 'memorize'}}">
+        <textarea
+          data-swipe-block="true"
+          value="{{subjectiveAnswer}}"
+          placeholder="{{question.answerPlaceholder}}"
+          maxlength="{{question.answerMaxLength}}"
+          disabled="{{submitted || subjectiveScoring}}"
+          bindinput="updateSubjectiveAnswer"
+        ></textarea>
+        <view class="subjective-response-meta">
+          <text>{{subjectiveAnswer.length}} / {{question.answerMaxLength}}</text>
+          <text>AI 评分消耗 1 点额度</text>
+        </view>
+      </view>
+
+      <view class="answer-panel" wx:if="{{submitted}}">
+        <block wx:if="{{question.answerMode !== 'text'}}">
+          <view wx:if="{{practiceMode !== 'memorize'}}" class="answer-result {{isCorrect ? 'result-correct' : (answerStatus === 'partial' ? 'result-partial' : 'result-wrong')}}">
+            {{isCorrect ? '回答正确' : (answerStatus === 'partial' ? '部分正确 · 得 ' + awardedScore + ' / ' + question.score + ' 分' : '回答错误')}} · 正确答案 {{question.correctAnswerText}}
+          </view>
+          <view class="answer-heading">参考答案</view>
+          <view class="answer-variant" wx:if="{{question.answerVariants.official}}"><text>{{question.verifiedAnswerLabel}}</text><rich-text class="answer-text answer-rich-text" nodes="{{question.answerVariantNodes.official}}"></rich-text></view>
+          <view class="answer-variant" wx:if="{{question.answerVariants.ai}}"><text>AI 答案</text><rich-text class="answer-text answer-rich-text" nodes="{{question.answerVariantNodes.ai}}"></rich-text></view>
+          <view class="answer-variant" wx:if="{{question.answerVariants.community}}"><text>社区精选答案</text><rich-text class="answer-text answer-rich-text" nodes="{{question.answerVariantNodes.community}}"></rich-text></view>
+          <rich-text class="answer-text answer-rich-text" wx:if="{{!question.answerVariants.official && !question.answerVariants.ai && !question.answerVariants.community}}" nodes="{{question.referenceAnswerNodes}}"></rich-text>
+          <view class="source-line">
+            <text class="tag tag-amber">教材答案</text>
+            <text class="source-text">{{question.source}}</text>
+          </view>
+          <view class="scoring-basis-list" wx:if="{{question.scoringPoints.length}}">
+            <view class="scoring-basis-title">判分依据</view>
+            <view class="scoring-basis-item" wx:for="{{question.scoringPoints}}" wx:key="id">
+              <view class="scoring-basis-row"><text>{{item.description}}</text><text>{{item.score}} 分</text></view>
+              <view class="scoring-page" wx:if="{{item.textbookPage}}">教材第 {{item.textbookPage}} 页<text wx:if="{{item.pageBasisText}}"> · {{item.pageBasisText}}</text></view>
+              <view class="scoring-source-note" wx:if="{{item.sourceNote}}">{{item.sourceNote}}</view>
+            </view>
+          </view>
+        </block>
+
+        <block wx:elif="{{practiceMode === 'memorize'}}">
+          <view class="answer-heading">参考答案</view>
+          <view class="answer-variant" wx:if="{{question.answerVariants.official}}"><text>{{question.verifiedAnswerLabel}}</text><rich-text class="answer-text answer-rich-text" nodes="{{question.answerVariantNodes.official}}"></rich-text></view>
+          <view class="answer-variant" wx:if="{{question.answerVariants.ai}}"><text>AI 答案</text><rich-text class="answer-text answer-rich-text" nodes="{{question.answerVariantNodes.ai}}"></rich-text></view>
+          <view class="answer-variant" wx:if="{{question.answerVariants.community}}"><text>社区精选答案</text><rich-text class="answer-text answer-rich-text" nodes="{{question.answerVariantNodes.community}}"></rich-text></view>
+          <rich-text class="answer-text answer-rich-text" wx:if="{{!question.answerVariants.official && !question.answerVariants.ai && !question.answerVariants.community}}" nodes="{{question.referenceAnswerNodes}}"></rich-text>
+          <view class="source-line">
+            <text class="tag tag-amber">教材答案</text>
+            <text class="source-text">{{question.source}}</text>
+          </view>
+          <view class="scoring-basis-list" wx:if="{{question.scoringPoints.length}}">
+            <view class="scoring-basis-title">判分依据</view>
+            <view class="scoring-basis-item" wx:for="{{question.scoringPoints}}" wx:key="id">
+              <view class="scoring-basis-row"><text>{{item.description}}</text><text>{{item.score}} 分</text></view>
+              <view class="scoring-page" wx:if="{{item.textbookPage}}">教材第 {{item.textbookPage}} 页<text wx:if="{{item.pageBasisText}}"> · {{item.pageBasisText}}</text></view>
+              <view class="scoring-source-note" wx:if="{{item.sourceNote}}">{{item.sourceNote}}</view>
+            </view>
+          </view>
+        </block>
+
+        <view wx:elif="{{subjectiveScoreResult}}" class="subjective-score-report">
+          <view class="score-report-head">
+            <view>
+              <view class="score-report-label">本次评分</view>
+              <view class="score-report-number"><text>{{subjectiveScoreResult.totalScore}}</text> / {{subjectiveScoreResult.maxScore}}</view>
+            </view>
+            <view class="score-report-meta">
+              <text>规则评分演示</text>
+              <view>置信度 {{subjectiveScoreResult.confidencePercent}}%</view>
+            </view>
+          </view>
+
+          <view class="score-report-section">
+            <view class="score-section-title">命中得分点</view>
+            <view class="score-point score-point-hit" wx:for="{{subjectiveScoreResult.hitPoints}}" wx:key="id">
+              <view class="score-point-row">
+                <text>{{item.description}}</text>
+                <text>{{item.awardedScore}} / {{item.maxScore}}</text>
+              </view>
+              <view class="score-point-detail">答案依据：{{item.evidenceText}}</view>
+              <view class="score-point-detail" wx:if="{{item.textbookPage}}">教材第 {{item.textbookPage}} 页</view>
+            </view>
+            <view class="score-section-empty" wx:if="{{!subjectiveScoreResult.hitPoints.length}}">暂未命中明确得分点</view>
+          </view>
+
+          <view class="score-report-section">
+            <view class="score-section-title">遗漏得分点</view>
+            <view class="score-point score-point-missed" wx:for="{{subjectiveScoreResult.missedPoints}}" wx:key="id">
+              <view class="score-point-row">
+                <text>{{item.description}}</text>
+                <text>-{{item.lostScore}}</text>
+              </view>
+              <view class="score-point-detail">建议补充：{{item.missingHintsText}}</view>
+              <view class="score-point-detail" wx:if="{{item.textbookPage}}">教材第 {{item.textbookPage}} 页</view>
+            </view>
+            <view class="score-section-empty" wx:if="{{!subjectiveScoreResult.missedPoints.length}}">没有遗漏结构化得分点</view>
+          </view>
+
+          <view class="score-report-section" wx:if="{{subjectiveScoreResult.errors.length}}">
+            <view class="score-section-title">错误内容</view>
+            <view class="score-advice score-advice-error" wx:for="{{subjectiveScoreResult.errors}}" wx:key="*this">{{item}}</view>
+          </view>
+
+          <view class="score-report-section">
+            <view class="score-section-title">表达建议</view>
+            <view class="score-advice" wx:for="{{subjectiveScoreResult.expressionSuggestions}}" wx:key="*this">{{item}}</view>
+          </view>
+
+          <view class="score-report-section">
+            <view class="score-section-title">参考答案对照</view>
+            <view class="score-comparison">{{subjectiveScoreResult.referenceComparison}}</view>
+            <rich-text class="answer-text answer-rich-text score-reference-answer" nodes="{{question.referenceAnswerNodes}}"></rich-text>
+            <view class="source-line">
+              <text class="tag tag-amber">教材答案</text>
+              <text class="source-text">{{question.source}}</text>
+            </view>
+          </view>
+
+          <view class="score-basis">评分依据：{{subjectiveScoreResult.basis}}。{{subjectiveScoreResult.uncertainty}}</view>
+          <view class="score-report-actions">
+            <button bindtap="requestSubjectiveRescore" disabled="{{subjectiveScoring}}">{{subjectiveScoring ? subjectiveScoringStage : '申请重新评分 · 1 点'}}</button>
+            <button bindtap="openSubjectiveScoreFeedback">反馈问题</button>
+          </view>
+          <view class="score-helpfulness">
+            <text>本次评分是否有帮助？</text>
+            <view>
+              <button class="{{subjectiveScoreFeedback === 'helpful' ? 'score-feedback-active' : ''}}" data-value="helpful" bindtap="rateSubjectiveScore">有帮助</button>
+              <button class="{{subjectiveScoreFeedback === 'unhelpful' ? 'score-feedback-active' : ''}}" data-value="unhelpful" bindtap="rateSubjectiveScore">没帮助</button>
+            </view>
+          </view>
+        </view>
+
+        <block wx:elif="{{question.answerMode === 'text'}}">
+          <view class="subjective-submitted-state"><text>答案已提交</text><text>尚未评分</text></view>
+          <view class="inline-ai-score">
+            <view><text>AI 评分</text><text>{{question.scoringPointStatus && question.scoringPointStatus !== 'complete' ? '得分点完善后开放评分' : '按得分点分析答案，成功评分消耗 1 点额度'}}</text></view>
+            <button bindtap="requestInitialSubjectiveScore" disabled="{{subjectiveScoring || (question.scoringPointStatus && question.scoringPointStatus !== 'complete')}}">{{subjectiveScoring ? subjectiveScoringStage : (question.scoringPointStatus && question.scoringPointStatus !== 'complete' ? '待完善' : '开始评分')}}</button>
+          </view>
+          <view class="answer-heading">参考答案</view>
+          <view class="answer-variant" wx:if="{{question.answerVariants.official}}"><text>{{question.verifiedAnswerLabel}}</text><rich-text class="answer-text answer-rich-text" nodes="{{question.answerVariantNodes.official}}"></rich-text></view>
+          <view class="answer-variant" wx:if="{{question.answerVariants.ai}}"><text>AI 答案</text><rich-text class="answer-text answer-rich-text" nodes="{{question.answerVariantNodes.ai}}"></rich-text></view>
+          <view class="answer-variant" wx:if="{{question.answerVariants.community}}"><text>社区精选答案</text><rich-text class="answer-text answer-rich-text" nodes="{{question.answerVariantNodes.community}}"></rich-text></view>
+          <rich-text class="answer-text answer-rich-text" wx:if="{{!question.answerVariants.official && !question.answerVariants.ai && !question.answerVariants.community}}" nodes="{{question.referenceAnswerNodes}}"></rich-text>
+          <view class="source-line">
+            <text class="tag tag-amber">教材答案</text>
+            <text class="source-text">{{question.source}}</text>
+          </view>
+          <view class="scoring-basis-list" wx:if="{{question.scoringPoints.length}}">
+            <view class="scoring-basis-title">判分依据</view>
+            <view class="scoring-basis-item" wx:for="{{question.scoringPoints}}" wx:key="id">
+              <view class="scoring-basis-row"><text>{{item.description}}</text><text>{{item.score}} 分</text></view>
+              <view class="scoring-page" wx:if="{{item.textbookPage}}">教材第 {{item.textbookPage}} 页<text wx:if="{{item.pageBasisText}}"> · {{item.pageBasisText}}</text></view>
+              <view class="scoring-source-note" wx:if="{{item.sourceNote}}">{{item.sourceNote}}</view>
+            </view>
+          </view>
+        </block>
+        <view class="question-feedback-row">
+          <text>这道题对你有帮助吗？</text>
+          <view class="question-votes">
+            <view
+              class="question-vote-button {{questionVote === 'helpful' ? 'question-vote-active' : ''}}"
+              data-vote="helpful"
+              bindtap="voteQuestion"
+              hover-class="question-vote-pressed"
+              role="button"
+              aria-label="点赞题目"
+            >
+              <view class="vote-icon vote-icon-up"><view class="vote-cuff"></view><view class="vote-palm"></view><view class="vote-finger"></view></view>
+              <text class="vote-count">{{helpfulCount}}</text>
+            </view>
+            <view
+              class="question-vote-button {{questionVote === 'unhelpful' ? 'question-vote-active-negative' : ''}}"
+              data-vote="unhelpful"
+              bindtap="voteQuestion"
+              hover-class="question-vote-pressed"
+              role="button"
+              aria-label="点踩题目"
+            >
+              <view class="vote-icon vote-icon-down"><view class="vote-cuff"></view><view class="vote-palm"></view><view class="vote-finger"></view></view>
+              <text class="vote-count">{{unhelpfulCount}}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="exam-result-summary" wx:if="{{practiceMode === 'exam' && examFinished}}">
+        <view><text>{{examResult.score}}</text> / {{examResult.totalScore}} 分</view>
+        <view>答对 {{examResult.correctCount}} / {{question.total}} 题</view>
+      </view>
+      </view>
+    </view>
+  </scroll-view>
+
+  <view class="swipe-direction-hint swipe-direction-left {{questionSwipeHint === 'previous' ? 'swipe-direction-visible' : ''}}">‹</view>
+  <view class="swipe-direction-hint swipe-direction-right {{questionSwipeHint === 'next' ? 'swipe-direction-visible' : ''}}">›</view>
+
+  <view
+    class="potato-ai-entry potato-ai-entry-{{potatoAiSide}} {{potatoAiDragging ? 'potato-ai-dragging' : ''}}"
+    wx:if="{{submitted && (practiceMode !== 'exam' || examFinished)}}"
+    style="left: {{potatoAiX}}px; top: {{potatoAiY}}px;"
+    bindtouchstart="handlePotatoTouchStart"
+    catchtouchmove="handlePotatoTouchMove"
+    bindtouchend="handlePotatoTouchEnd"
+    bindtouchcancel="handlePotatoTouchCancel"
+    role="button"
+    aria-label="可拖动的土豆 AI 解析入口"
+  >
+    <image class="potato-ai-image" src="/assets/potato-ai.png" mode="aspectFit" />
+  </view>
+
+  <view class="practice-footer">
+    <view class="floating-action-zone">
+      <view class="normal-action-row" wx:if="{{(practiceMode === 'normal' || practiceMode === 'review' || practiceMode === 'pack') && !submitted}}">
+        <button class="primary-button submit-button" bindtap="submitAnswer" disabled="{{subjectiveScoring}}">
+          <text>提交答案</text>
+        </button>
+      </view>
+      <view class="mastery-action-row" wx:if="{{(practiceMode === 'normal' || practiceMode === 'review' || practiceMode === 'pack') && submitted && (isCorrect || (question.answerMode === 'text' && !subjectiveScoreResult))}}">
+        <button class="mastery mastery-familiar {{mastery === 'familiar' ? 'mastery-active' : ''}}" data-value="familiar" bindtap="setMastery"><text>熟悉</text></button>
+        <button class="mastery mastery-fuzzy {{mastery === 'fuzzy' ? 'mastery-active-fuzzy' : ''}}" data-value="fuzzy" bindtap="setMastery"><text>模糊</text></button>
+        <button class="mastery mastery-unknown {{mastery === 'unknown' ? 'mastery-active-red' : ''}}" data-value="unknown" bindtap="setMastery"><text>不会</text></button>
+      </view>
+      <view class="sequence-action-row" wx:if="{{practiceMode === 'exam' || practiceMode === 'memorize' || ((practiceMode === 'normal' || practiceMode === 'review' || practiceMode === 'pack') && submitted && !isCorrect && (question.answerMode !== 'text' || subjectiveScoreResult))}}">
+        <button bindtap="goPreviousQuestion"><text>上一题</text></button>
+        <button class="sequence-next" bindtap="nextQuestion">
+          <text>{{practiceMode === 'exam' && !examFinished && isLastQuestion ? '交卷' : (isLastQuestion ? '已完成' : '下一题')}}</text>
+        </button>
+      </view>
+    </view>
+
+    <view class="practice-tools">
+      <button class="practice-tool-item" data-panel="answerCard" bindtap="openUtilityPanel">
+        <view class="footer-tool-icon answer-card-icon"><view></view><view></view><view></view><view></view></view>
+        <text>答题卡</text>
+      </button>
+      <button class="practice-tool-item" data-panel="note" bindtap="openUtilityPanel">
+        <view class="footer-tool-icon note-icon"><view></view><view></view></view>
+        <text>笔记</text>
+      </button>
+      <button class="practice-tool-item {{bookmarked ? 'practice-tool-active' : ''}}" bindtap="toggleBookmark">
+        <view class="footer-tool-icon bookmark-icon">{{bookmarked ? '★' : '☆'}}</view>
+        <text>收藏</text>
+      </button>
+      <button class="practice-tool-item" data-panel="mode" bindtap="openUtilityPanel">
+        <view class="footer-tool-icon mode-icon"><view></view><view></view><view></view></view>
+        <text>刷题模式</text>
+      </button>
+    </view>
+  </view>
+
+  <view class="tool-layer" wx:if="{{catalogOpen}}" catchtouchmove="stopTouchMove">
+    <view class="tool-mask" bindtap="closeToolPanels"></view>
+    <view class="catalog-panel" style="top: {{panelTop}}px;">
+      <view class="tool-panel-head">
+        <block wx:if="{{catalogView === 'directory'}}">
+          <view class="tool-panel-title">目录</view>
+          <text class="catalog-sync-status {{catalogSyncState}}">{{catalogSyncState === 'exam' ? '本卷结构' : (catalogSyncState === 'synced' ? ('已同步 v' + catalogVersion) : (catalogSyncState === 'cached' ? ('缓存 v' + catalogVersion) : (catalogSyncState === 'offline' ? '离线目录' : '同步中')))}}</text>
+          <view
+            class="catalog-collapse-button"
+            bindtap="collapseAllCatalog"
+            hover-class="catalog-collapse-pressed"
+            role="button"
+            aria-label="折叠全部目录"
+          >
+            <image src="/assets/icons/list-collapse.svg" mode="aspectFit" />
+          </view>
+        </block>
+        <view wx:else class="catalog-summary-head">
+          <view class="catalog-summary-back" bindtap="backToCatalogDirectory" role="button" aria-label="返回目录">
+            <image src="/assets/icons/arrow-left.svg" mode="aspectFit" />
+          </view>
+          <view class="tool-panel-title">{{catalogSummaryTitle}}</view>
+        </view>
+      </view>
+      <scroll-view class="catalog-scroll" scroll-y="true">
+        <block wx:if="{{catalogView === 'directory'}}">
+          <view class="catalog-empty-state" wx:if="{{!catalogChapters.length && catalogSyncState === 'loading'}}">
+            <view class="catalog-empty-title">正在同步目录</view>
+            <view class="catalog-empty-detail">请稍候</view>
+          </view>
+          <view class="catalog-empty-state" wx:elif="{{!catalogChapters.length}}">
+            <view class="catalog-empty-title">目录暂未同步</view>
+            <view class="catalog-empty-detail">请确认本地后台正在运行</view>
+            <button bindtap="retryCatalogSync">重新加载</button>
+          </view>
+          <block wx:for="{{catalogChapters}}" wx:key="id" wx:for-item="chapter">
+            <view
+              class="catalog-chapter {{activeCatalogId === chapter.id ? 'catalog-current' : ''}}"
+              data-id="{{chapter.id}}"
+              data-title="{{chapter.title}}"
+              bindtap="selectCatalogChapter"
+            >
+              <text class="catalog-node" data-id="{{chapter.id}}" catchtap="toggleCatalogChapter">{{chapter.sections.length ? (chapter.expanded ? '⌄' : '›') : '•'}}</text>
+              <text class="catalog-chapter-title">{{chapter.title}}</text>
+              <text class="catalog-question-count" wx:if="{{chapter.questionCount}}">{{chapter.questionCount}} 题</text>
+            </view>
+            <view class="catalog-sections" wx:if="{{chapter.sections.length && chapter.expanded}}">
+              <view
+                wx:for="{{chapter.sections}}"
+                wx:key="id"
+                wx:for-item="section"
+                class="catalog-section catalog-level-{{section.level || 2}} {{activeCatalogId === section.id ? 'catalog-current' : ''}} {{section.questionId ? '' : 'catalog-unavailable'}}"
+                data-id="{{section.id}}"
+                data-title="{{section.title}}"
+                bindtap="selectCatalogItem"
+              >
+                <text></text><view class="catalog-section-title">{{section.title}}</view><view class="catalog-section-count">{{section.questionCount}} 题</view>
+              </view>
+            </view>
+          </block>
+        </block>
+        <view wx:else class="catalog-question-summary">
+          <view
+            wx:for="{{catalogSummaryQuestions}}"
+            wx:key="id"
+            class="catalog-question-item {{question.id === item.id ? 'catalog-question-current' : ''}}"
+            data-question-id="{{item.id}}"
+            bindtap="selectCatalogQuestion"
+          >
+            <text class="catalog-question-number">{{item.summaryNumber}}</text>
+            <view class="catalog-question-stem">{{item.stem}}</view>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <view class="tool-layer" wx:if="{{searchOpen}}" catchtouchmove="stopTouchMove">
+    <view class="tool-mask" bindtap="closeToolPanels"></view>
+    <view class="question-search-panel" style="top: {{panelTop}}px;">
+      <view class="question-search-row">
+        <view class="question-search-field">
+          <input
+            value="{{searchQuery}}"
+            focus="{{searchFocus}}"
+            confirm-type="search"
+            placeholder="搜索题干、答案或知识点"
+            bindinput="updateSearchQuery"
+            bindconfirm="runQuestionSearch"
+          />
+          <view
+            wx:if="{{searchQuery}}"
+            class="question-search-clear"
+            bindtap="clearQuestionSearch"
+            role="button"
+            aria-label="清除搜索内容"
+          >×</view>
+        </view>
+        <button bindtap="runQuestionSearch">搜索</button>
+      </view>
+      <view class="search-result-summary" wx:if="{{searchHasRun}}">找到 {{searchResults.length}} 道题</view>
+      <scroll-view wx:if="{{searchHasRun}}" class="question-search-results" scroll-y="true">
+        <view
+          class="question-search-result"
+          wx:for="{{searchResults}}"
+          wx:key="id"
+          data-question-id="{{item.id}}"
+          bindtap="selectSearchResult"
+        >
+          <view class="search-result-title">{{item.title}}</view>
+          <view class="search-result-path">{{item.breadcrumb}}</view>
+        </view>
+        <view class="search-empty" wx:if="{{searchResults.length === 0}}">没有找到匹配题目</view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <view class="modal-layer" wx:if="{{utilityPanel}}" catchtouchmove="stopTouchMove">
+    <view class="modal-mask" bindtap="closeUtilityPanel"></view>
+    <view class="utility-dialog {{utilityPanel === 'settings' ? 'utility-dialog-tall' : ''}}">
+      <view class="utility-dialog-head">
+        <view
+          wx:if="{{utilityPanel === 'mode' && modePanelView !== 'main'}}"
+          class="utility-dialog-back"
+          bindtap="backToModePanel"
+          hover-class="utility-dialog-back-pressed"
+          role="button"
+          aria-label="返回上一级"
+        >
+          <image src="/assets/icons/arrow-left.svg" mode="aspectFit" />
+        </view>
+        <view class="dialog-title">{{utilityPanel === 'mode' && modePanelView === 'types' ? '选择题型' : (utilityPanel === 'mode' && modePanelView === 'chapters' ? '章节刷题' : (utilityPanel === 'mode' && modePanelView === 'scope' ? '综合题池' : (utilityPanel === 'mode' && modePanelView === 'difficulty' ? '选择难度' : utilityTitle)))}}</view>
+      </view>
+
+      <scroll-view class="utility-dialog-body" scroll-y="true">
+        <view wx:if="{{utilityPanel === 'answerCard'}}" class="answer-card-content">
+          <view class="answer-card-summary">
+            <text>当前进度</text>
+            <text>已答 {{answeredCount}} / {{question.total}}</text>
+          </view>
+          <view class="answer-number-grid">
+            <button
+              wx:for="{{answerCardItems}}"
+              wx:key="questionId"
+              class="{{item.current ? 'answer-number-current' : ''}} {{item.status === 'answered' ? 'answer-number-answered' : ''}} {{item.status === 'correct' ? 'answer-number-correct' : ''}} {{item.status === 'wrong' ? 'answer-number-wrong' : ''}}"
+              data-number="{{item.number}}"
+              bindtap="selectAnswerCardNumber"
+            >{{item.number}}</button>
+          </view>
+          <view class="answer-card-legend">
+            <text><text class="legend-dot legend-current"></text>当前</text>
+            <text><text class="legend-dot legend-done"></text>已答</text>
+            <text><text class="legend-dot legend-empty"></text>未答</text>
+          </view>
+          <button
+            wx:if="{{practiceMode === 'exam' && !examFinished}}"
+            class="primary-button exam-submit-action"
+            bindtap="submitExam"
+          >提前交卷</button>
+        </view>
+
+        <view wx:if="{{utilityPanel === 'note'}}" class="note-content">
+          <view class="utility-context-title">{{question.knowledgePoint}}</view>
+          <textarea
+            value="{{noteDraft}}"
+            placeholder="记录这道题的知识点或自己的理解"
+            maxlength="2000"
+            auto-height="{{false}}"
+            bindinput="updateNoteDraft"
+          ></textarea>
+          <view class="note-reference-row">
+            <button data-type="stem" bindtap="insertNoteReference">引用题干</button>
+            <button data-type="answer" bindtap="insertNoteReference">引用答案</button>
+            <button data-type="ai" bindtap="insertNoteReference">引用 AI</button>
+          </view>
+          <view class="note-action-row">
+            <button class="primary-button note-save" bindtap="saveCurrentNote">保存笔记</button>
+          </view>
+        </view>
+
+        <view wx:if="{{utilityPanel === 'feedback'}}" class="feedback-content">
+          <view class="utility-section-label">请选择反馈类型</view>
+          <view class="feedback-type-row">
+            <button class="{{feedbackType === 'correction' ? 'feedback-type-active' : ''}}" data-value="correction" bindtap="selectFeedbackType">题目纠错</button>
+            <button class="{{feedbackType === 'issue' ? 'feedback-type-active' : ''}}" data-value="issue" bindtap="selectFeedbackType">问题反馈</button>
+          </view>
+          <textarea
+            wx:if="{{feedbackType}}"
+            value="{{feedbackText}}"
+            placeholder="请说明需要修改或改进的地方"
+            maxlength="1000"
+            bindinput="updateFeedbackText"
+          ></textarea>
+          <button class="primary-button feedback-submit" bindtap="submitContentFeedback">提交反馈</button>
+        </view>
+
+        <view wx:if="{{utilityPanel === 'mode'}}" class="mode-content">
+          <block wx:if="{{modePanelView === 'main'}}">
+            <view class="mode-group">
+              <view class="utility-section-label">训练顺序</view>
+              <view class="mode-option-row">
+                <button class="{{questionOrder === 'sequential' ? 'mode-option-active' : ''}}" data-mode="sequential" bindtap="selectTrainingMode">顺序刷题</button>
+                <button class="{{questionOrder === 'random' ? 'mode-option-active' : ''}}" data-mode="random" bindtap="selectTrainingMode">随机刷题</button>
+              </view>
+            </view>
+            <view class="mode-group">
+              <view class="utility-section-label">训练范围</view>
+              <view class="mode-option-row">
+                <button class="{{trainingScope === 'chapter' && practiceMode !== 'exam' ? 'mode-option-active' : ''}}" data-mode="chapter" bindtap="selectTrainingMode">章节刷题</button>
+                <button class="{{trainingScope === 'type' && practiceMode !== 'exam' ? 'mode-option-active' : ''}}" data-mode="type" bindtap="selectTrainingMode">{{selectedQuestionTypeLabel ? selectedQuestionTypeLabel + '训练' : '题型训练'}}</button>
+              </view>
+              <view class="mode-option-row">
+                <button class="{{trainingScope === 'comprehensive' ? 'mode-option-active' : ''}}" data-mode="scope" bindtap="selectTrainingMode">综合训练</button>
+                <button data-mode="difficulty" bindtap="selectTrainingMode">{{selectedDifficultyStars.length ? '难度已筛选' : '难度选择'}}</button>
+              </view>
+            </view>
+            <view class="mode-group">
+              <view class="utility-section-label">学习与考试</view>
+              <view class="mode-option-row">
+                <button class="{{practiceMode === 'memorize' ? 'mode-option-active' : ''}}" data-mode="memorize" bindtap="selectTrainingMode">背题模式</button>
+                <button class="{{practiceMode === 'exam' ? 'mode-option-active' : ''}}" data-mode="exam" bindtap="selectTrainingMode">组卷</button>
+              </view>
+            </view>
+          </block>
+          <view wx:elif="{{modePanelView === 'types'}}" class="question-type-view">
+            <view class="question-type-list">
+              <button
+                wx:for="{{questionTypeOptions}}"
+                wx:key="type"
+                class="question-type-option {{selectedQuestionType === item.type ? 'question-type-option-active' : ''}}"
+                disabled="{{item.count === 0}}"
+                data-type="{{item.type}}"
+                bindtap="selectQuestionType"
+              >
+                <text>{{item.label}}</text>
+                <text class="question-type-count">{{item.count}} 题</text>
+              </button>
+            </view>
+          </view>
+          <view wx:elif="{{modePanelView === 'chapters'}}" class="chapter-scope-view">
+            <view class="chapter-picker-row">
+              <text class="chapter-picker-label">章</text>
+              <picker mode="selector" range="{{chapterPickerOptions}}" range-key="title" value="{{chapterPickerIndex}}" bindchange="changeChapterPicker">
+                <view class="chapter-picker-value"><text>{{chapterPickerOptions[chapterPickerIndex].title}}</text><text class="chapter-picker-chevron">⌄</text></view>
+              </picker>
+            </view>
+            <view class="chapter-picker-row {{chapterPickerIndex === 0 ? 'chapter-picker-disabled' : ''}}">
+              <text class="chapter-picker-label">节</text>
+              <picker disabled="{{chapterPickerIndex === 0}}" mode="selector" range="{{sectionPickerOptions}}" range-key="title" value="{{sectionPickerIndex}}" bindchange="changeSectionPicker">
+                <view class="chapter-picker-value"><text>{{sectionPickerOptions[sectionPickerIndex].title}}</text><text class="chapter-picker-chevron">⌄</text></view>
+              </picker>
+            </view>
+            <view class="chapter-picker-row {{sectionPickerIndex === 0 ? 'chapter-picker-disabled' : ''}}">
+              <text class="chapter-picker-label">三级标题</text>
+              <picker disabled="{{sectionPickerIndex === 0}}" mode="selector" range="{{headingPickerOptions}}" range-key="title" value="{{headingPickerIndex}}" bindchange="changeHeadingPicker">
+                <view class="chapter-picker-value"><text>{{headingPickerOptions[headingPickerIndex].title}}</text><text class="chapter-picker-chevron">⌄</text></view>
+              </picker>
+            </view>
+            <button class="primary-button chapter-picker-confirm" bindtap="confirmChapterPicker">开始刷题</button>
+          </view>
+          <view wx:elif="{{modePanelView === 'scope'}}" class="question-type-view">
+            <view class="utility-section-label">科目（可多选，不选则全部）</view>
+            <view class="question-type-list">
+              <button wx:for="{{scopeSubjectOptions}}" wx:key="id" class="question-type-option {{item.selected ? 'question-type-option-active' : ''}}" data-id="{{item.id}}" bindtap="toggleScopeSubject">{{item.label}}</button>
+            </view>
+            <view class="utility-section-label">教材（可多选，不选则按科目全部纳入）</view>
+            <view class="question-type-list">
+              <button wx:for="{{scopeBookOptions}}" wx:key="id" class="question-type-option {{item.selected ? 'question-type-option-active' : ''}}" data-id="{{item.id}}" bindtap="toggleScopeBook">{{item.label}}</button>
+            </view>
+            <button class="primary-button chapter-picker-confirm" bindtap="applyComprehensiveScope">开始综合训练</button>
+          </view>
+          <view wx:elif="{{modePanelView === 'difficulty'}}" class="question-type-view">
+            <view class="utility-section-label">选择 1–5 星，可多选；不选表示不限难度</view>
+            <view class="mode-option-row">
+              <button wx:for="{{difficultyOptions}}" wx:key="value" class="{{item.selected ? 'mode-option-active' : ''}}" data-star="{{item.value}}" aria-pressed="{{item.selected}}" bindtap="toggleDifficultyStar">{{item.label}}</button>
+            </view>
+            <button class="primary-button chapter-picker-confirm" bindtap="applyComprehensiveScope">应用难度</button>
+          </view>
+        </view>
+
+        <view wx:if="{{utilityPanel === 'settings'}}" class="settings-content">
+          <view class="setting-row">
+            <view>
+              <view class="setting-name">答题震动反馈</view>
+              <view class="setting-detail">选择答案时提供轻微震动</view>
+            </view>
+            <switch checked="{{settings.vibration}}" color="#171717" data-key="vibration" bindchange="togglePracticeSetting" />
+          </view>
+          <view class="setting-row">
+            <view>
+              <view class="setting-name">显示做题进度</view>
+              <view class="setting-detail">显示题号和章节进度条</view>
+            </view>
+            <switch checked="{{settings.showProgress}}" color="#171717" data-key="showProgress" bindchange="togglePracticeSetting" />
+          </view>
+          <view class="setting-row">
+            <view>
+              <view class="setting-name">选项乱序</view>
+              <view class="setting-detail">未作答选择题随机排列选项</view>
+            </view>
+            <switch checked="{{settings.shuffleOptions}}" color="#171717" data-key="shuffleOptions" bindchange="togglePracticeSetting" />
+          </view>
+          <view class="setting-row">
+            <view>
+              <view class="setting-name">保持屏幕常亮</view>
+              <view class="setting-detail">刷题期间不自动锁屏</view>
+            </view>
+            <switch checked="{{settings.keepScreenOn}}" color="#171717" data-key="keepScreenOn" bindchange="togglePracticeSetting" />
+          </view>
+          <view class="setting-row">
+            <view>
+              <view class="setting-name">刷题笔记自动建档</view>
+              <view class="setting-detail">笔记直接存进知识卡，并按教材的章 / 节 / 小点自动建目录</view>
+            </view>
+            <switch checked="{{noteAutoArchive}}" color="#171717" bindchange="toggleNoteAutoArchive" />
+          </view>
+          <view class="font-setting">
+            <view class="setting-name">题目字体大小 <text>{{settings.fontSize}}</text></view>
+            <slider min="30" max="40" step="1" value="{{settings.fontSize}}" activeColor="#171717" backgroundColor="#dededb" block-size="20" bindchange="changeFontSize" />
+          </view>
+          <view class="record-clear-action" bindtap="clearAttemptRecords" hover-class="record-clear-action-pressed" role="button">
+            <text>清空本章答题记录</text><text class="record-clear-chevron">›</text>
+          </view>
+          <view class="record-clear-action" bindtap="clearWrongRecords" hover-class="record-clear-action-pressed" role="button">
+            <text>清空本章错题记录</text><text class="record-clear-chevron">›</text>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <view class="modal-layer" wx:if="{{shareOpen}}" catchtouchmove="stopTouchMove">
+    <view class="modal-mask" bindtap="closeSharePanel"></view>
+    <view class="share-dialog">
+      <view class="dialog-head share-dialog-head">
+        <view wx:if="{{sharePanelView !== 'menu'}}" class="share-back" bindtap="backSharePanel" hover-class="share-back-pressed" role="button" aria-label="返回分享与导出"><image src="/assets/icons/arrow-left.svg" mode="aspectFit" /></view>
+        <view class="dialog-title {{sharePanelView !== 'menu' ? 'share-dialog-title-with-back' : ''}}">{{sharePanelView === 'question' ? '分享当前题目' : (sharePanelView === 'export' ? '导出整套试卷' : '分享与导出')}}</view>
+        <view class="share-close" bindtap="closeSharePanel" hover-class="share-close-pressed" role="button" aria-label="关闭"><image src="/assets/icons/x.svg" mode="aspectFit" /></view>
+      </view>
+
+      <view class="share-action-menu" wx:if="{{sharePanelView === 'menu'}}">
+        <view class="share-action-row" data-view="question" bindtap="selectSharePanelView" hover-class="share-action-row-pressed" role="button">
+          <view class="share-action-icon"><image src="/assets/icons/share.svg" mode="aspectFit" /></view>
+          <view class="share-action-copy"><view>分享当前题目</view><text>生成只读页面并发送给微信好友</text></view>
+          <text class="share-action-chevron">›</text>
+        </view>
+        <view wx:if="{{examExportAvailable}}" class="share-action-row" data-view="export" bindtap="selectSharePanelView" hover-class="share-action-row-pressed" role="button">
+          <view class="share-action-icon"><image src="/assets/icons/file-download.svg" mode="aspectFit" /></view>
+          <view class="share-action-copy"><view>导出整套试卷</view><text>同时生成试卷 PDF 与答案 PDF</text></view>
+          <text class="share-action-chevron">›</text>
+        </view>
+      </view>
+
+      <view wx:if="{{sharePanelView === 'question'}}">
+        <view class="share-setting">
+          <view>
+            <view class="share-setting-title">允许未登录查看</view>
+            <view class="share-setting-detail">好友可通过只读页面查看题目</view>
+          </view>
+          <switch checked="{{sharePublic}}" color="#171717" bindchange="toggleSharePublic" />
+        </view>
+        <view class="share-preview">
+          <view class="share-preview-label">当前题目</view>
+          <view class="share-preview-title">{{question.knowledgePoint}}</view>
+          <view class="share-preview-path">{{question.breadcrumb}}</view>
+        </view>
+        <button class="primary-button share-submit" open-type="share">发送给微信好友</button>
+      </view>
+
+      <view wx:if="{{sharePanelView === 'export'}}" class="exam-export-panel">
+        <view class="share-preview exam-export-preview">
+          <view class="share-preview-label">整套试卷</view>
+          <view class="share-preview-title">{{practiceScopeTitle}}</view>
+          <view class="exam-export-meta"><text>{{questionQueue.length}} 题</text><text>{{examDeclaredTotalScore || '按卷面计分'}}</text><text>{{examDurationMinutes}} 分钟</text></view>
+        </view>
+        <view class="exam-export-note">将同时生成试卷和答案，两份文件题号与版本完全对应。</view>
+        <view wx:if="{{examExportError}}" class="exam-export-error">{{examExportError}}</view>
+        <view wx:if="{{examExportResult}}" class="exam-export-files">
+          <view class="exam-export-file" data-kind="paper" bindtap="openExamExportFile" hover-class="exam-export-file-pressed" role="button">
+            <view class="exam-export-file-icon">卷</view><view><text>试卷 PDF</text><label>{{examExportResult.files[0].pageCount}} 页</label></view><text class="share-action-chevron">打开</text>
+          </view>
+          <view class="exam-export-file" data-kind="answer" bindtap="openExamExportFile" hover-class="exam-export-file-pressed" role="button">
+            <view class="exam-export-file-icon">答</view><view><text>答案 PDF</text><label>{{examExportResult.files[1].pageCount}} 页</label></view><text class="share-action-chevron">打开</text>
+          </view>
+          <view wx:if="{{examExportResult.reviewQuestionNumbers.length}}" class="exam-export-review-note">其中第 {{examExportResult.reviewQuestionText}} 题答案待复核，文件仍可正常使用。</view>
+        </view>
+        <button class="primary-button share-submit" loading="{{examExporting}}" disabled="{{examExporting}}" bindtap="generateExamExport">{{examExporting ? '正在生成并下载…' : (examExportResult ? '重新生成并下载' : '生成并下载试卷与答案')}}</button>
+      </view>
+    </view>
+  </view>
+
+  <view class="modal-layer ai-modal-layer" wx:if="{{aiDialogOpen}}" catchtouchmove="stopTouchMove">
+    <view class="modal-mask" bindtap="closeAiDialog"></view>
+    <view
+      class="ai-dialog {{aiDialogDragging ? 'ai-dialog-dragging' : ''}}"
+      style="height: {{aiDialogHeight}}px;"
+    >
+      <view
+        class="ai-resize-handle"
+        bindtouchstart="handleAiResizeStart"
+        catchtouchmove="handleAiResizeMove"
+        bindtouchend="handleAiResizeEnd"
+        bindtouchcancel="handleAiResizeEnd"
+        role="slider"
+        aria-label="拖动调整 AI 窗口高度"
+      ><view></view></view>
+
+      <view class="dialog-head ai-dialog-head">
+        <view class="ai-dialog-titlebar">
+          <view class="ai-history-trigger" bindtap="openAiHistory" role="button" aria-label="查看会话记录">
+            <image src="/assets/icons/list.svg" mode="aspectFit" />
+          </view>
+          <view class="dialog-title">AI 解析</view>
+        </view>
+        <view class="ai-dialog-head-right">
+          <text class="ai-credit-label">余额 {{aiCredits}}</text>
+        </view>
+      </view>
+
+      <view class="ai-context">
+        <text>{{aiSessionResult || (isCorrect ? '回答正确' : '回答错误')}}</text>
+        <view>{{aiSessionKnowledge}}</view>
+      </view>
+
+      <scroll-view
+        class="ai-conversation"
+        scroll-y="true"
+        scroll-into-view="{{aiScrollTarget}}"
+      >
+        <view class="ai-empty-state" wx:if="{{!aiMessages.length && !aiGenerating}}">
+          <view class="ai-empty-title">生成这道题的补充解析</view>
+          <view class="ai-empty-text">AI 会区分教材依据与补充说明，生成成功后扣除 1 额度。</view>
+          <button
+            class="primary-button ai-generate-button"
+            loading="{{aiGenerating}}"
+            disabled="{{aiGenerating}}"
+            bindtap="requestAiExplanation"
+          >{{aiGenerating ? '正在生成' : '生成解析 · 1 额度'}}</button>
+        </view>
+
+        <view
+          wx:for="{{aiMessages}}"
+          wx:key="id"
+          id="{{item.id}}"
+          class="chat-message {{item.role === 'user' ? 'chat-message-user' : 'chat-message-ai'}}"
+        >
+          <view class="chat-role">{{item.role === 'user' ? '你' : 'AI 补充'}}</view>
+          <view class="chat-bubble">
+            <rich-text
+              wx:if="{{item.role === 'assistant' && item.text}}"
+              class="chat-rich-text"
+              nodes="{{item.nodes}}"
+            ></rich-text>
+            <text wx:elif="{{item.role === 'user'}}">{{item.text}}</text>
+            <view wx:else class="ai-stream-thinking" aria-label="正在生成">
+              <text></text><text></text><text></text>
+            </view>
+          </view>
+        </view>
+      </scroll-view>
+
+      <view class="ai-composer" wx:if="{{aiMessages.length}}">
+        <input
+          value="{{aiInput}}"
+          placeholder="追问不理解的地方"
+          confirm-type="send"
+          cursor-spacing="24"
+          bindinput="updateAiInput"
+          bindconfirm="sendAiFollowUp"
+        />
+        <button bindtap="sendAiFollowUp" disabled="{{!aiInput || aiGenerating}}" aria-label="发送追问">↑</button>
+      </view>
+      <view class="ai-disclaimer" wx:if="{{aiContent}}">每次有效回复扣除 1 额度 · AI 内容请结合教材核对</view>
+
+      <view class="ai-history-layer ai-history-visible" wx:if="{{aiHistoryOpen}}" catchtouchmove="stopTouchMove">
+        <view class="ai-history-mask" bindtap="closeAiHistory"></view>
+        <view class="ai-history-drawer" catchtap="stopTouchMove">
+          <view class="ai-history-head">
+            <view class="ai-history-back" bindtap="closeAiHistory" role="button" aria-label="返回当前会话">
+              <image src="/assets/icons/arrow-left.svg" mode="aspectFit" />
+            </view>
+            <view class="ai-history-title">会话记录</view>
+            <view class="ai-new-session" bindtap="startNewAiSession" role="button" aria-label="新建会话">
+              <image src="/assets/icons/plus.svg" mode="aspectFit" />
+            </view>
+          </view>
+          <scroll-view class="ai-history-scroll" scroll-y="true">
+            <view class="ai-history-empty" wx:if="{{aiHistory.length === 0}}">
+              生成解析后，会话会自动保存在这里
+            </view>
+            <view class="ai-history-section" wx:if="{{aiHistory.length}}">最近会话</view>
+            <view
+              wx:for="{{aiHistory}}"
+              wx:key="id"
+              class="ai-history-item {{activeAiSessionId === item.id ? 'ai-history-item-active' : ''}}"
+              data-session-id="{{item.id}}"
+              bindtap="selectAiSession"
+            >
+              <view class="ai-history-item-title">{{item.knowledgePoint}}</view>
+              <view class="ai-history-item-preview">{{item.title}}</view>
+              <view class="ai-history-item-meta">
+                <text>{{item.resultLabel}}</text>
+                <text>{{item.timeLabel}}</text>
+              </view>
+            </view>
+          </scroll-view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>
+<view wx:else class="practice-loading" role="status" aria-label="正在准备题目">
+  <view class="practice-loading-spinner"></view>
+</view>

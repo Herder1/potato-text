@@ -1,0 +1,34 @@
+<view class="page-shell note-meta-page" wx:if="{{draft}}">
+  <view class="meta-heading"><view>目标与标签</view><text>确认笔记归属与发布方式</text></view>
+
+  <view class="draft-summary">
+    <view class="draft-title">{{draft.title}}</view>
+    <view class="draft-excerpt">{{draft.contentText}}</view>
+    <view class="draft-meta"><text>{{draft.questionRefs.length}} 道引用题目</text><text>{{draft.images.length}} 张图片</text></view>
+  </view>
+
+  <view class="section-head"><view>推荐目录</view><text>{{recommendationLevel}}</text></view>
+  <view class="recommendation-note"><text>本地推荐 · 不扣 AI 额度</text><view>{{recommendationReason}}</view></view>
+  <view class="directory-panel">
+    <picker range="{{subjects}}" range-key="name" value="{{subjectIndex}}" bindchange="chooseSubject"><view class="directory-row"><text>科目</text><view>{{catalogResolved.subject ? subjects[subjectIndex].name : '请选择科目'}} ›</view></view></picker>
+    <picker disabled="{{!catalogResolved.subject}}" range="{{books}}" range-key="title" value="{{bookIndex}}" bindchange="chooseBook"><view class="directory-row {{!catalogResolved.subject ? 'directory-row-disabled' : ''}}"><text>教材</text><view>{{catalogResolved.book ? (books[bookIndex].title + ' ' + books[bookIndex].volume) : '请选择教材'}} ›</view></view></picker>
+    <picker disabled="{{!catalogResolved.book}}" range="{{chapters}}" range-key="title" value="{{chapterIndex}}" bindchange="chooseChapter"><view class="directory-row {{!catalogResolved.book ? 'directory-row-disabled' : ''}}"><text>单元 / 章</text><view>{{catalogResolved.chapter ? chapters[chapterIndex].title : '请选择单元或章'}} ›</view></view></picker>
+    <picker disabled="{{!catalogResolved.chapter}}" range="{{sections}}" range-key="title" value="{{sectionIndex}}" bindchange="chooseSection"><view class="directory-row {{!catalogResolved.chapter ? 'directory-row-disabled' : ''}}"><text>节</text><view>{{catalogResolved.section ? sections[sectionIndex].title : '请选择节'}} ›</view></view></picker>
+  </view>
+
+  <view class="section-head tag-heading"><view>标签</view><text>点击推荐标签可添加</text></view>
+  <view class="recommended-tags" wx:if="{{recommendedTags.length}}"><view wx:for="{{recommendedTags}}" wx:key="*this" data-value="{{item}}" bindtap="addRecommendedTag">#{{item}}</view></view>
+  <view class="selected-tags" wx:if="{{tags.length}}"><view wx:for="{{tags}}" wx:key="*this" data-value="{{item}}" bindtap="removeTag">#{{item}} ×</view></view>
+  <view class="tag-editor"><input value="{{tagDraft}}" placeholder="补充自定义标签" bindinput="updateTagDraft" bindconfirm="addTag" /><view bindtap="addTag" role="button">添加</view></view>
+
+  <view class="section-head"><view>学习目标</view><text>可多选</text></view>
+  <view class="target-grid"><view class="target {{item.selected ? 'target-active' : ''}}" wx:for="{{learningTargets}}" wx:key="id" data-id="{{item.id}}" bindtap="toggleLearningTarget">{{item.label}}</view></view>
+
+  <view class="section-head"><view>来源与权限</view></view>
+  <view class="choice-row"><view class="choice {{originality === 'original' ? 'choice-active' : ''}}" data-value="original" bindtap="selectOriginality">原创</view><view class="choice {{originality === 'adapted' ? 'choice-active' : ''}}" data-value="adapted" bindtap="selectOriginality">改编整理</view><view class="choice {{originality === 'collected' ? 'choice-active' : ''}}" data-value="collected" bindtap="selectOriginality">转载收录</view></view>
+  <view class="source-field" wx:if="{{originality !== 'original'}}"><input value="{{sourceReference}}" placeholder="填写教材、资料或原作者来源" bindinput="updateSource" /></view>
+  <checkbox-group wx:if="{{originality === 'original'}}" bindchange="confirmOriginal"><label class="declaration"><checkbox value="confirmed" checked="{{originalConfirmed}}" color="#303330" />我确认拥有该内容的发布权</label></checkbox-group>
+  <view class="visibility-row"><view class="visibility {{visibility === 'private' ? 'visibility-active' : ''}}" data-value="private" bindtap="selectVisibility"><text>私密</text><view>仅自己可见</view></view><view class="visibility {{visibility === 'public' ? 'visibility-active' : ''}}" data-value="public" bindtap="selectVisibility"><text>申请公开</text><view>初筛后进入社区</view></view></view>
+
+  <view class="save-note" bindtap="saveNote" role="button">{{saving ? '正在保存' : (visibility === 'public' ? '保存并提交初筛' : '保存笔记')}}</view>
+</view>

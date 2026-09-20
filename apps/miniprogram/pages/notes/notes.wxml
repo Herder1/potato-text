@@ -1,0 +1,36 @@
+<view class="page-shell notes-page">
+  <view class="heading-row">
+    <view>
+      <view class="page-title">笔记</view>
+      <view class="page-subtitle">题目、AI 回答与自己的理解放在一起</view>
+    </view>
+    <button class="create-button" bindtap="createNote">新建</button>
+  </view>
+
+  <view class="search-box">
+    <input value="{{query}}" placeholder="搜索知识点、教材或标签" bindinput="search" />
+  </view>
+
+  <view class="filter-row">
+    <view class="tag tag-green">全部教材</view>
+    <view class="tag">全部标签</view>
+    <view class="tag">复习卡片</view>
+  </view>
+
+  <view class="empty-state panel" wx:if="{{visibleNotes.length === 0}}">
+    <view class="empty-title">还没有笔记</view>
+    <view class="empty-desc">做题时可以引用题目、教材答案或 AI 回答，也可以直接手写记录。</view>
+    <button class="secondary-button empty-button" bindtap="createNote">写第一条笔记</button>
+  </view>
+
+  <view class="note-list" wx:else>
+    <view class="note-item panel" wx:for="{{visibleNotes}}" wx:key="id" data-id="{{item.id}}" bindtap="editNote" role="button">
+      <view class="note-title-row"><view class="note-title">{{item.title}}</view><text class="note-draft-label" wx:if="{{item.draftLabel}}">{{item.draftLabel}}</text></view>
+      <view class="note-content">{{item.content}}</view>
+      <view class="note-foot">
+        <text class="note-source">{{item.source}}</text>
+        <text class="delete-link" data-id="{{item.id}}" catchtap="deleteNote">删除</text>
+      </view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,301 @@
+<page-meta page-style="{{pageScrollLocked ? 'overflow: hidden;' : ''}}" />
+<view class="collection-page" bindtap="handleBlankTap">
+  <view wx:if="{{pack}}">
+    <view class="collection-nav" style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;">
+      <view class="nav-leading">
+        <button class="nav-icon" bindtap="goBack" aria-label="返回"><image src="/assets/icons/arrow-left.svg" mode="aspectFit" /></button>
+        <button class="nav-directory" bindtap="openCatalog" aria-label="目录"><image src="/assets/icons/list.svg" mode="aspectFit" /></button>
+      </view>
+    </view>
+    <view style="height: {{navTotalHeight}}px;"></view>
+
+    <view class="collection-main">
+      <view class="collection-hero">
+        <view class="hero-mark">题</view>
+        <view class="hero-copy">
+          <view class="hero-kicker">{{pack.sourceLabel}} · {{pack.questionCount}} 题</view>
+          <view class="hero-title">{{pack.name}}</view>
+          <view class="hero-description" wx:if="{{pack.description}}">{{pack.description}}</view>
+        </view>
+      </view>
+
+      <view class="type-line" wx:if="{{pack.typeSummary}}">题型：{{pack.typeSummary}}</view>
+      <view class="tag-line" wx:if="{{pack.tags.length}}"><text wx:for="{{pack.tags}}" wx:key="*this">#{{item}}</text></view>
+
+      <view class="section-lead"></view>
+
+      <block wx:for="{{sectionBlocks}}" wx:for-item="item" wx:key="key">
+      <view
+        class="section section-level-block-{{item.section.level}} {{item.section.cards.length ? 'section-with-cards' : 'section-empty'}}"
+        wx:if="{{item.kind === 'title'}}"
+      >
+        <view
+          class="section-title section-level-{{item.section.level}} {{item.section.directoryActive ? 'section-title-active' : ''}} {{dragActive && dragKind === 'directory' && dragKey === item.section.id ? 'title-drag-origin' : ''}}"
+          id="directory-anchor-{{item.section.id}}"
+          data-id="{{item.section.id}}"
+          catchtap="editDirectory"
+          bindlongpress="openDirectoryActions"
+          bindtouchstart="handleTitleTouchStart"
+          bindtouchmove="handleTitleTouchMove"
+          bindtouchend="handleDragTouchEnd"
+          bindtouchcancel="handleDragTouchEnd"
+        ><input
+            wx:if="{{item.section.inlineEditing}}"
+            class="section-title-input section-level-{{item.section.level}}"
+            value="{{directoryInlineValue}}"
+            data-id="{{item.section.id}}"
+            placeholder="输入目录名称"
+            focus="{{true}}"
+            confirm-type="done"
+            bindinput="updateDirectoryInline"
+            bindblur="commitDirectoryInline"
+            bindconfirm="commitDirectoryInline"
+            catchtap="noop"
+          /><block wx:else>{{item.section.title}}<text>{{item.section.displayCount}} 张</text></block></view>
+      </view>
+      <view class="section-cards" wx:else>
+        <view class="card-grid">
+          <view
+            class="study-card {{card.selected ? 'selected' : ''}} {{card.colorSoft ? 'study-card-tinted' : ''}} {{card.isBlank ? 'study-card-blank' : ''}} {{card.deleted ? 'study-card-deleted' : ''}} {{dragActive && dragKind === 'card' && dragKey === card.nodeId ? 'study-card-drag-origin' : ''}}"
+            style="{{card.colorSoft ? '--card-edge: ' + card.colorEdge + '; background: ' + card.colorSoft + ';' : ''}}"
+            wx:for="{{item.section.cards}}"
+            wx:for-item="card"
+            wx:key="id"
+            id="question-anchor-{{card.id}}"
+            data-id="{{card.id}}"
+            data-node-id="{{card.nodeId}}"
+            data-section="{{item.section.id}}"
+            catchtap="openQuestion"
+            bindlongpress="startSelect"
+            bindtouchstart="handleCardTouchStart"
+            bindtouchmove="handleCardTouchMove"
+            bindtouchend="handleDragTouchEnd"
+            bindtouchcancel="handleDragTouchEnd"
+          >
+            <view class="card-tag">{{card.tag}}</view>
+            <view class="study-title">{{card.title}}</view>
+            <view class="study-answer" wx:if="{{card.meta}}">{{card.meta}}</view>
+            <view class="study-foot"><text>{{card.state}}</text><text>{{card.order}} ›</text></view>
+          </view>
+        </view>
+      </view>
+      </block>
+      <view class="outline-empty" wx:if="{{!sections.length}}">暂时没有可展示的题目</view>
+
+      <view wx:if="{{dragActive && dragGhost && dragKind === 'card'}}" class="drag-ghost drag-ghost-card" style="{{dragStyle}}">
+        <view class="card-tag">{{dragGhost.tag}}</view>
+        <view class="study-title">{{dragGhost.title}}</view>
+        <view class="study-answer" wx:if="{{dragGhost.meta}}">{{dragGhost.meta}}</view>
+        <view class="study-foot"><text>{{dragGhost.state}}</text><text>{{dragGhost.order}} ›</text></view>
+        <view class="drag-ghost-count" wx:if="{{dragGroupCount > 1}}">×{{dragGroupCount}}</view>
+      </view>
+      <view wx:if="{{dragActive && dragGhost && dragKind === 'directory'}}" class="drag-ghost drag-ghost-title" style="{{dragStyle}}">{{dragGhost.title}}</view>
+      <view wx:if="{{dragIndicator}}" class="drag-indicator" style="left: {{dragIndicator.left}}px; top: {{dragIndicator.top}}px; width: {{dragIndicator.width}}px; height: {{dragIndicator.height}}px;"></view>
+
+      <view class="context-toolbar context-{{actionMode === 'directory' ? 'center' : 'right'}} {{actionMode === 'directory' ? 'context-toolbar-directory' : 'context-toolbar-cards'}}" wx:if="{{actionMode}}" style="top: {{contextToolbarTop}}px;" catchtap="noop">
+        <block wx:if="{{actionMode === 'directory'}}">
+          <view data-action="edit" bindtap="directoryAction"><image src="/assets/icons/pack-edit.svg" mode="aspectFit"/><label>重命名</label></view>
+          <view data-action="add" bindtap="directoryAction"><image src="/assets/icons/pack-plus.svg" mode="aspectFit"/><label>添加</label></view>
+          <view data-action="level" bindtap="directoryAction"><text class="toolbar-level-mark">H{{activeDirectoryLevel}}</text><label>标题级别</label></view>
+          <view data-action="move" bindtap="directoryAction"><image src="/assets/icons/pack-folder.svg" mode="aspectFit"/><label>移动</label></view>
+          <view data-action="delete" bindtap="directoryAction"><image src="/assets/icons/pack-trash.svg" mode="aspectFit"/><label>删除</label></view>
+          <view bindtap="cancelSelect"><image src="/assets/icons/pack-close.svg" mode="aspectFit"/><label>取消</label></view>
+        </block>
+        <block wx:else>
+          <view wx:if="{{canEditSelected}}" data-action="edit" bindtap="selectionAction"><image src="/assets/icons/pack-edit.svg" mode="aspectFit"/><label>编辑</label></view>
+          <view wx:if="{{canEditSelected}}" data-action="add" bindtap="selectionAction"><image src="/assets/icons/pack-plus.svg" mode="aspectFit"/><label>添加</label></view>
+          <view data-action="color" bindtap="selectionAction"><image src="/assets/icons/pack-palette.svg" mode="aspectFit"/><label>颜色</label></view>
+          <view data-action="delete" bindtap="selectionAction"><image src="/assets/icons/pack-trash.svg" mode="aspectFit"/><label>删除</label></view>
+          <view data-action="move" bindtap="selectionAction"><image src="/assets/icons/pack-folder.svg" mode="aspectFit"/><label>移动</label></view>
+          <view bindtap="cancelSelect"><image src="/assets/icons/pack-close.svg" mode="aspectFit"/><label>取消</label></view>
+        </block>
+      </view>
+
+      <view class="color-picker color-picker-right" wx:if="{{cardColorPickerOpen}}" style="top: {{cardColorPickerTop}}px;" catchtap="noop">
+        <view class="color-dot color-dot-none {{selectedCardColor ? '' : 'color-dot-active'}}" data-key="" bindtap="selectCardColor" role="button" aria-label="无颜色"></view>
+        <view
+          wx:for="{{cardColors}}"
+          wx:key="key"
+          class="color-dot {{selectedCardColor === item.key ? 'color-dot-active' : ''}}"
+          style="background: {{item.soft}};"
+          data-key="{{item.key}}"
+          bindtap="selectCardColor"
+          role="button"
+          aria-label="{{item.label}}"
+        ></view>
+      </view>
+
+      <view class="context-menu-layer" wx:if="{{contextMenuOpen}}" catchtap="closeContextMenu">
+        <view class="context-menu context-menu-{{contextMenuAlign}}" style="top: {{contextMenuTop}}px;">
+          <view class="context-menu-head">{{contextMenuTitle}}</view>
+          <view class="context-menu-item" wx:for="{{contextMenuItems}}" wx:key="key" data-key="{{item.key}}" data-kind="{{item.kind}}" catchtap="selectContextMenuOption">{{item.label}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="collection-footer" catchtap="noop">
+      <button class="footer-action" bindtap="toggleAddMenu" hover-class="footer-action-pressed"><text class="add-mark">＋</text><text>添加卡片</text></button>
+      <button class="footer-primary" bindtap="startPractice" hover-class="footer-primary-pressed" disabled="{{pack.availableCount === 0}}"><text class="play-mark">▶</text><text>开始刷题</text></button>
+      <button class="footer-action" bindtap="toggleMore" hover-class="footer-action-pressed"><text class="more-mark">···</text><text>更多</text></button>
+    </view>
+
+    <view class="add-layer" wx:if="{{addMenuOpen}}">
+      <view class="add-mask" bindtap="closeAddMenu"></view>
+      <view class="add-menu" catchtap="noop">
+        <view class="add-menu-item" bindtap="createDirectory"><text>＋</text><label>新建目录</label></view>
+        <view class="add-menu-item" bindtap="createCard"><text>＋</text><label>新建卡片</label></view>
+      </view>
+    </view>
+
+    <view class="more-layer" wx:if="{{moreOpen}}">
+      <view class="more-mask" bindtap="closeMore"></view>
+      <view class="more-drawer" catchtouchmove="stopTouchMove" catchtap="noop">
+        <view class="drawer-head"><text>{{pack.name}}</text><text class="drawer-close" bindtap="closeMore" role="button" aria-label="关闭">关闭</text></view>
+        <view class="drawer-section">
+          <view class="drawer-section-title">题包操作</view>
+          <view class="drawer-grid">
+            <view class="drawer-item" bindtap="sharePack"><image src="/assets/icons/share.svg" mode="aspectFit" /><label>分享题包</label></view>
+            <view class="drawer-item" wx:if="{{!pack.isPrivate}}" bindtap="collectPack"><image src="/assets/icons/bookmark.svg" mode="aspectFit" /><label>{{pack.collected ? '已收藏' : '收藏题包'}}</label></view>
+            <view class="drawer-item" wx:if="{{pack.isPrivate}}" bindtap="openQuestionImporter"><image src="/assets/icons/card-import.svg" mode="aspectFit" /><label>导入已有题目</label></view>
+          </view>
+        </view>
+        <view class="drawer-section" wx:if="{{pack.isPrivate}}">
+          <view class="drawer-section-title">样式设置</view>
+          <view class="drawer-grid">
+            <view class="drawer-item" bindtap="openPackColorPanel"><image src="/assets/icons/palette.svg" mode="aspectFit" /><label>更换颜色</label></view>
+          </view>
+        </view>
+        <view class="drawer-section" wx:if="{{pack.isPrivate}}">
+          <view class="drawer-section-title">题包管理</view>
+          <view class="drawer-grid">
+            <view class="drawer-item" data-key="rename" bindtap="packManageAction"><image src="/assets/icons/card-rename.svg" mode="aspectFit" /><label>重命名题包</label></view>
+            <view class="drawer-item" data-key="category" bindtap="packManageAction"><image src="/assets/icons/card-move.svg" mode="aspectFit" /><label>移动到分类</label></view>
+            <view class="drawer-item" data-key="delete" bindtap="packManageAction"><image src="/assets/icons/card-delete.svg" mode="aspectFit" /><label>删除题包</label></view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="color-layer" wx:if="{{colorPanelOpen}}" catchtouchmove="stopTouchMove" catchtap="noop">
+      <view class="color-mask" bindtap="closePackColorPanel"></view>
+      <view class="color-panel">
+        <view class="drawer-head"><text>选择卡片颜色</text><text class="drawer-close" bindtap="closePackColorPanel" role="button" aria-label="关闭">关闭</text></view>
+        <view class="color-modes">
+          <view class="color-mode {{colorMode === 'uniform' ? 'color-mode-active' : ''}}" data-mode="uniform" bindtap="selectColorMode" role="button" aria-label="统一颜色">
+            <image src="/assets/icons/palette.svg" mode="aspectFit" />
+            <label>统一颜色</label>
+          </view>
+          <view class="color-mode {{colorMode === 'rainbow' ? 'color-mode-active' : ''}}" data-mode="rainbow" bindtap="selectColorMode" role="button" aria-label="彩虹色">
+            <image src="/assets/icons/palette.svg" mode="aspectFit" />
+            <label>彩虹色</label>
+          </view>
+        </view>
+        <block wx:if="{{colorMode === 'uniform'}}">
+          <view class="color-sheet-grid">
+            <view class="color-swatch color-dot-none {{selectedPackColor ? '' : 'color-swatch-active'}}" data-key="" bindtap="applyUniformPackColor" role="button" aria-label="无颜色"></view>
+            <view
+              wx:for="{{cardColors}}"
+              wx:key="key"
+              class="color-swatch {{selectedPackColor === item.key ? 'color-swatch-active' : ''}}"
+              style="background: {{item.soft}};"
+              data-key="{{item.key}}"
+              bindtap="applyUniformPackColor"
+              role="button"
+              aria-label="{{item.label}}"
+            ></view>
+          </view>
+          <view class="color-note">统一颜色会应用到{{packColorScopeLabel}}。</view>
+        </block>
+        <block wx:else>
+          <view class="color-note">彩虹色会把{{packColorScopeLabel}}按当前顺序依次套用色板颜色，超出后循环。</view>
+          <view class="color-apply" bindtap="applyRainbowPackColor" role="button" aria-label="应用渐变色">应用渐变色</view>
+        </block>
+      </view>
+    </view>
+
+    <view class="import-layer" wx:if="{{questionImporterOpen}}">
+      <view class="import-mask" bindtap="closeQuestionImporter"></view>
+      <view class="import-sheet" catchtouchmove="stopTouchMove" catchtap="noop">
+        <view class="import-head"><text>从我的资产导入题目</text><view class="import-close" bindtap="closeQuestionImporter" role="button" aria-label="关闭">×</view></view>
+        <scroll-view class="import-scroll" scroll-y="true">
+          <view class="import-row" wx:for="{{availableQuestions}}" wx:key="id" data-id="{{item.id}}" bindtap="importExistingQuestion">
+            <view class="import-mark">题</view>
+            <view class="import-copy"><text>{{item.displayTitle}}</text><label>{{item.displayPath}}</label></view>
+            <view class="import-add">＋</view>
+          </view>
+          <view class="import-empty" wx:if="{{!availableQuestions.length}}">没有可导入的题目：可以先用「添加卡片」新建并录入，或这些题目已经在题包里了。</view>
+        </scroll-view>
+      </view>
+    </view>
+
+    <view class="catalog-layer" wx:if="{{catalogOpen}}" catchtouchmove="stopTouchMove" catchtap="noop">
+      <view class="catalog-mask" bindtap="closeCatalog"></view>
+      <view class="catalog-panel" style="top: {{floatingTop}}px;">
+        <view class="catalog-head">
+          <block wx:if="{{catalogView === 'directory'}}">
+            <view class="catalog-title">目录</view>
+            <text class="catalog-status">{{catalogRows.length ? catalogDirectoryCount + ' 个目录' : ''}}</text>
+            <view
+              class="catalog-collapse-button"
+              bindtap="toggleCatalogExpansionAll"
+              hover-class="catalog-pressed"
+              role="button"
+              aria-label="{{catalogExpandedAll ? '折叠全部目录' : '展开全部目录'}}"
+            >
+              <image src="/assets/icons/{{catalogExpandedAll ? 'list-collapse' : 'list-expand'}}.svg" mode="aspectFit" />
+            </view>
+          </block>
+          <block wx:else>
+            <view class="catalog-back" bindtap="backToCatalogDirectory" role="button" aria-label="返回目录">
+              <image src="/assets/icons/arrow-left.svg" mode="aspectFit" />
+            </view>
+            <view class="catalog-title catalog-summary-title">{{catalogSummaryTitle}}</view>
+          </block>
+        </view>
+        <scroll-view class="catalog-scroll" scroll-y="true">
+          <block wx:if="{{catalogView === 'directory'}}">
+            <view class="catalog-empty" wx:if="{{!catalogRows.length}}">
+              <view class="catalog-empty-title">这个题包还没有目录</view>
+              <view class="catalog-empty-detail">可用底部“添加卡片”新建目录</view>
+            </view>
+            <view
+              wx:for="{{catalogRows}}"
+              wx:key="key"
+              class="catalog-row catalog-depth-{{item.depth}}"
+              data-key="{{item.key}}"
+              bindtap="selectCatalogRow"
+            >
+              <text class="catalog-node">{{item.hasChildren ? (item.expanded ? '⌄' : '›') : '•'}}</text>
+              <view class="catalog-row-title">{{item.title}}</view>
+              <view
+                wx:if="{{item.ownCount}}"
+                class="catalog-row-count catalog-row-count-active"
+                data-key="{{item.key}}"
+                catchtap="openCatalogSummary"
+              >{{item.totalCount}} 题</view>
+              <view wx:else class="catalog-row-count">{{item.totalCount}} 题</view>
+            </view>
+          </block>
+          <view wx:else class="catalog-summary">
+            <view
+              wx:for="{{catalogSummaryQuestions}}"
+              wx:key="id"
+              class="catalog-summary-item"
+              data-id="{{item.id}}"
+              bindtap="selectCatalogQuestion"
+            >
+              <text class="catalog-summary-number">{{item.summaryNumber}}</text>
+              <view class="catalog-summary-stem {{item.available ? '' : 'catalog-summary-stem-muted'}}">{{item.title}}</view>
+            </view>
+          </view>
+        </scroll-view>
+      </view>
+    </view>
+  </view>
+
+  <view class="collection-state" wx:elif="{{loading}}">正在读取题包…</view>
+  <view class="collection-state collection-error" wx:else>
+    <view>{{loadError || '题包暂时无法读取'}}</view>
+    <button bindtap="loadCollection">重新加载</button>
+  </view>
+</view>

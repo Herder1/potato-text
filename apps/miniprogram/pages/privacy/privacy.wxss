@@ -1,0 +1,12 @@
+.privacy-page { padding-top: 34rpx; }
+.privacy-title { color: #202522; font-size: 42rpx; font-weight: 900; }
+.privacy-subtitle { margin-top: 8rpx; color: #848b86; font-size: 20rpx; }
+.privacy-intro { margin-top: 28rpx; padding: 22rpx; color: #3f4943; background: #eaf4f2; border: 1rpx solid #dcebe6; border-radius: 8rpx; font-size: 22rpx; line-height: 1.7; }
+.privacy-section { margin-top: 28rpx; padding: 24rpx 22rpx; background: #ffffff; border: 1rpx solid #eaede9; border-radius: 8rpx; }
+.privacy-section-title { color: #28312c; font-size: 26rpx; font-weight: 850; }
+.privacy-item { position: relative; margin-top: 16rpx; padding-left: 20rpx; color: #66706a; font-size: 21rpx; line-height: 1.7; }
+.privacy-item::before { position: absolute; top: 13rpx; left: 2rpx; width: 7rpx; height: 7rpx; background: #6f9e82; border-radius: 50%; content: ""; }
+.privacy-actions { display: grid; margin: 32rpx 0; grid-template-columns: 1fr 1fr; gap: 16rpx; }
+.privacy-actions button { width: 100%; margin: 0; }
+.danger-button { min-height: 88rpx; color: #a13f39; background: #fff1ef; border: 1rpx solid #f0c9c5; border-radius: 10rpx; font-size: 27rpx; font-weight: 600; line-height: 88rpx; }
+.danger-button[disabled] { color: #909793; background: #eef0ee; border-color: #eef0ee; }

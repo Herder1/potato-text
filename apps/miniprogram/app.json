@@ -1,0 +1,58 @@
+{
+  "entryPagePath": "pages/review/review",
+  "restartStrategy": "homePage",
+  "pages": [
+    "pages/review/review",
+    "pages/wrong-book/wrong-book",
+    "pages/review-calendar/review-calendar",
+    "pages/library/library",
+    "pages/library-search/library-search",
+    "pages/practice/practice",
+    "pages/knowledge/knowledge",
+    "pages/card-box/card-box",
+    "pages/card-set/card-set",
+    "pages/pack-collection/pack-collection",
+    "pages/card-set-editor/card-set-editor",
+    "pages/card-editor/card-editor",
+    "pages/knowledge-card/knowledge-card",
+    "pages/analysis/analysis",
+    "pages/notes/notes",
+    "pages/note-editor/note-editor",
+    "pages/note-meta/note-meta",
+    "pages/assets/assets",
+    "pages/contributions/contributions",
+    "pages/community-identity/community-identity",
+    "pages/profile/profile",
+    "pages/store/store",
+    "pages/help-feedback/help-feedback",
+    "pages/privacy/privacy",
+    "pages/exams/exams",
+    "pages/packs/packs",
+    "pages/contribute/contribute",
+    "pages/favorites/favorites",
+    "pages/home/home"
+  ],
+  "window": {
+    "navigationBarTitleText": "薯考",
+    "navigationBarBackgroundColor": "#fbfbfa",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f7f7f5",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "custom": true,
+    "color": "#69736e",
+    "selectedColor": "#137bff",
+    "backgroundColor": "#fbfbfa",
+    "borderStyle": "black",
+    "list": [
+      { "pagePath": "pages/library/library", "text": "题库" },
+      { "pagePath": "pages/knowledge/knowledge", "text": "知识库" },
+      { "pagePath": "pages/review/review", "text": "复习" },
+      { "pagePath": "pages/home/home", "text": "发现" },
+      { "pagePath": "pages/profile/profile", "text": "我的" }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

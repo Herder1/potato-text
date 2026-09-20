@@ -1,0 +1,113 @@
+<view class="page" style="padding-top: {{navTotalHeight}}px;">
+  <view class="editor-nav" style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;">
+    <view class="nav-back" bindtap="goBack" role="button" aria-label="返回">
+      <image src="/assets/icons/arrow-left.svg" mode="aspectFit" />
+    </view>
+    <view class="nav-type" bindtap="openTypePicker" role="button" aria-label="选择卡片类型">
+      <text>{{typeLabel}}</text><view class="nav-chevron {{typePickerOpen ? 'nav-chevron-open' : ''}}"></view>
+    </view>
+    <view class="nav-save" bindtap="save" role="button">保存</view>
+  </view>
+
+  <view class="editor-body">
+    <view class="field question-field">
+      <label>{{type === 'note' ? '标题' : '卡片正面'}}</label>
+      <textarea
+        data-field="question"
+        value="{{question}}"
+        placeholder="{{type === 'note' ? '输入标题' : '输入问题或标题'}}"
+        bindinput="input"
+        bindfocus="onPlainFieldFocus"
+        maxlength="300"
+        auto-height="true"
+      />
+    </view>
+
+    <view class="field answer-field">
+      <label>{{type === 'note' ? '内容' : '卡片背面'}}</label>
+
+      <view class="answer-tools-slot">
+        <view
+          class="answer-tools-anchor {{toolbarDocked ? 'answer-tools-anchor-docked' : 'answer-tools-anchor-inline'}}"
+          style="{{toolbarDocked ? 'bottom:' + keyboardHeight + 'px;' : ''}}"
+          catchtouchstart="holdAnswerToolbar"
+        >
+        <view class="memory-assistant" wx:if="{{assistantOpen}}">
+          <view class="assistant-action" catchtouchend="autoCloze" role="button">
+            <image src="/assets/icons/format-cloze.svg" mode="aspectFit" />
+            <view><text>自动挖空</text><label>标记答案中的关键内容</label></view>
+          </view>
+          <view class="assistant-action" catchtouchend="autoHighlight" role="button">
+            <image src="/assets/icons/format-highlighter.svg" mode="aspectFit" />
+            <view><text>自动划重点</text><label>突出每个分点的核心内容</label></view>
+          </view>
+          <view class="assistant-action" catchtouchend="createMnemonic" role="button">
+            <image src="/assets/icons/card-ear-neutral.svg" mode="aspectFit" />
+            <view><text>记忆口诀</text><label>根据当前答案生成口诀</label></view>
+          </view>
+        </view>
+
+          <view class="keyboard-toolbar">
+            <scroll-view class="toolbar-scroll" scroll-x="true" enhanced="true" show-scrollbar="false">
+            <view class="toolbar-track" wx:if="{{toolbarLevel === 'primary'}}">
+              <view class="tool-button {{activeFormats.bold ? 'tool-active' : ''}}" data-name="bold" catchtouchend="formatText" role="button" aria-label="加粗"><text class="format-bold">B</text><label>加粗</label></view>
+              <view class="tool-button {{activeHighlight ? 'tool-active' : ''}}" catchtouchend="markHighlight" role="button" aria-label="划重点"><image src="/assets/icons/format-highlighter.svg" mode="aspectFit" /><label>重点</label></view>
+              <view class="tool-button {{activeFormats.list ? 'tool-active' : ''}}" data-name="list" data-value="bullet" catchtouchend="formatText" role="button" aria-label="项目列表"><image src="/assets/icons/list.svg" mode="aspectFit" /><label>列表</label></view>
+              <view class="tool-button {{activeCloze ? 'tool-active' : ''}}" catchtouchend="markCloze" role="button" aria-label="挖空"><image src="/assets/icons/format-cloze.svg" mode="aspectFit" /><label>挖空</label></view>
+              <view class="tool-button" catchtouchend="undo" role="button" aria-label="撤销"><image src="/assets/icons/format-undo.svg" mode="aspectFit" /><label>撤销</label></view>
+              <view class="tool-button" catchtouchend="redo" role="button" aria-label="重做"><image src="/assets/icons/format-redo.svg" mode="aspectFit" /><label>重做</label></view>
+              <view class="tool-button {{assistantOpen || assistantBusy ? 'tool-active' : ''}}" catchtouchend="toggleAssistant" role="button" aria-label="记忆助手"><image src="/assets/icons/format-magic.svg" mode="aspectFit" /><label>{{assistantBusy ? '分析中' : '助手'}}</label></view>
+              <view class="tool-button" catchtouchend="toggleSecondaryToolbar" role="button" aria-label="更多格式"><text class="format-more">•••</text><label>更多</label></view>
+            </view>
+
+            <view class="toolbar-track toolbar-secondary" wx:else>
+              <view class="tool-button" catchtouchend="toggleSecondaryToolbar" role="button" aria-label="返回常用工具"><image src="/assets/icons/arrow-left.svg" mode="aspectFit" /><label>返回</label></view>
+              <view class="tool-button {{activeFormats.italic ? 'tool-active' : ''}}" data-name="italic" catchtouchend="formatText" role="button" aria-label="斜体"><text class="format-italic">I</text><label>斜体</label></view>
+              <view class="tool-button {{activeFormats.underline ? 'tool-active' : ''}}" data-name="underline" catchtouchend="formatText" role="button" aria-label="下划线"><text class="format-underline">U</text><label>下划线</label></view>
+              <view class="tool-button {{activeFormats.strike ? 'tool-active' : ''}}" data-name="strike" catchtouchend="formatText" role="button" aria-label="删除线"><text class="format-strike">S</text><label>删除线</label></view>
+              <view class="tool-button" data-name="list" data-value="ordered" catchtouchend="formatText" role="button" aria-label="编号列表"><text class="format-list">1.</text><label>编号</label></view>
+              <view class="tool-button" data-name="align" data-value="left" catchtouchend="formatText" role="button" aria-label="左对齐"><text class="format-align">≡</text><label>左对齐</label></view>
+              <view class="tool-button" data-name="align" data-value="center" catchtouchend="formatText" role="button" aria-label="居中"><text class="format-align format-align-center">≡</text><label>居中</label></view>
+              <view class="tool-button" data-name="color" data-value="#287b96" catchtouchend="formatText" role="button" aria-label="文字颜色"><text class="format-color">A</text><label>颜色</label></view>
+              <view class="tool-button" data-name="fontSize" data-value="20px" catchtouchend="formatText" role="button" aria-label="增大字号"><text class="format-size">Aa</text><label>字号</label></view>
+              <view class="tool-button" catchtouchend="chooseAnswerImage" role="button" aria-label="插入图片"><image src="/assets/icons/format-image.svg" mode="aspectFit" /><label>图片</label></view>
+              <view class="tool-button" catchtouchend="clearFormatting" role="button" aria-label="清除格式"><text class="format-clear">Tx</text><label>清除</label></view>
+            </view>
+            </scroll-view>
+          </view>
+        </view>
+      </view>
+
+      <editor
+        id="card-answer-editor"
+        class="answer-editor"
+        placeholder="{{type === 'note' ? '输入内容' : '输入答案或内容'}}"
+        show-img-size="true"
+        show-img-toolbar="true"
+        show-img-resize="true"
+        adjust-position="{{false}}"
+        hold-keyboard="{{true}}"
+        bindready="onAnswerEditorReady"
+        bindinput="onAnswerInput"
+        bindfocus="onAnswerFocus"
+        bindblur="onAnswerBlur"
+        bindstatuschange="onAnswerFormatChange"
+      ></editor>
+    </view>
+
+    <!-- 卡片归属由它所处的目录决定（在哪个目录新建、被拖到哪个目录），编辑页不再重复填写。 -->
+    <view class="field compact" wx:if="{{type !== 'note'}}">
+      <label>口诀（选填）</label>
+      <input data-field="mnemonic" value="{{mnemonic}}" placeholder="例如：声韵调，韵头腹尾" bindinput="input" bindfocus="onPlainFieldFocus" />
+    </view>
+    <view class="keyboard-spacer" wx:if="{{toolbarDocked}}" style="height: {{keyboardSpacerHeight}}px;"></view>
+  </view>
+
+  <view class="type-picker-mask" wx:if="{{typePickerOpen}}" bindtap="closeTypePicker"></view>
+  <view class="type-picker" wx:if="{{typePickerOpen}}" style="top: {{typePickerTop}}px;">
+    <view class="type-picker-head"><text>选择卡片类型</text><view bindtap="closeTypePicker">×</view></view>
+    <view class="type-option {{type === 'note' ? 'type-option-active' : ''}}" data-type="note" bindtap="selectType"><view><text>笔记卡</text><label>摘录、灵感与知识笔记</label></view><text>{{type === 'note' ? '✓' : ''}}</text></view>
+    <view class="type-option {{type === 'qa' ? 'type-option-active' : ''}}" data-type="qa" bindtap="selectType"><view><text>问答卡</text><label>问题与答案</label></view><text>{{type === 'qa' ? '✓' : ''}}</text></view>
+    <view class="type-option {{type === 'topic' ? 'type-option-active' : ''}}" data-type="topic" bindtap="selectType"><view><text>主题卡</text><label>概念与名词解释</label></view><text>{{type === 'topic' ? '✓' : ''}}</text></view>
+  </view>
+</view>

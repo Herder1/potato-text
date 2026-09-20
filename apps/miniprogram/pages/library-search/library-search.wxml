@@ -1,0 +1,48 @@
+<view class="search-page">
+  <view class="search-head">
+    <view class="search-field">
+      <image src="/assets/icons/search.svg" mode="aspectFit" />
+      <input value="{{query}}" focus="{{inputFocus}}" placeholder="搜索题目、题包、试卷或资料" confirm-type="search" bindinput="updateQuery" bindconfirm="submitSearch" />
+      <view wx:if="{{query}}" class="clear-query" bindtap="clearQuery">×</view>
+    </view>
+    <view class="search-action" bindtap="submitSearch">搜索</view>
+  </view>
+
+  <scroll-view class="scope-scroll" scroll-x="true" enhanced="true" show-scrollbar="false">
+    <view class="scope-row">
+      <view wx:for="{{scopes}}" wx:key="id" class="scope-item {{activeScope === item.id ? 'scope-active' : ''}}" data-id="{{item.id}}" bindtap="selectScope">{{item.label}}</view>
+    </view>
+  </scroll-view>
+
+  <view class="filter-row">
+    <text>{{query || searched ? results.length + ' 条结果' : '可搜索全部学习内容'}}</text>
+    <picker mode="selector" range="{{subjectOptions}}" range-key="label" value="{{subjectIndex}}" bindchange="changeSubject">
+      <view class="subject-picker">{{subjectOptions[subjectIndex].label}}<text>⌄</text></view>
+    </picker>
+  </view>
+
+  <view class="history-section" wx:if="{{!query && history.length}}">
+    <view class="history-head"><text>最近搜索</text><view bindtap="clearHistory">清空</view></view>
+    <view class="history-list"><view wx:for="{{history}}" wx:key="*this" data-value="{{item}}" bindtap="useHistory">{{item}}</view></view>
+  </view>
+
+  <view class="result-list" wx:if="{{query || searched}}">
+    <view class="search-result" wx:for="{{results}}" wx:key="id" data-id="{{item.id}}" data-scope="{{item.scope}}" bindtap="openResult">
+      <view class="result-type result-type-{{item.scope}}">{{item.scope === 'question' ? '题' : item.scope === 'pack' ? '包' : item.scope === 'exam' ? '卷' : '资'}}</view>
+      <view class="result-main">
+        <view class="result-title"><text wx:for="{{item.titleParts}}" wx:key="text" wx:for-item="part" class="{{part.match ? 'keyword' : ''}}">{{part.text}}</text></view>
+        <view class="result-desc" wx:if="{{item.description}}">{{item.description}}</view>
+        <view class="result-meta">{{item.meta}}</view>
+      </view>
+      <view class="result-enter">›</view>
+    </view>
+    <view class="search-empty" wx:if="{{!loading && results.length === 0}}"><view>没有找到相关内容</view><text>换一个关键词或搜索范围试试</text></view>
+    <view class="search-loading" wx:if="{{loading && results.length === 0}}">正在补充搜索结果…</view>
+  </view>
+
+  <view class="search-guide" wx:if="{{!query && !history.length}}">
+    <view class="guide-mark"><image src="/assets/icons/search.svg" mode="aspectFit" /></view>
+    <view>从一个关键词开始</view>
+    <text>可搜索题干、知识点、题包、试卷和资料名称</text>
+  </view>
+</view>

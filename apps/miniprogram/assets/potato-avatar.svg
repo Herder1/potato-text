@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Study potato mascot">
+  <circle cx="256" cy="256" r="256" fill="#EAF4F2"/>
+  <circle cx="256" cy="256" r="224" fill="#F7F7F5"/>
+  <path d="M271 92c4-36 30-58 67-58-3 34-23 61-59 69" fill="#8FBE7C" stroke="#303532" stroke-linecap="round" stroke-linejoin="round" stroke-width="10"/>
+  <path d="M270 101c-6-25-26-42-52-47 3 26 20 47 46 54" fill="#B7D9A7" stroke="#303532" stroke-linecap="round" stroke-linejoin="round" stroke-width="10"/>
+  <path d="M271 102c-9 19-13 35-11 51" fill="none" stroke="#303532" stroke-linecap="round" stroke-width="10"/>
+  <path d="M170 143c-51 29-79 89-73 166 7 97 60 158 157 161 101 4 164-54 166-150 2-86-33-137-93-151-42-10-111-10-157 8Z" fill="#E5C36E" stroke="#303532" stroke-linejoin="round" stroke-width="13"/>
+  <path d="M179 161c-38 31-53 82-48 141" fill="none" stroke="#F3DC96" stroke-linecap="round" stroke-width="18"/>
+  <ellipse cx="202" cy="255" rx="13" ry="17" fill="#303532"/>
+  <ellipse cx="319" cy="255" rx="13" ry="17" fill="#303532"/>
+  <path d="M239 304c12 11 26 11 38 0" fill="none" stroke="#B0473F" stroke-linecap="round" stroke-width="12"/>
+  <circle cx="164" cy="296" r="8" fill="#C59C4E"/>
+  <circle cx="348" cy="296" r="8" fill="#C59C4E"/>
+</svg>

@@ -1,0 +1,183 @@
+<view class="tab-page knowledge-page">
+  <view class="knowledge-nav" style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;">
+    <view
+      class="directory-button"
+      style="height: {{navContentHeight}}px;"
+      bindtap="openDirectory"
+      hover-class="directory-button-pressed"
+      role="button"
+      aria-label="打开知识库目录"
+    ><image src="/assets/icons/list.svg" mode="aspectFit" /></view>
+    <view
+      wx:if="{{libraryMode}}"
+      class="knowledge-nav-title"
+      style="height: {{navContentHeight}}px; line-height: {{navContentHeight}}px;"
+    >{{activeLibraryLabel}}</view>
+  </view>
+  <view style="height: {{navTotalHeight}}px;"></view>
+
+  <block wx:if="{{!libraryMode}}">
+    <view class="channel-tabs">
+      <view
+        wx:for="{{tabs}}"
+        wx:key="id"
+        class="channel-tab {{activeTab === item.id ? 'channel-tab-active' : ''}}"
+        data-id="{{item.id}}"
+        bindtap="selectTab"
+      >{{item.label}}<view></view></view>
+      <view class="search-button" bindtap="toggleSearch" aria-label="搜索精选内容"><view></view></view>
+    </view>
+
+    <view class="search-panel" wx:if="{{searchOpen}}">
+      <view class="search-field"><view class="search-mark"></view><input focus="{{searchOpen}}" value="{{query}}" placeholder="搜索精选内容" bindinput="updateSearch" /><text bindtap="clearSearch">取消</text></view>
+    </view>
+
+    <view class="deck-meta" wx:if="{{activeTab !== 'community' && visibleCards.length}}">
+      <view><text>{{activeTabLabel}}</text><text>左右滑动浏览</text></view>
+      <view>{{currentCardIndex + 1}} / {{visibleCards.length}}</view>
+    </view>
+
+    <view class="community-view" wx:if="{{activeTab === 'community'}}">
+      <view class="community-intro"><view><text>往期社区精选</text><text>经过筛选的优质共享资源</text></view><view>{{visibleCommunityAssets.length}} 条</view></view>
+      <scroll-view class="community-type-scroll" scroll-x="true" enhanced="true" show-scrollbar="false"><view class="community-types"><view wx:for="{{communityTypes}}" wx:key="id" class="community-type {{activeCommunityType === item.id ? 'community-type-active' : ''}}" data-id="{{item.id}}" bindtap="selectCommunityType">{{item.label}}</view></view></scroll-view>
+      <view class="community-list" wx:if="{{visibleCommunityAssets.length}}">
+        <view class="community-asset" wx:for="{{visibleCommunityAssets}}" wx:key="id" data-id="{{item.id}}" bindtap="openLibraryAsset">
+          <view class="asset-head"><text class="asset-type asset-type-{{item.type}}">{{item.typeLabel}}</text><text>{{item.contributor}}</text></view>
+          <view class="asset-title">{{item.title}}</view>
+          <view class="asset-excerpt">{{item.excerpt}}</view>
+          <view class="asset-path">{{item.catalogPath}}</view>
+          <view class="asset-tags"><text wx:for="{{item.tags}}" wx:for-item="tag" wx:key="*this">#{{tag}}</text></view>
+          <view class="asset-foot"><view><text>收藏 {{item.favoriteCount}}</text><text>复制 {{item.copyCount}}</text></view><button data-id="{{item.id}}" catchtap="collectCommunityAsset">{{item.type === 'question_pack' ? '导入私人题库' : '复制到我的资产'}}</button></view>
+        </view>
+      </view>
+      <view class="community-empty" wx:else>暂时没有符合条件的精选内容</view>
+    </view>
+
+    <swiper
+      wx:elif="{{visibleCards.length}}"
+      class="card-deck {{searchOpen ? 'card-deck-search' : ''}}"
+      current="{{currentCardIndex}}"
+      previous-margin="92rpx"
+      next-margin="92rpx"
+      bindchange="changeCard"
+      duration="260"
+    >
+      <swiper-item wx:for="{{visibleCards}}" wx:key="id">
+        <view class="knowledge-card knowledge-card-{{item.type}}" data-id="{{item.id}}" bindtap="openCard">
+          <view class="card-topline"><text class="card-type type-{{item.type}}">{{item.typeLabel}}</text><text>{{item.readMinutes}} 分钟</text></view>
+
+          <block wx:if="{{item.type === 'recitation'}}">
+            <view class="recitation-heading"><text>诗文背诵</text><view class="card-title">{{item.title}}</view><view class="card-subtitle">{{item.subtitle}}</view></view>
+            <view class="recitation-lines"><text wx:for="{{item.recitationLines}}" wx:key="*this">{{item}}</text></view>
+            <view class="recitation-meta"><text>{{item.subject}}</text><text>全文 {{item.recitationLineCount}} 句</text></view>
+          </block>
+
+          <block wx:else>
+            <view class="cover-wrap"><view class="card-cover cover-{{item.coverTone}}"><text>{{item.coverMark}}</text><view>{{item.subject}}</view></view></view>
+            <view class="card-title">{{item.title}}</view>
+            <view class="card-subtitle">{{item.subtitle}}</view>
+            <view class="card-summary">{{item.summary}}</view>
+          </block>
+
+          <view class="card-source"><text>{{item.source}}</text><text>{{item.subject}}</text></view>
+          <view class="card-actions">
+            <view class="card-action {{item.favorited ? 'action-active' : ''}}" data-id="{{item.id}}" catchtap="toggleFavorite"><text class="bookmark-icon"></text><text>{{item.favoriteCount}}</text></view>
+            <view class="card-action" data-id="{{item.id}}" catchtap="addComment"><text class="comment-icon"></text><text>{{item.commentCount}}</text></view>
+            <view class="card-action {{item.helpful ? 'action-active' : ''}}" data-id="{{item.id}}" catchtap="toggleHelpful"><text class="heart-icon">♡</text><text>{{item.helpfulCount}}</text></view>
+          </view>
+        </view>
+      </swiper-item>
+    </swiper>
+
+    <view wx:else class="empty-state"><view>这里还没有精选内容</view><text>{{query ? '换一个关键词试试' : '可从左上角目录进入完整资源库'}}</text></view>
+  </block>
+
+  <block wx:else>
+    <view class="library-browser-head">
+      <view class="library-toolbar">
+        <view class="library-toolbar-title"><text>{{activeLibraryLabel}}</text><label>{{visibleLibraryCount}} 项</label></view>
+        <view class="library-tools">
+          <view class="library-tool" bindtap="toggleSearch" aria-label="搜索"><image src="/assets/icons/search.svg" mode="aspectFit" /></view>
+          <view class="library-tool" bindtap="toggleDirectorySort" aria-label="排序"><view class="directory-sort-icon"><text></text><text></text><text></text></view></view>
+          <view class="library-tool" bindtap="toggleDirectoryFilter" aria-label="筛选"><image src="/assets/icons/sliders.svg" mode="aspectFit" /></view>
+        </view>
+      </view>
+      <view class="search-panel" wx:if="{{searchOpen}}"><view class="search-field"><view class="search-mark"></view><input focus="{{searchOpen}}" value="{{query}}" placeholder="搜索{{activeLibraryLabel}}" bindinput="updateSearch" /><text bindtap="clearSearch">取消</text></view></view>
+      <view class="library-inline-menu" wx:if="{{directorySortOpen}}"><view class="directory-menu-option {{sortMode === item.id ? 'directory-menu-active' : ''}}" wx:for="{{sortOptions}}" wx:key="id" data-id="{{item.id}}" bindtap="selectSort"><text>{{item.label}}</text><label wx:if="{{sortMode === item.id}}">✓</label></view></view>
+      <view class="library-inline-menu library-filter-menu" wx:if="{{directoryFilterOpen}}"><view class="directory-menu-option {{subjectFilter === item.id ? 'directory-menu-active' : ''}}" wx:for="{{subjectOptions}}" wx:key="id" data-id="{{item.id}}" bindtap="selectSubjectFilter"><text>{{item.label}}</text><label wx:if="{{subjectFilter === item.id}}">✓</label></view></view>
+    </view>
+
+    <view class="library-feed" wx:if="{{visibleLibraryCount}}">
+      <view class="library-card {{item.type === 'recitation' ? 'library-card-recitation' : ''}}" wx:for="{{visibleLibraryCards}}" wx:key="id" data-id="{{item.id}}" bindtap="openCard">
+        <view class="library-cover {{item.type === 'recitation' ? 'library-cover-recitation' : ''}} cover-{{item.coverTone}}"><text>{{item.coverMark}}</text></view>
+        <view class="library-card-copy">
+          <view class="library-card-head"><text class="card-type type-{{item.type}}">{{item.typeLabel}}</text><label>{{item.readMinutes}} 分钟</label></view>
+          <view class="library-card-title">{{item.title}}</view>
+          <view class="library-card-summary">{{item.summary}}</view>
+          <view class="library-card-foot"><text>{{item.subject}}</text><text>{{item.source}}</text></view>
+        </view>
+        <view class="library-chevron"></view>
+      </view>
+      <view class="community-asset" wx:for="{{visibleLibraryAssets}}" wx:key="id" data-id="{{item.id}}" bindtap="openLibraryAsset">
+        <view class="asset-head"><text class="asset-type asset-type-{{item.type}}">{{item.typeLabel}}</text><text>{{item.contributor}}</text></view>
+        <view class="asset-title">{{item.title}}</view>
+        <view class="asset-excerpt">{{item.excerpt}}</view>
+        <view class="asset-path">{{item.catalogPath}}</view>
+        <view class="asset-tags"><text wx:for="{{item.tags}}" wx:for-item="tag" wx:key="*this">#{{tag}}</text></view>
+        <view class="asset-foot"><view><text>收藏 {{item.favoriteCount}}</text><text>复制 {{item.copyCount}}</text></view><button data-id="{{item.id}}" catchtap="collectCommunityAsset">{{item.type === 'question_pack' ? '导入私人题库' : '复制到我的资产'}}</button></view>
+      </view>
+    </view>
+    <view wx:else class="empty-state"><view>这个资源库暂时没有内容</view><text>{{query ? '换一个关键词或筛选条件试试' : '新内容会在通过审核后出现在这里'}}</text></view>
+  </block>
+
+  <view class="knowledge-directory-layer knowledge-directory-visible" wx:if="{{directoryOpen}}" catchtouchmove="stopTouchMove">
+    <view class="knowledge-directory-mask" bindtap="closeDirectory"></view>
+    <view class="knowledge-directory" style="padding-top: {{statusBarHeight}}px;">
+      <view class="directory-head"><view><text>知识库目录</text><label>选择资源空间</label></view><view class="directory-close" bindtap="closeDirectory" role="button" aria-label="关闭目录"><view class="directory-close-line directory-close-line-a"></view><view class="directory-close-line directory-close-line-b"></view></view></view>
+      <scroll-view class="directory-scroll" scroll-y="true" enhanced="true" show-scrollbar="false">
+        <view class="directory-home {{activeDirectoryId === 'all' ? 'directory-home-active' : ''}}" bindtap="showRecommendation"><view class="directory-home-mark">荐</view><view><text>推荐首页</text><label>横滑浏览平台与往期精选</label></view><view class="directory-chevron"></view></view>
+        <view class="directory-section-title">资源知识库</view>
+        <view class="directory-item {{activeDirectoryId === item.id ? 'directory-item-active' : ''}}" wx:for="{{directoryItems}}" wx:key="id" data-id="{{item.id}}" bindtap="selectDirectoryItem"><view class="directory-item-mark">{{item.mark}}</view><view><text>{{item.label}}</text><label>{{item.description}}</label></view><view class="directory-chevron"></view></view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <view class="detail-mask" wx:if="{{expandedCard}}" bindtap="closeCard"></view>
+  <view class="detail-sheet" wx:if="{{expandedCard}}">
+    <view class="sheet-handle"></view>
+    <view class="sheet-head">
+      <view><text>{{expandedCard.typeLabel}}</text><view>{{expandedCard.title}}</view></view>
+      <view class="sheet-close" bindtap="closeCard">×</view>
+    </view>
+    <scroll-view class="sheet-content" scroll-y="true" enhanced="true" show-scrollbar="false">
+      <view class="detail-summary">{{expandedCard.summary}}</view>
+      <view wx:if="{{expandedCard.quotes.length}}" class="detail-section"><view class="detail-title">经典名句</view><view class="quote-row" wx:for="{{expandedCard.quotes}}" wx:for-item="quote" wx:key="*this">{{quote}}</view></view>
+      <view wx:if="{{expandedCard.features.length}}" class="detail-section"><view class="detail-title">记忆要点</view><view class="feature-row" wx:for="{{expandedCard.features}}" wx:for-item="feature" wx:key="*this"><text>{{index + 1}}</text><view>{{feature}}</view></view></view>
+    </scroll-view>
+    <view class="detail-action-bar"><button class="review-add" data-id="{{expandedCard.id}}" bindtap="addToReview" disabled="{{expandedCard.inReview}}">{{expandedCard.inReview ? '已加入复习' : '加入复习'}}</button></view>
+  </view>
+
+  <view class="detail-mask" wx:if="{{selectedLibraryAsset}}" bindtap="closeLibraryAsset"></view>
+  <view class="asset-detail-sheet" wx:if="{{selectedLibraryAsset}}">
+    <view class="sheet-handle"></view>
+    <view class="asset-detail-head">
+      <view><text>{{selectedLibraryAsset.typeLabel}}</text><view>{{selectedLibraryAsset.title}}</view></view>
+      <view class="sheet-close" bindtap="closeLibraryAsset">×</view>
+    </view>
+    <scroll-view class="asset-detail-scroll" scroll-y="true" enhanced="true" show-scrollbar="false">
+      <view class="asset-detail-byline"><text>{{selectedLibraryAsset.contributor || '平台内容'}}</text><text>{{selectedLibraryAsset.catalogPath}}</text></view>
+      <view class="asset-detail-content">{{selectedLibraryAsset.detailContent}}</view>
+      <view class="asset-detail-tags" wx:if="{{selectedLibraryAsset.tags.length}}"><text wx:for="{{selectedLibraryAsset.tags}}" wx:key="*this">#{{item}}</text></view>
+
+      <view class="asset-question-section" wx:if="{{selectedLibraryAsset.type === 'question_pack'}}">
+        <view class="asset-question-title"><text>题包内容</text><label>{{selectedLibraryAsset.questions.length}} 道题</label></view>
+        <view class="asset-question-row" wx:for="{{selectedLibraryAsset.questions}}" wx:key="id"><text>{{index + 1}}</text><view><label>{{item.typeLabel}}</label><view>{{item.stem}}</view></view></view>
+        <view class="asset-question-empty" wx:if="{{!selectedLibraryAsset.questions.length}}">题目清单暂未同步，可导入后在私人题库查看。</view>
+      </view>
+
+      <button wx:if="{{selectedLibraryAsset.type === 'question_pack' && selectedLibraryAsset.importedPackId}}" class="asset-detail-action" bindtap="openSelectedPack">打开私人题包</button>
+      <button wx:elif="{{selectedLibraryAsset.type === 'question_pack'}}" class="asset-detail-action" bindtap="collectSelectedLibraryAsset">导入私人题库</button>
+      <button wx:else class="asset-detail-action" bindtap="collectSelectedLibraryAsset" disabled="{{selectedLibraryAsset.copied}}">{{selectedLibraryAsset.copied ? '已复制到我的资产' : '复制到我的资产'}}</button>
+    </scroll-view>
+  </view>
+</view>

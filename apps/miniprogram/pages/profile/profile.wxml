@@ -1,0 +1,43 @@
+<view class="profile-page">
+  <view class="profile-nav" style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;"></view>
+  <view style="height: {{navTotalHeight}}px;"></view>
+
+  <view class="page-shell tab-page profile-content">
+  <view class="profile-topbar">
+    <view class="profile-notification-button" bindtap="openNotifications" role="button" aria-label="消息通知">
+      <image src="/assets/icons/bell.svg" mode="aspectFit" />
+      <view class="notification-dot" wx:if="{{unreadNotificationCount > 0}}"></view>
+    </view>
+    <button data-name="设置" bindtap="openMenu">设置</button>
+  </view>
+
+  <view class="identity-block">
+    <image wx:if="{{avatarUrl}}" class="avatar avatar-image" src="{{avatarUrl}}" mode="aspectFill" />
+    <view wx:else class="avatar">薯</view>
+    <view class="nickname">{{nickname}}</view>
+    <view class="identity-note">{{loggedIn ? '微信账号已连接，学习记录可跨设备同步' : '登录后同步复习记录、订阅与 AI 额度'}}</view>
+    <button class="login-link" bindtap="login">{{loggedIn ? '账号已登录' : '微信快捷登录'}}</button>
+  </view>
+
+  <view class="section-heading asset-heading">
+    <view class="section-title">我的资产</view>
+    <view class="section-more" data-name="我的资产" bindtap="openMenu">管理</view>
+  </view>
+  <view class="asset-summary" data-name="我的资产" bindtap="openMenu">
+    <view><text>{{assetStats.total}}</text><text>全部资产</text></view>
+    <view><text>{{assetStats.questions}}</text><text>题目</text></view>
+    <view><text>{{assetStats.packs}}</text><text>题包</text></view>
+    <view><text>{{assetStats.notes}}</text><text>笔记</text></view>
+  </view>
+
+  <view class="section-title menu-title">账户与服务</view>
+  <view class="menu-list panel">
+    <view class="menu-row" wx:for="{{menu}}" wx:key="*this" data-name="{{item}}" bindtap="openMenu">
+      <text>{{item}}</text>
+      <text class="menu-more">查看</text>
+    </view>
+  </view>
+
+  </view>
+
+</view>

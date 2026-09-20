@@ -1,0 +1,48 @@
+.page{min-height:100vh;padding:30rpx 28rpx 46rpx;background:#f4f6f4;box-sizing:border-box}.crumb{margin:4rpx 3rpx 25rpx;color:#839088;font-size:19rpx}.card-shell{min-height:570rpx;padding:36rpx;background:#fff;border-radius:8rpx;box-shadow:0 10rpx 28rpx rgba(36,56,44,.1);box-sizing:border-box}.side{display:flex;min-height:498rpx;flex-direction:column}.side-label{color:#0b9588;font-size:19rpx;font-weight:700}.question,.answer{margin:auto 0;color:#202823;font-size:34rpx;font-weight:700;line-height:1.55;white-space:pre-wrap}.answer{font-size:28rpx;font-weight:500}.tap-tip{margin-top:auto;color:#9aa39e;font-size:18rpx;text-align:center}.mnemonic{margin-top:18rpx;padding:17rpx 20rpx;color:#526059;background:#e9f5f1;border-radius:8rpx;font-size:21rpx;line-height:1.55}.mnemonic text{margin-right:13rpx;color:#0b9588;font-weight:700}.hint-card{margin-top:14rpx;padding:18rpx 20rpx;background:#fff;border-radius:8rpx;box-shadow:0 3rpx 12rpx rgba(39,59,49,.05)}.hint-card>view:first-child{display:flex;justify-content:space-between;color:#0b9588;font-size:19rpx}.hint-card>view:first-child text:last-child{color:#98a29c;font-size:16rpx}.hint-text{margin-top:13rpx;color:#46524b;font-size:22rpx;line-height:1.7;white-space:pre-wrap}.tool-row{display:flex;height:112rpx;margin-top:20rpx;align-items:center;justify-content:space-around;background:#fff;border-radius:8rpx;box-shadow:0 4rpx 14rpx rgba(39,59,49,.05)}.tool-row>view{display:flex;min-width:92rpx;flex-direction:column;align-items:center;color:#627069}.tool-row text{height:38rpx;color:#0b9588;font-size:29rpx}.tool-row label{font-size:18rpx}.mastery{display:grid;margin-top:20rpx;grid-template-columns:repeat(4,1fr);gap:10rpx}.mastery view{padding:18rpx 0;border-radius:8rpx;font-size:19rpx;text-align:center}.mastery view:nth-child(1){color:#db5a58;background:#ffebeb}.mastery view:nth-child(2){color:#c47d20;background:#fff3dd}.mastery view:nth-child(3){color:#0b9588;background:#e3f6f1}.mastery view:nth-child(4){color:#3977df;background:#e9f1ff}.mask{position:fixed;z-index:7;inset:0;background:rgba(25,36,29,.32)}.association-sheet{position:fixed;z-index:8;right:0;bottom:0;left:0;min-height:330rpx;padding:15rpx 28rpx 45rpx;background:#fff;border-radius:16rpx 16rpx 0 0;box-sizing:border-box}.handle{width:65rpx;height:7rpx;margin:0 auto 24rpx;background:#dce2de;border-radius:8rpx}.sheet-title{margin-bottom:14rpx;color:#27302a;font-size:29rpx;font-weight:800}.association-row{display:flex;padding:22rpx 5rpx;align-items:center;border-top:1rpx solid #edf0ee;gap:14rpx}.association-row view{color:#0b9588;font-size:28rpx}.association-row text{color:#354039;font-size:23rpx}.association-row label{margin-left:auto;color:#99a39d;font-size:31rpx}.association-empty{padding:40rpx 0;color:#929c96;font-size:21rpx;text-align:center}
+.page{padding-bottom:176rpx}.front .question{margin:28rpx 0 0}.tool-row{position:fixed;z-index:6;right:48rpx;bottom:28rpx;left:48rpx;height:106rpx;margin-top:0;border-radius:58rpx;box-shadow:0 10rpx 30rpx rgba(35,55,44,.14)}.tool-row>view{height:86rpx;justify-content:center;border-radius:44rpx}.mastery{position:fixed;z-index:5;right:48rpx;bottom:150rpx;left:48rpx;margin-top:0;padding:10rpx;background:rgba(244,246,244,.96);border-radius:12rpx}
+.mastery{position:static;right:auto;bottom:auto;left:auto;margin-top:16rpx;padding:10rpx;background:#f4f6f4;border-radius:12rpx}
+.page{padding-bottom:188rpx}.card-shell,.hint-card,.mnemonic{border-radius:16rpx}.tool-row{right:48rpx;bottom:40rpx;left:48rpx;height:106rpx;border-radius:56rpx;box-shadow:0 10rpx 30rpx rgba(35,55,44,.14)}.tool-row>view{min-width:92rpx;height:86rpx;border-radius:44rpx}.tool-row label{margin-top:4rpx;font-size:17rpx}.tool-icon{display:block;width:32rpx;height:32rpx}.mastery view{border:2rpx solid transparent;border-radius:10rpx;transition:transform .12s ease,box-shadow .12s ease;box-sizing:border-box}.mastery .mastery-active{font-weight:750;box-shadow:inset 0 0 0 2rpx currentColor,0 4rpx 12rpx rgba(38,52,44,.1);transform:translateY(-2rpx)}.mastery .mastery-press{opacity:.76;transform:scale(.97)}.association-row image{display:block;width:30rpx;height:30rpx}
+.answer-rich{display:block;width:100%;overflow-wrap:anywhere;word-break:break-word}.answer-rich p,.answer-rich div,.answer-rich ul,.answer-rich ol{margin:12rpx 0}.answer-rich ul,.answer-rich ol{padding-left:40rpx}.hint-card{height:auto;max-height:none}.hint-text{overflow-wrap:anywhere;word-break:break-word}
+.hint-lines{display:flex;margin-top:14rpx;flex-direction:column;gap:9rpx}.hint-line{display:flex;min-height:34rpx;align-items:flex-start;color:#46524b;font-size:22rpx;line-height:1.6}.hint-marker{flex:0 0 auto;color:#36443d;font-variant-numeric:tabular-nums}.hint-parts{min-width:0;flex:1;overflow-wrap:anywhere;white-space:pre-wrap;word-break:break-all}.hint-fragment{white-space:inherit}.hint-gap{color:transparent;text-decoration:underline;text-decoration-line:underline;text-decoration-color:#86c3bd;text-decoration-thickness:2rpx;text-decoration-skip-ink:none;text-underline-offset:3rpx}
+/* 笔记卡：上方标题、下方内容，内容长了就在卡片内向下滚动，没有翻页。 */
+.note-side .note-title{margin:24rpx 0 0;font-size:32rpx}
+.note-body{margin-top:20rpx;max-height:58vh}
+.note-body .answer{margin:0}
+/* ②「来源题目」：默认一条细栏（照复习页公告条），点开才是整道题。 */
+.source-bar{display:flex;height:76rpx;margin:0 3rpx 20rpx;padding:0 20rpx;align-items:center;background:#f2f3f0;border:1rpx solid #e4e6e1;border-radius:8rpx;box-sizing:border-box;gap:14rpx}
+.source-icon{display:flex;width:38rpx;height:38rpx;flex:0 0 38rpx;align-items:center;justify-content:center;color:#0b9588;background:#e3f6f1;border-radius:50%;font-size:19rpx;font-weight:700}
+.source-summary{min-width:0;overflow:hidden;color:#4e5551;font-size:22rpx;line-height:1.4;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.source-detail{color:#202522;font-size:21rpx;font-weight:700;flex:0 0 auto}
+.source-layer{position:fixed;z-index:40;top:0;right:0;bottom:0;left:0;display:flex;padding:0 36rpx;align-items:center;justify-content:center;background:rgba(20,28,23,.45)}
+.source-dialog{display:flex;width:100%;max-width:680rpx;max-height:76vh;overflow:hidden;flex-direction:column;background:#fbfbfa;border:1rpx solid rgba(255,255,255,.72);border-radius:16rpx;box-sizing:border-box}
+.source-dialog-head{display:flex;height:92rpx;padding:0 26rpx 0 30rpx;align-items:center;justify-content:space-between;border-bottom:1rpx solid #e8eae7;color:#242925;font-size:29rpx;font-weight:800;box-sizing:border-box}
+.source-close{display:flex;width:58rpx;height:58rpx;align-items:center;justify-content:center;color:#717873;background:#eef0ed;border-radius:50%;font-size:34rpx;font-weight:300;line-height:1;box-sizing:border-box}
+/* scroll-view 自带 width:100%，加 padding 必须配 box-sizing，否则会往右撑出容器。 */
+.source-scroll{width:100%;min-height:0;padding:28rpx 30rpx;flex:1;box-sizing:border-box}
+.source-path{color:#8b968f;font-size:19rpx;line-height:1.5;overflow-wrap:anywhere}
+.source-stem{margin-top:14rpx;color:#1f2421;font-size:27rpx;font-weight:700;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.source-options{display:flex;margin-top:20rpx;flex-direction:column;gap:12rpx}
+.source-option{display:flex;color:#46524b;font-size:23rpx;line-height:1.6;gap:14rpx}
+.source-option text{flex:0 0 auto;color:#0b9588;font-weight:700}
+.source-option label{min-width:0;flex:1;overflow-wrap:anywhere;word-break:break-word}
+.source-answer{margin-top:22rpx;padding:18rpx 20rpx;color:#46524b;background:#eef6f2;border-radius:8rpx;font-size:22rpx;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;box-sizing:border-box}
+.source-answer text{display:block;margin-bottom:8rpx;color:#0b9588;font-size:19rpx;font-weight:700}
+.source-notice{margin-top:18rpx;color:#8b968f;font-size:20rpx}
+/* 底部两个按钮沿用其它弹窗的等分网格写法（如 assets 的 .sheet-actions），
+   不依赖微信 button 的默认整宽与 text-align。 */
+.source-actions{display:grid;padding:20rpx 30rpx 26rpx;border-top:1rpx solid #e8eae7;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16rpx;box-sizing:border-box}
+.source-actions button{display:flex;height:84rpx;min-width:0;margin:0;padding:0 12rpx;align-items:center;justify-content:center;font-size:24rpx;line-height:1;text-align:center}
+.source-actions button::after{border:none}
+.source-practice{color:#fff;background:#0b9588;border-radius:8rpx}
+.source-dismiss{color:#5b675f;background:#eef0ed;border-radius:8rpx}
+
+/* DEC-088：左右滑动切卡时的轻量滑入动效（方向跟随手势）。 */
+.card-slide-left{animation:card-in-left .26s ease-out}
+.card-slide-right{animation:card-in-right .26s ease-out}
+@keyframes card-in-left{from{opacity:.25;transform:translateX(56rpx)}to{opacity:1;transform:translateX(0)}}
+@keyframes card-in-right{from{opacity:.25;transform:translateX(-56rpx)}to{opacity:1;transform:translateX(0)}}
+
+/* DEC-088：卡片位置提示（右上角，与面包屑同一行）。 */
+.crumb-row{display:flex;margin:4rpx 3rpx 25rpx;align-items:baseline;justify-content:space-between;gap:16rpx}
+.crumb-row .crumb{min-width:0;flex:1;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crumb-position{flex:0 0 auto;color:#5b6a62;font-size:19rpx;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:1rpx}

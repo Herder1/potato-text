@@ -1,0 +1,49 @@
+<view class="page-shell review-calendar-page">
+  <view class="calendar-month-head">
+    <view class="calendar-month-title">{{monthTitle}}</view>
+    <view class="calendar-month-actions">
+      <view data-offset="-1" bindtap="changeWeek" aria-label="上一周"><view class="calendar-prev"></view></view>
+      <view data-offset="1" bindtap="changeWeek" aria-label="下一周"><view class="calendar-next"></view></view>
+    </view>
+  </view>
+
+  <view class="calendar-week">
+    <view class="calendar-day {{item.selected ? 'calendar-day-selected' : ''}} {{item.outsideMonth ? 'calendar-day-muted' : ''}}" wx:for="{{weekDays}}" wx:key="key" data-date="{{item.key}}" bindtap="selectDate">
+      <text>{{item.weekday}}</text><view>{{item.day}}</view><label wx:if="{{item.count}}">{{item.count}}题</label><label wx:else>{{item.today ? '今天' : ''}}</label>
+    </view>
+  </view>
+
+  <view class="review-cycle-panel">
+    <view class="review-cycle-head"><view>记忆巩固周期</view><text>自动排期</text></view>
+    <view class="review-cycle-grid">
+      <view class="review-cycle-item" wx:for="{{stageMeta}}" wx:key="label"><view style="background: {{item.color}};"></view><text>{{item.label}}</text><label>{{item.interval}}</label></view>
+    </view>
+  </view>
+
+  <view class="calendar-list-head">
+    <view>{{selectedDateLabel}} · 复习安排</view>
+    <view class="calendar-today" wx:if="{{selectedDate !== todayDate}}" bindtap="selectToday">今天</view>
+    <text wx:else>{{reviewItems.length + completedItems.length}} 题</text>
+  </view>
+
+  <view class="calendar-section-head" wx:if="{{reviewItems.length}}"><view>待复习</view><text>{{reviewItems.length}} 题</text></view>
+  <view class="calendar-review-list" wx:if="{{reviewItems.length}}">
+    <view class="calendar-review-row" wx:for="{{reviewItems}}" wx:key="id" data-question-id="{{item.id}}" bindtap="startQuestionReview">
+      <view class="calendar-stage-dot" style="background: {{item.stageMeta.color}};"></view>
+      <view class="calendar-review-main"><view>{{item.stem}}</view><text>{{item.subjectName}} · {{item.overdue ? '逾期未完成 · ' : ''}}{{item.stageMeta.label}}</text></view>
+      <view class="calendar-row-chevron"></view>
+    </view>
+    <button class="calendar-start" bindtap="startDayReview">开始复习 {{reviewItems.length}} 道题</button>
+  </view>
+
+  <view class="calendar-section-head" wx:if="{{completedItems.length}}"><view>已完成</view><text>{{completedItems.length}} 题</text></view>
+  <view class="calendar-review-list calendar-completed-list" wx:if="{{completedItems.length}}">
+    <view class="calendar-review-row calendar-review-row-completed" wx:for="{{completedItems}}" wx:key="id" data-question-id="{{item.id}}" bindtap="startCompletedReview">
+      <view class="calendar-stage-dot" style="background: {{item.completionMeta.color}};"></view>
+      <view class="calendar-review-main"><view>{{item.stem}}</view><text>{{item.completionLine}}</text></view>
+      <view class="calendar-row-chevron"></view>
+    </view>
+  </view>
+
+  <view class="calendar-empty" wx:if="{{!reviewItems.length && !completedItems.length}}"><view>当天没有复习安排</view><text>切换日期可以查看之后的复习安排。</text></view>
+</view>

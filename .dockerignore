@@ -1,0 +1,32 @@
+# Docker 构建上下文排除清单（保留在本地，不进镜像）。
+# 关键作用：把教材/试卷 PDF、tmp 里的无头浏览器 profile 挡在上下文之外，
+# 否则 CI 每次构建都要上传上百 MB 无用内容。
+
+.git
+.github
+.gitignore
+.venv
+node_modules
+
+# 正式运行数据：绝不进镜像，容器里用卷挂载
+.runtime
+runtime
+.docker-data
+
+# 原始题库资料（单文件可达上百 MB）
+题目录入
+
+# 临时验证产物
+tmp
+
+# 文档与测试：镜像运行期用不到
+docs
+题库开发手册
+tests
+*.md
+!README.md
+
+# 本地密钥与日志
+.env
+.env.*
+*.log

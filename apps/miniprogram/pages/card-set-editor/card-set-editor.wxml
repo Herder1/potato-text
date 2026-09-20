@@ -1,0 +1,51 @@
+<view class="page">
+  <view class="editor-nav" style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;">
+    <view class="nav-back" bindtap="goBack" role="button" aria-label="返回">
+      <image src="/assets/icons/arrow-left.svg" mode="aspectFit" />
+    </view>
+    <view class="nav-title" style="top: {{statusBarHeight}}px; height: {{navContentHeight}}px;">{{pageTitle}}</view>
+  </view>
+
+  <view class="editor-body">
+    <view class="field">
+      <label>标题</label>
+      <input
+        data-field="title"
+        value="{{title}}"
+        placeholder="输入卡集标题"
+        maxlength="30"
+        bindinput="input"
+      />
+    </view>
+    <view class="field field-description">
+      <label>简介</label>
+      <textarea
+        data-field="description"
+        value="{{description}}"
+        placeholder="简单介绍这个卡集"
+        maxlength="120"
+        bindinput="input"
+      />
+      <text class="character-count">{{description.length}} / 120</text>
+    </view>
+    <view class="field field-author">
+      <label>作者<text class="label-optional">选填</text></label>
+      <input
+        data-field="author"
+        value="{{author}}"
+        placeholder="{{authorPlaceholder}}"
+        maxlength="30"
+        bindinput="input"
+      />
+    </view>
+
+    <view class="editor-actions">
+      <view
+        class="footer-save {{saving ? 'footer-save-disabled' : ''}}"
+        bindtap="save"
+        role="button"
+        aria-label="保存卡集"
+      >{{saving ? '正在保存' : '保存'}}</view>
+    </view>
+  </view>
+</view>

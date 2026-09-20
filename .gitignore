@@ -1,0 +1,24 @@
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+coverage/
+.runtime/
+project.private.config.json
+*.log
+.DS_Store
+
+# ---- 远程仓库与 CI 附加排除（原文件全部保留在本地，仅不进 git）----
+# 原始题库资料：教材/试卷 PDF、DOCX、录题稿。单文件可达上百 MB，
+# 超过 GitHub 单文件 100 MB 硬限制，且会让每次 push 与 CI checkout 变得极慢。
+题目录入/
+# 无头浏览器 profile、临时日志、一次性验证脚本产物（tmp/ 里没有任何需要版本化的东西）。
+tmp/
+# 仓库根的一次性排查产物：无头浏览器截图、接口转储 JSON、探针脚本。
+# 共上百个文件、合计约百 MB（单文件最大 20MB），全部可由代码与测试重新生成。
+# 只锚定仓库根，避免误伤子目录里的同名文件（例如 Store 写盘用的 "<file>.tmp-<pid>" 临时名）。
+/tmp-*
+/.tmp*
+# 本地 Docker 编译产物 / 绑定挂载点。
+.docker-data/

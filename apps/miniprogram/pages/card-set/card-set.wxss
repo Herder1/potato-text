@@ -1,0 +1,145 @@
+.page{min-height:100vh;padding:34rpx 28rpx 190rpx;background:#fdfcfa;box-sizing:border-box}.hero{display:flex;padding:24rpx;background:#fff;border-radius:8rpx;align-items:center;gap:19rpx;box-shadow:0 5rpx 16rpx rgba(40,60,49,.06)}.set-mark{display:flex;width:76rpx;height:76rpx;align-items:center;justify-content:center;color:#fff;background:#0b9588;border-radius:8rpx;font-size:35rpx;font-weight:800}.subject,.subtitle{color:#7c8780;font-size:18rpx}.title{margin:6rpx 0;color:#202722;font-size:31rpx;font-weight:800}.summary{display:flex;margin:22rpx 2rpx 34rpx;justify-content:space-between;color:#748079;font-size:20rpx}.summary text:last-child{color:#0b9588}.section{margin-top:30rpx}.section-title{padding:0 4rpx 13rpx;color:#303934;font-size:25rpx;font-weight:750}.section-title text{margin-left:12rpx;color:#929b95;font-size:17rpx;font-weight:400}.section-cards{position:relative;margin-top:0}
+/* DEC-089：两个卡片块相邻时补回组间间距（父目录卡片排在子目录卡片之后），避免两张 grid 贴在一起 */
+.section-cards+.section-cards{margin-top:16rpx}
+.section-empty+.section-cards{margin-top:12rpx}
+.card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16rpx}.study-card{position:relative;display:flex;min-height:218rpx;padding:18rpx;flex-direction:column;background:#fff;border:1rpx solid #e7ece9;border-radius:20rpx;box-sizing:border-box}.study-card.selected{background:#eaf7f4;border-color:#0b9588}.card-tag{color:#0b9588;font-size:17rpx}.study-title{display:-webkit-box;margin-top:19rpx;overflow:hidden;color:#28312b;font-size:23rpx;font-weight:750;line-height:1.45;-webkit-box-orient:vertical;-webkit-line-clamp:2}.study-answer{display:-webkit-box;margin-top:8rpx;overflow:hidden;color:#7b8780;font-size:17rpx;line-height:1.45;-webkit-box-orient:vertical;-webkit-line-clamp:2}.study-foot{display:flex;margin-top:auto;padding-top:14rpx;justify-content:space-between;color:#919b95;font-size:16rpx}.study-foot text:first-child{color:#0b9588}.check{position:absolute;z-index:1;top:13rpx;right:13rpx;display:flex;width:32rpx;height:32rpx;align-items:center;justify-content:center;color:#fff;background:#0b9588;border-radius:50%;font-size:18rpx}.float-bar{position:fixed;z-index:4;right:64rpx;bottom:30rpx;left:64rpx;display:flex;height:110rpx;align-items:center;justify-content:space-around;background:#fff;border-radius:60rpx;box-shadow:0 10rpx 30rpx rgba(35,55,44,.13)}.float-bar>view{display:flex;min-width:96rpx;height:88rpx;flex-direction:column;align-items:center;justify-content:center;color:#65726b;border-radius:50rpx}.float-bar text{height:35rpx;font-size:29rpx;line-height:32rpx}.float-bar label{margin-top:3rpx;font-size:16rpx}.practice-main{color:#fff!important;background:#19211d}.practice-main text{color:#fff}.selection-bar{right:28rpx;left:28rpx;border-radius:8rpx}.selection-bar text{color:#35463d}.mask{position:fixed;z-index:8;inset:0;background:rgba(23,35,28,.32)}.add-menu{position:fixed;z-index:9;right:64rpx;bottom:156rpx;left:64rpx;display:flex;padding:12rpx;background:#fff;border-radius:8rpx;box-shadow:0 8rpx 28rpx rgba(31,48,38,.16)}.add-menu view{display:flex;height:86rpx;flex:1;align-items:center;justify-content:center;color:#0b9588;gap:8rpx}.add-menu text{font-size:28rpx}.add-menu label{font-size:20rpx}
+.add-menu{right:44rpx;bottom:156rpx;left:44rpx;display:flex;flex-direction:column;padding:10rpx;border-radius:18rpx}.add-menu view{height:76rpx;flex:none;border-radius:12rpx}.add-menu view+view{border-top:1rpx solid #edf0ee}
+.add-menu{right:auto;left:64rpx;width:270rpx;padding:10rpx;border-radius:18rpx}.add-menu view{width:100%;justify-content:flex-start;padding:0 24rpx;box-sizing:border-box}
+.study-card::before{position:absolute;z-index:1;top:13rpx;left:13rpx;width:22rpx;height:22rpx;background:#f4f6f4;border:2rpx solid #d9e0dc;border-radius:50%;box-shadow:inset 0 1rpx 3rpx rgba(35,55,44,.13);content:"";box-sizing:border-box}.card-tag{padding-left:30rpx}.study-card.selected{background:#fff;border:3rpx solid #2f9fff;box-shadow:0 5rpx 16rpx rgba(47,159,255,.12)}.study-card.selected::before{border-color:#2f9fff}
+
+.study-card::before{right:13rpx;left:auto}.card-tag{padding-right:30rpx;padding-left:0}
+.section{position:relative}.section-title-active{padding:14rpx 16rpx;color:#237fb2;background:#eaf5ff;border:2rpx solid #2f9fff;border-radius:8rpx;box-sizing:border-box}.section-title-active text{color:#5f8ba3}
+.study-card{border-radius:16rpx}.float-bar{right:48rpx;bottom:40rpx;left:48rpx;height:106rpx;border-radius:56rpx;box-shadow:0 10rpx 30rpx rgba(35,55,44,.14)}.float-bar>view{min-width:92rpx;height:86rpx;border-radius:44rpx}.float-bar text{display:flex;width:36rpx;height:36rpx;align-items:center;justify-content:center;font-size:29rpx;line-height:1}.float-bar label{margin-top:4rpx;font-size:17rpx}.context-toolbar{position:fixed;z-index:35;display:flex;width:384rpx;height:96rpx;padding:0 12rpx;align-items:center;justify-content:space-around;color:#fff;background:#2d322f;border-radius:16rpx;box-shadow:0 8rpx 24rpx rgba(28,39,33,.2);box-sizing:border-box}
+/* 添加菜单不再和操作栏共用几何：它是两行条目，贴在底部悬浮栏上方。 */
+.add-menu{position:fixed;z-index:35;right:auto;bottom:158rpx;left:64rpx;display:flex;width:270rpx;height:auto;padding:10rpx;flex-direction:column;align-items:stretch;justify-content:flex-start;color:#fff;background:#2d322f;border-radius:18rpx;box-shadow:0 8rpx 24rpx rgba(28,39,33,.24);box-sizing:border-box}
+.add-menu view{display:flex;width:100%;height:76rpx;flex:none;align-items:center;justify-content:flex-start;padding:0 24rpx;color:#fff;border-radius:12rpx;gap:8rpx;box-sizing:border-box}
+.add-menu view+view{border-top:1rpx solid rgba(255,255,255,.1)}
+.add-menu text{font-size:26rpx}
+.add-menu label{color:#fff;font-size:19rpx}.context-toolbar>view{display:flex;width:82rpx;height:82rpx;align-items:center;justify-content:center;flex-direction:column;color:#fff;border-radius:10rpx;gap:4rpx}.context-toolbar>view:active{background:rgba(255,255,255,.1)}.context-toolbar image{display:block;width:30rpx;height:30rpx}.context-toolbar label{display:block;color:#fff;font-size:15rpx;line-height:1.2}.context-left{left:28rpx;right:auto;margin-right:0;margin-left:0}.context-center{left:50%;right:auto;margin-right:0;margin-left:0;transform:translateX(-50%)}.context-right{right:28rpx;left:auto;margin-right:0;margin-left:0}.section-level-2{margin-left:24rpx;font-size:23rpx;font-weight:700}.section-level-3{margin-left:48rpx;font-size:21rpx;font-weight:650}.section-title-active{border-radius:16rpx}
+.context-toolbar-with-edit{width:474rpx}
+.context-toolbar-directory{width:556rpx}
+.section{margin-top:18rpx}
+.section-level-block-1{margin-top:24rpx}
+.section-level-block-2{margin-top:14rpx}
+.section-level-block-3{margin-top:12rpx}
+.section-empty+.section-level-block-2{margin-top:8rpx}
+.section-empty+.section-level-block-3{margin-top:6rpx}
+.section-title{padding-bottom:0;line-height:1.35}
+.section-with-cards .section-title{padding-bottom:12rpx}
+.section-level-2,.section-level-3{margin-left:0}
+.section-title.section-title-active{padding:14rpx 16rpx}
+.page{padding-top:0}.card-set-nav{position:fixed;z-index:30;top:0;right:0;left:0;display:flex;padding-left:18rpx;align-items:flex-end;background:rgba(244,246,244,.98);border-bottom:1rpx solid #e5e9e6;box-sizing:border-box}.card-set-nav-leading{position:absolute;bottom:0;left:18rpx;display:flex;width:136rpx;height:76rpx;align-items:center}.card-set-nav-button{display:flex;width:68rpx;height:72rpx;flex:0 0 68rpx;align-items:center;justify-content:center}.card-set-nav-button image{display:block;width:32rpx;height:32rpx}.card-set-nav-title{position:absolute;left:50%;display:flex;width:220rpx;align-items:center;justify-content:center;overflow:hidden;color:#222a25;font-size:27rpx;font-weight:800;text-align:center;text-overflow:ellipsis;transform:translateX(-50%);white-space:nowrap}.hero{margin-top:34rpx}
+.catalog-layer{position:fixed;z-index:1500;top:0;right:0;bottom:0;left:0}
+.catalog-mask{position:absolute;top:0;right:0;bottom:0;left:0;background:rgba(20,20,20,.34)}
+.catalog-panel{position:absolute;bottom:32rpx;left:28rpx;display:flex;width:78%;max-width:610rpx;max-height:72vh;overflow:hidden;flex-direction:column;background:#fff;border:1rpx solid #e8e8e5;border-radius:16rpx;box-sizing:border-box}
+.catalog-head{display:flex;min-height:88rpx;padding:20rpx 24rpx;align-items:center;flex:0 0 auto;border-bottom:1rpx solid #e8e8e5;box-sizing:border-box}
+.catalog-title{color:#1d1d1d;font-size:30rpx;font-weight:850}
+.catalog-status{margin-right:16rpx;margin-left:auto;color:#8d9691;font-size:19rpx;font-weight:500}
+.catalog-collapse-button{display:flex;width:58rpx;height:58rpx;flex:0 0 58rpx;align-items:center;justify-content:center;border-radius:8rpx}
+.catalog-collapse-button image{display:block;width:36rpx;height:36rpx}
+.catalog-pressed{background:#eeeeec}
+.catalog-back{display:flex;width:58rpx;height:58rpx;margin-left:-12rpx;flex:0 0 58rpx;align-items:center;justify-content:center;border-radius:8rpx}
+.catalog-back image{display:block;width:34rpx;height:34rpx}
+.catalog-summary-title{min-width:0;overflow:hidden;flex:1;text-overflow:ellipsis;white-space:nowrap}
+.catalog-scroll{min-height:0;height:0;flex:1}
+.catalog-empty{display:flex;min-height:300rpx;padding:72rpx 40rpx;flex-direction:column;align-items:center;color:#8a8e8a;text-align:center}
+.catalog-empty-title{color:#303330;font-size:28rpx;font-weight:700}
+.catalog-empty-detail{margin-top:12rpx;font-size:21rpx;line-height:1.5}
+.catalog-row{display:flex;min-height:84rpx;padding:14rpx 24rpx;align-items:center;color:#303030;font-size:26rpx;font-weight:750;box-sizing:border-box}
+.catalog-row:active{background:#f4f4f2}
+.catalog-node{width:38rpx;flex:0 0 38rpx;color:#aeb4b1;font-size:25rpx}
+.catalog-row-title{min-width:0;overflow:hidden;flex:1;text-overflow:ellipsis;white-space:nowrap}
+.catalog-row-count{margin-left:12rpx;flex:0 0 auto;color:#999e9a;font-size:19rpx;font-weight:500}
+.catalog-depth-0{padding-left:24rpx}
+.catalog-depth-1{padding-left:56rpx;color:#3d453f;font-size:24rpx;font-weight:700}
+.catalog-depth-2{padding-left:88rpx;color:#59615b;font-size:22rpx;font-weight:650}
+.catalog-summary{padding-bottom:20rpx}
+.catalog-summary-item{display:grid;min-height:106rpx;margin:0 18rpx;padding:20rpx 10rpx;align-items:start;border-bottom:1rpx solid #ecece9;grid-template-columns:52rpx minmax(0,1fr);box-sizing:border-box}
+.catalog-summary-item:active{background:#f1f3f1}
+.catalog-summary-number{padding-top:2rpx;color:#9a9f9c;font-size:20rpx;font-variant-numeric:tabular-nums}
+.catalog-summary-stem{color:#303330;font-size:23rpx;line-height:1.55}
+.card-flash{border:3rpx solid #2f9fff;box-shadow:inset 0 0 0 3rpx rgba(47,159,255,.35)}
+.study-card-drag-origin{border:2rpx dashed #b9c6d4;background:#f7f9fb;opacity:.4}
+.study-card{z-index:2}
+.section-title{position:relative;z-index:2}
+.title-drag-origin{border:2rpx dashed #b9c6d4;background:#f7f9fb;border-radius:10rpx;opacity:.4}
+.drag-ghost{position:fixed;z-index:60;pointer-events:none;transform:scale(1.05);transform-origin:center center}
+.drag-ghost-count{position:absolute;top:-14rpx;right:-14rpx;display:flex;min-width:46rpx;height:46rpx;padding:0 8rpx;align-items:center;justify-content:center;color:#fff;background:#2f9fff;border-radius:23rpx;box-shadow:0 6rpx 16rpx rgba(47,159,255,.35);font-size:22rpx;font-weight:800;box-sizing:border-box}
+.drag-ghost-card{display:flex;padding:18rpx;flex-direction:column;background:#fff;border:2rpx solid #2f9fff;border-radius:16rpx;box-shadow:0 20rpx 42rpx rgba(31,48,38,.24);box-sizing:border-box}
+.drag-ghost-title{padding:14rpx 16rpx;color:#1d6fae;background:#eaf5ff;border-radius:10rpx;box-shadow:0 14rpx 30rpx rgba(47,159,255,.26);font-size:25rpx;font-weight:750;line-height:1.35;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.drag-indicator{position:fixed;z-index:1;background:#2f9fff;border-radius:4rpx;pointer-events:none;box-shadow:0 0 0 2rpx rgba(47,159,255,.25)}
+.context-menu-layer{position:fixed;z-index:70;top:0;right:0;bottom:0;left:0}
+.context-menu-backdrop{position:absolute;top:0;right:0;bottom:0;left:0}
+.context-menu{position:absolute;min-width:300rpx;max-width:520rpx;padding:10rpx 0;overflow:hidden;background:#2d322f;border-radius:16rpx;box-shadow:0 14rpx 34rpx rgba(18,24,20,.34);box-sizing:border-box}
+.context-menu-left{left:28rpx}
+.context-menu-center{left:50%;transform:translateX(-50%)}
+.context-menu-right{right:28rpx}
+.context-menu-scroll{max-height:420px}
+.context-menu-item{padding:26rpx 34rpx;color:#fff;font-size:26rpx;line-height:1.25;white-space:nowrap}
+.context-menu-item:active{background:rgba(255,255,255,.14)}
+.context-menu-item-danger{color:#ff9f97}
+.section-title.section-title-active{padding:14rpx 16rpx}
+/* DEC-060：新建目录直接在目录行里输入名称。 */
+.section-title-input{margin:0 4rpx 13rpx;padding:6rpx 16rpx;color:#2b342f;background:#f2f7f5;border:2rpx solid #bfe3da;border-radius:12rpx;font-size:25rpx;font-weight:750;line-height:1.4;box-sizing:border-box}
+
+/* DEC-080：分享移到「更多」抽屉后，底栏剩三项：添加卡片 / 练一练（主操作胶囊）/ 更多。
+   几何与题包页、卡集列表页统一（左右两项 flex:1，中间 116rpx 深色胶囊）。 */
+.float-bar>view{flex:1}
+.float-bar .practice-main{width:116rpx;height:86rpx;flex:0 0 116rpx;color:#fff!important;background:#19211d;border-radius:44rpx}
+.float-bar .practice-main:active{opacity:.82}
+/* 抽屉里的「分享卡集」用普通条目承载布局 + 透明原生分享按钮覆盖触发（避免按钮自带的盒子把列带偏） */
+.drawer-item-share-host{position:relative}
+.drawer-share-trigger{position:absolute;top:0;right:0;bottom:0;left:0;width:100%;height:100%;margin:0;padding:0;background:transparent;border:none;border-radius:0;opacity:0;box-sizing:border-box}
+.drawer-share-trigger::after{display:none;border:none}
+
+/* ── DEC-067：卡片调色板（图1）与「更多」抽屉（图3）── */
+.context-toolbar-color{width:466rpx}
+.context-toolbar-color.context-toolbar-with-edit{width:558rpx}
+.color-picker{position:fixed;z-index:36;display:grid;padding:16rpx;grid-template-columns:repeat(5,64rpx);gap:16rpx;background:#2d322f;border-radius:18rpx;box-shadow:0 10rpx 30rpx rgba(24,35,29,.28)}
+.color-picker-left{left:28rpx}
+.color-picker-center{left:50%;transform:translateX(-50%)}
+.color-picker-right{right:28rpx}
+.color-dot{width:64rpx;height:64rpx;background:#f4f6f4;border:4rpx solid transparent;border-radius:50%;box-sizing:border-box}
+.color-dot-none{background:#fff;box-shadow:inset 0 0 0 2rpx #d9e0dc}
+.color-dot-active{border-color:#fff}
+.drawer-layer{position:fixed;z-index:40;top:0;right:0;bottom:0;left:0}
+.drawer-mask{position:absolute;top:0;right:0;bottom:0;left:0;background:rgba(24,35,29,.34)}
+.more-drawer{position:absolute;right:0;bottom:0;left:0;max-height:78vh;overflow-y:auto;padding:28rpx 32rpx calc(40rpx + env(safe-area-inset-bottom));background:#fff;border-radius:28rpx 28rpx 0 0;animation:drawer-up .24s ease-out;box-sizing:border-box}
+.drawer-head{display:flex;padding-bottom:24rpx;align-items:center;justify-content:space-between}
+.drawer-head>text:first-child{min-width:0;overflow:hidden;color:#22201c;font-size:34rpx;font-weight:800;text-overflow:ellipsis;white-space:nowrap}
+.drawer-close{flex:0 0 auto;color:#93998f;font-size:26rpx}
+.drawer-section{padding-top:26rpx}
+.drawer-section-title{padding-bottom:20rpx;color:#a79d8e;font-size:22rpx}
+.drawer-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:28rpx 18rpx}
+.drawer-item{display:flex;flex-direction:column;align-items:center;gap:12rpx}
+.drawer-item image{display:block;width:44rpx;height:44rpx}
+.drawer-item label{color:#4d4a44;font-size:20rpx;line-height:1.2;text-align:center}
+.drawer-item-danger label{color:#b6534c}
+@keyframes drawer-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
+
+/* ── DEC-068：卡盒颜色面板（统一颜色 / 彩虹色）── */
+.color-panel{max-height:82vh}
+.color-modes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18rpx;padding:6rpx 0 8rpx}
+.color-mode{display:flex;height:132rpx;padding:0 24rpx;align-items:center;justify-content:center;color:#4d4a44;background:#f5f3ef;border:2rpx solid transparent;border-radius:20rpx;gap:14rpx;box-sizing:border-box}
+.color-mode image{display:block;width:44rpx;height:44rpx}
+.color-mode label{font-size:23rpx;font-weight:650}
+.color-mode-active{color:#1c1a17;background:#fdf3e3;border-color:#e8cfa4}
+.color-sheet-grid{display:grid;padding:22rpx 0 6rpx;grid-template-columns:repeat(4,minmax(0,1fr));gap:22rpx}
+.color-swatch{height:132rpx;background:#f4f6f4;border:4rpx solid transparent;border-radius:20rpx;box-sizing:border-box}
+.color-swatch-active{position:relative;border-color:#4a74a6}
+.color-swatch-active::after{position:absolute;right:14rpx;bottom:12rpx;color:#4a74a6;font-size:26rpx;content:"✓"}
+.color-note{padding:16rpx 0 4rpx;color:#a79d8e;font-size:20rpx;line-height:1.5}
+.color-apply{display:flex;height:92rpx;margin-top:24rpx;align-items:center;justify-content:center;color:#fff;background:#2d322f;border-radius:20rpx;font-size:26rpx;font-weight:700}
+.color-apply:active{background:#1f231f}
+/* DEC-067 视觉修正：上色卡片不加灰描边，浅色块才干净。 */
+/* 上色卡片的描边由行内同色玻璃边提供，这里不再强制透明。 */
+.study-card-tinted{border-color:var(--card-edge)}
+.study-card-tinted .card-tag{color:#8d938f}
+.study-card-tinted .study-answer{color:#5f6862}
+.study-card-tinted .study-foot{color:#8d938f}
+/* 上色卡片的底色是行内样式，定位高亮只能靠描边，不能靠 background。 */
+.card-flash{background-image:none}
+.study-card.selected.study-card-tinted,.study-card-tinted.selected{border:3rpx solid #2f9fff}
+/* 玻璃/水晶质感：边缘受光 + 背光侧同色暗部。 */
+.study-card{box-shadow:inset 0 2rpx 0 rgba(255,255,255,.9),inset 2rpx 0 0 rgba(255,255,255,.5),inset 0 -2rpx 0 rgba(255,255,255,.3),inset -8rpx -12rpx 24rpx -16rpx var(--card-edge,rgba(0,0,0,0))}
+.context-toolbar .toolbar-level-mark{display:flex;width:30rpx;height:30rpx;align-items:center;justify-content:center;color:#fff;font-size:22rpx;font-weight:800;line-height:1}

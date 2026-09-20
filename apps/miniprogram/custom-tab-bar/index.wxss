@@ -1,0 +1,177 @@
+.tab-shell {
+  position: fixed;
+  z-index: 1000;
+  right: 28rpx;
+  bottom: calc(20rpx + env(safe-area-inset-bottom));
+  left: 28rpx;
+  display: grid;
+  height: 114rpx;
+  padding: 8rpx 12rpx;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: center;
+  background: #ffffff;
+  border: 0;
+  border-radius: 57rpx;
+  box-shadow: 0 10rpx 26rpx rgba(33, 43, 39, .12);
+  box-sizing: border-box;
+}
+
+.tab-item {
+  display: flex;
+  height: 90rpx;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #777777;
+  font-size: 20rpx;
+}
+
+.tab-item text {
+  margin-top: 5rpx;
+}
+
+.tab-selected {
+  color: #0b9588;
+  font-weight: 700;
+}
+
+.tab-icon {
+  position: relative;
+  width: 42rpx;
+  height: 42rpx;
+  box-sizing: border-box;
+}
+
+.discover-icon {
+  border: 4rpx solid currentColor;
+  border-radius: 50%;
+}
+
+.discover-icon view {
+  position: absolute;
+  top: 8rpx;
+  left: 15rpx;
+  width: 8rpx;
+  height: 18rpx;
+  background: currentColor;
+  border-radius: 6rpx 6rpx 2rpx 2rpx;
+  transform: rotate(38deg);
+}
+
+.grid-icon {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5rpx;
+}
+
+.grid-cell {
+  display: block;
+  border: 4rpx solid currentColor;
+  border-radius: 3rpx;
+}
+
+.review-icon {
+  border: 4rpx solid currentColor;
+  border-radius: 50%;
+}
+
+.review-icon view {
+  position: absolute;
+  top: 8rpx;
+  left: 18rpx;
+  width: 4rpx;
+  height: 13rpx;
+  background: currentColor;
+  transform-origin: bottom center;
+  transform: rotate(-35deg);
+}
+
+.user-icon::before {
+  position: absolute;
+  top: 1rpx;
+  left: 12rpx;
+  width: 18rpx;
+  height: 18rpx;
+  border: 4rpx solid currentColor;
+  border-radius: 50%;
+  content: "";
+  box-sizing: border-box;
+}
+
+.user-icon view {
+  position: absolute;
+  right: 4rpx;
+  bottom: 1rpx;
+  left: 4rpx;
+  height: 18rpx;
+  border: 4rpx solid currentColor;
+  border-bottom: 0;
+  border-radius: 20rpx 20rpx 0 0;
+  box-sizing: border-box;
+}
+
+.review-slot {
+  height: 90rpx;
+}
+
+/* 「复习」的选中光圈原来直接撑在图标盒子上（64rpx 高），比其它标签的 42rpx 图标高一截，
+   整块内容再垂直居中，就把「复习」文字压得比同排低。改成：图标区与其它标签一样是 42rpx，
+   光圈用绝对定位画在图标后面，不参与布局。 */
+.review-focus {
+  position: relative;
+  display: flex;
+  width: 42rpx;
+  height: 42rpx;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+.review-slot.tab-selected .review-focus {
+  color: #0b9588;
+}
+
+.review-slot.tab-selected .review-focus::before {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  left: 50%;
+  width: 64rpx;
+  height: 64rpx;
+  background: #e2f4ef;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  content: "";
+}
+
+.knowledge-icon {
+  border: 4rpx solid currentColor;
+  border-radius: 5rpx;
+}
+
+.knowledge-icon::before,
+.knowledge-icon::after,
+.knowledge-icon view {
+  position: absolute;
+  left: 8rpx;
+  width: 20rpx;
+  height: 3rpx;
+  background: currentColor;
+  content: "";
+}
+
+.knowledge-icon::before { top: 9rpx; }
+.knowledge-icon view { top: 18rpx; }
+.knowledge-icon::after { top: 27rpx; }
+
+.review-focus .review-icon {
+  width: 34rpx;
+  height: 34rpx;
+  position: relative;
+  z-index: 1;
+}
+
+.review-focus .review-icon view {
+  top: 6rpx;
+  left: 14rpx;
+}

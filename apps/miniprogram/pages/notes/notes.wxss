@@ -1,0 +1,126 @@
+.heading-row,
+.note-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.page-title {
+  font-size: 42rpx;
+  font-weight: 800;
+}
+
+.page-subtitle {
+  margin-top: 6rpx;
+  color: #6e7973;
+  font-size: 23rpx;
+}
+
+.create-button {
+  width: 112rpx;
+  height: 88rpx;
+  margin: 0;
+  padding: 0;
+  color: #ffffff;
+  background: #303030;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+  line-height: 88rpx;
+}
+
+.search-box {
+  height: 88rpx;
+  margin-top: 28rpx;
+  padding: 0 22rpx;
+  background: #e9e9e7;
+  border: 1rpx solid #e9e9e7;
+  border-radius: 16rpx;
+}
+
+.search-box input {
+  height: 100%;
+  font-size: 25rpx;
+}
+
+.filter-row {
+  display: flex;
+  margin-top: 18rpx;
+  gap: 12rpx;
+}
+
+.filter-row .tag {
+  min-height: 88rpx;
+  padding: 0 20rpx;
+  line-height: 88rpx;
+}
+
+.empty-state {
+  margin-top: 30rpx;
+  padding: 52rpx 34rpx;
+  text-align: center;
+}
+
+.empty-title {
+  font-size: 31rpx;
+  font-weight: 700;
+}
+
+.empty-desc {
+  margin-top: 14rpx;
+  color: #758079;
+  font-size: 23rpx;
+  line-height: 1.7;
+}
+
+.empty-button {
+  margin-top: 28rpx;
+}
+
+.note-list {
+  margin-top: 24rpx;
+}
+
+.note-item {
+  margin-bottom: 16rpx;
+  padding: 24rpx;
+  background: #ffffff;
+}
+
+.note-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 28rpx;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-title-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14rpx; }
+.note-draft-label { flex: 0 0 auto; padding: 6rpx 10rpx; color: #8b651d; background: #f6edda; border-radius: 5rpx; font-size: 17rpx; }
+
+.note-content {
+  display: -webkit-box;
+  margin-top: 12rpx;
+  overflow: hidden;
+  color: #4a554f;
+  font-size: 24rpx;
+  line-height: 1.65;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.note-foot {
+  margin-top: 18rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #edf0ed;
+}
+
+.note-source {
+  color: #7a857e;
+  font-size: 21rpx;
+}
+
+.delete-link {
+  color: #a43e36;
+  font-size: 22rpx;
+}

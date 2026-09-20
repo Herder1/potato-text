@@ -1,0 +1,259 @@
+<!-- 已下线（DEC-075）：管理题包能力并入 pages/pack-collection，本页不再注册到 app.json。 -->
+<view class="pack-root" wx:if="{{pack}}">
+  <view class="custom-pack-nav" style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;">
+    <button class="nav-icon-button" bindtap="goBack" aria-label="返回"><image src="/assets/icons/arrow-left.svg" mode="aspectFit" /></button>
+    <button class="nav-icon-button" bindtap="openCatalog" aria-label="查看目录"><image src="/assets/icons/list.svg" mode="aspectFit" /></button>
+    <view class="nav-spacer"></view>
+    <button class="nav-icon-button" bindtap="searchPack" aria-label="搜索题包"><image src="/assets/icons/search.svg" mode="aspectFit" /></button>
+    <button class="nav-icon-button" bindtap="sharePack" aria-label="分享题包"><image src="/assets/icons/share.svg" mode="aspectFit" /></button>
+    <button class="nav-icon-button more-nav-button" bindtap="toggleMenu" aria-label="更多设置">•••</button>
+  </view>
+  <view style="height: {{navTotalHeight}}px;"></view>
+
+<view class="page-shell pack-page">
+  <view class="pack-head">
+    <view class="pack-head-main">
+      <view class="page-title">{{pack.name}}</view>
+    </view>
+  </view>
+
+  <view class="progress-panel">
+    <view class="progress-topline">
+      <view class="progress-number"><text>{{progressPercent}}%</text><label>已学 {{learnedCount}}/{{completedCards}}</label></view>
+      <view class="progress-states">
+        <view><text class="dot dot-cyan"></text>未学 {{unlearnedCount}}</view>
+        <view><text class="dot dot-amber"></text>待复习 {{reviewCount}}</view>
+      </view>
+    </view>
+    <view class="progress-track"><view class="progress-value" style="width: {{progressPercent}}%;"></view></view>
+    <view class="learning-actions">
+      <button class="practice-button" bindtap="startPractice">{{completedCards ? '继续学习' : '等待录入题目'}}</button>
+      <button class="secondary-action" bindtap="startTest"><text>✓</text>测试</button>
+      <button class="secondary-action" bindtap="openCatalog"><image src="/assets/icons/list.svg" mode="aspectFit" />导图</button>
+    </view>
+  </view>
+
+  <view class="content-anchor"></view>
+
+  <view class="directory-section" wx:for="{{sections}}" wx:key="id">
+    <view
+      id="pack-node-{{item.id}}"
+      class="directory-title directory-level-{{item.level}} {{actionNode && actionNode.id === item.id ? 'node-selected' : ''}} {{catalogFlashNodeId === item.id ? 'pack-node-flash' : ''}}"
+      data-id="{{item.id}}"
+      bindtap="editDirectory"
+      bindlongpress="openNodeActions"
+    >
+      <text class="directory-bullet" wx:if="{{item.level > 1}}">{{item.level === 2 ? '●' : '○'}}</text>
+      <input
+        wx:if="{{editingNodeId === item.id}}"
+        value="{{editingTitle}}"
+        placeholder="输入目录名称"
+        focus="true"
+        maxlength="40"
+        data-id="{{item.id}}"
+        bindinput="updateEditingTitle"
+        bindblur="finishEditNode"
+        bindconfirm="finishEditNode"
+        catchlongpress="openNodeActions"
+      />
+      <text wx:else>{{item.displayTitle}}</text>
+      <text class="directory-edit-hint" wx:if="{{editingNodeId !== item.id}}">✎</text>
+    </view>
+    <view class="card-grid" wx:if="{{item.cards.length}}">
+      <view
+        id="pack-node-{{card.id}}"
+        class="question-card {{card.hasQuestion ? 'question-card-filled' : 'question-card-empty'}} {{card.broken ? 'question-card-broken' : ''}} {{actionNode && actionNode.id === card.id ? 'question-card-selected' : ''}} {{catalogFlashNodeId === card.id ? 'pack-node-flash' : ''}}"
+        wx:for="{{item.cards}}"
+        wx:key="id"
+        wx:for-item="card"
+        data-id="{{card.id}}"
+        bindtap="openCard"
+        bindlongpress="openNodeActions"
+        hover-class="question-card-pressed"
+      >
+        <view class="card-selected-mark" wx:if="{{actionNode && actionNode.id === card.id}}">✓</view>
+        <view class="card-title" wx:if="{{card.hasQuestion}}"><text>{{card.order}}. </text>{{card.displayTitle}}</view>
+        <view class="empty-card-content" wx:else>
+          <text class="empty-card-order">{{card.order}}</text>
+          <text class="empty-card-title">点击录入题目</text>
+          <text class="empty-card-status">待录入</text>
+        </view>
+      </view>
+    </view>
+    <view class="directory-empty" wx:else>这个目录还没有卡片</view>
+  </view>
+
+  <view class="directory-section" wx:if="{{looseCards.length}}">
+    <view class="directory-title directory-level-1"><text>{{sections.length ? '未归档' : '题目'}}</text></view>
+    <view class="card-grid">
+      <view
+        id="pack-node-{{card.id}}"
+        class="question-card {{card.hasQuestion ? 'question-card-filled' : 'question-card-empty'}} {{card.broken ? 'question-card-broken' : ''}} {{actionNode && actionNode.id === card.id ? 'question-card-selected' : ''}} {{catalogFlashNodeId === card.id ? 'pack-node-flash' : ''}}"
+        wx:for="{{looseCards}}"
+        wx:key="id"
+        wx:for-item="card"
+        data-id="{{card.id}}"
+        bindtap="openCard"
+        bindlongpress="openNodeActions"
+        hover-class="question-card-pressed"
+      >
+        <view class="card-selected-mark" wx:if="{{actionNode && actionNode.id === card.id}}">✓</view>
+        <view class="card-title" wx:if="{{card.hasQuestion}}"><text>{{card.order}}. </text>{{card.displayTitle}}</view>
+        <view class="empty-card-content" wx:else>
+          <text class="empty-card-order">{{card.order}}</text>
+          <text class="empty-card-title">点击录入题目</text>
+          <text class="empty-card-status">待录入</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="empty" wx:if="{{sections.length === 0 && totalCards === 0}}">
+    <view class="empty-title">先建立题包结构</view>
+    <view class="empty-desc">新建目录用于分类，新建卡片用于录入一道题。</view>
+  </view>
+
+  <view class="create-bar {{nodeActionsOpen ? 'create-bar-hidden' : ''}}">
+    <view class="create-action" bindtap="createDirectory">
+      <view class="create-icon list-icon"><text></text><text></text><text></text></view>
+      <text class="create-label">新建目录</text>
+    </view>
+    <view class="create-divider"></view>
+    <view class="create-action" bindtap="createCard">
+      <view class="create-icon plus-icon"><text class="plus-horizontal"></text><text class="plus-vertical"></text></view>
+      <text class="create-label">新建卡片</text>
+    </view>
+    <view class="create-divider"></view>
+    <view class="create-action" bindtap="openQuestionImporter">
+      <view class="create-icon import-icon"><text></text><view>↓</view></view>
+      <text class="create-label">导入题目</text>
+    </view>
+  </view>
+
+  <view class="menu-mask" wx:if="{{menuOpen}}" bindtap="toggleMenu"></view>
+  <view class="pack-menu {{menuOpen ? 'pack-menu-open' : ''}}">
+    <view bindtap="editPack">修改题包名称</view>
+    <view bindtap="openQuestionImporter">导入已有题目</view>
+    <view class="danger" bindtap="deletePack">删除题包</view>
+  </view>
+
+  <view class="question-import-layer" wx:if="{{questionImporterOpen}}">
+    <view class="question-import-mask" bindtap="closeQuestionImporter"></view>
+    <view class="question-import-sheet">
+      <view class="question-import-head"><view><text>导入已有题目</text><label>从“我的资产”选择</label></view><view bindtap="closeQuestionImporter">×</view></view>
+      <scroll-view class="question-import-list" scroll-y="true">
+        <view class="question-import-empty" wx:if="{{!availableQuestions.length}}">没有可导入的题目资产</view>
+        <view class="question-import-row" wx:for="{{availableQuestions}}" wx:key="id" data-id="{{item.id}}" bindtap="importExistingQuestion">
+          <view class="question-import-mark">题</view>
+          <view><text>{{item.displayTitle}}</text><label>{{item.displayPath}}</label></view>
+          <view class="question-import-add">＋</view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <view class="node-action-layer" wx:if="{{nodeActionsOpen}}">
+    <view class="node-action-mask" bindtap="closeNodeActions"></view>
+    <view class="node-action-panel" style="top: {{actionPanelTop}}px;">
+      <view class="node-toolbar">
+        <view class="node-action-item" bindtap="startEditNode"><text class="toolbar-symbol">✎</text><text class="action-label">{{actionNode.type === 'directory' ? '编辑' : (actionNode.questionId ? '编辑题目' : '录入')}}</text></view>
+        <view wx:if="{{actionNode.type === 'directory'}}" class="node-action-item {{levelActionsOpen ? 'node-action-item-active' : ''}}" bindtap="toggleLevelActions">
+          <text class="toolbar-symbol">H{{actionNode.level}}</text><text class="action-label">目录层级</text>
+        </view>
+        <picker wx:else mode="selector" range="{{directoryOptions}}" range-key="title" bindchange="changeCardDirectory">
+          <view class="node-action-item"><text class="toolbar-symbol">↳</text><text class="action-label">移动目录</text></view>
+        </picker>
+        <view class="node-action-item" bindtap="removeNode"><text class="toolbar-symbol">删</text><text class="action-label">删除</text></view>
+        <view class="node-action-item" bindtap="toggleMoreActions"><text class="toolbar-symbol">•••</text><text class="action-label">更多</text></view>
+      </view>
+      <view class="level-actions" wx:if="{{levelActionsOpen}}">
+        <view
+          class="level-action-row {{levelItem.level === actionNode.level ? 'level-action-current' : ''}}"
+          wx:for="{{levelOptions}}"
+          wx:key="level"
+          wx:for-item="levelItem"
+          data-level="{{levelItem.level}}"
+          bindtap="changeDirectoryLevel"
+        >
+          <text>H{{levelItem.level}}</text>
+          <text class="level-action-name">{{levelItem.label}}</text>
+          <text class="level-action-check" wx:if="{{levelItem.level === actionNode.level}}">✓</text>
+        </view>
+      </view>
+      <view class="more-actions" wx:if="{{moreActionsOpen}}">
+        <view bindtap="duplicateNode">创建副本</view>
+        <picker wx:if="{{actionNode.type === 'directory'}}" mode="selector" range="{{actionDirectoryOptions}}" range-key="title" bindchange="changeDirectoryParent"><view>移动到指定目录</view></picker>
+        <picker wx:if="{{otherPackOptions.length}}" mode="selector" range="{{otherPackOptions}}" range-key="name" bindchange="moveNodeToPack"><view>移动到其他题包</view></picker>
+        <view data-direction="up" bindtap="moveNode">向前移动</view>
+        <view data-direction="down" bindtap="moveNode">向后移动</view>
+        <view data-after="{{actionNode.id}}" bindtap="createCard">在后面添加卡片</view>
+        <view data-after="{{actionNode.id}}" bindtap="createDirectory">在后面添加目录</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="catalog-layer" wx:if="{{catalogOpen}}" catchtouchmove="stopTouchMove" catchtap="noop">
+    <view class="catalog-mask" bindtap="closeCatalog"></view>
+    <view class="catalog-panel" style="top: {{floatingTop}}px;">
+      <view class="catalog-head">
+        <block wx:if="{{catalogView === 'directory'}}">
+          <view class="catalog-title">目录</view>
+          <text class="catalog-status">{{catalogRows.length ? catalogDirectoryCount + ' 个目录' : ''}}</text>
+          <view
+            class="catalog-collapse-button"
+            bindtap="toggleCatalogExpansionAll"
+            hover-class="catalog-pressed"
+            role="button"
+            aria-label="{{catalogExpandedAll ? '折叠全部目录' : '展开全部目录'}}"
+          >
+            <image src="/assets/icons/{{catalogExpandedAll ? 'list-collapse' : 'list-expand'}}.svg" mode="aspectFit" />
+          </view>
+        </block>
+        <block wx:else>
+          <view class="catalog-back" bindtap="backToCatalogDirectory" role="button" aria-label="返回目录">
+            <image src="/assets/icons/arrow-left.svg" mode="aspectFit" />
+          </view>
+          <view class="catalog-title catalog-summary-title">{{catalogSummaryTitle}}</view>
+        </block>
+      </view>
+      <scroll-view class="catalog-scroll" scroll-y="true">
+        <block wx:if="{{catalogView === 'directory'}}">
+          <view class="catalog-empty" wx:if="{{!catalogRows.length}}">
+            <view class="catalog-empty-title">这个题包还没有目录</view>
+            <view class="catalog-empty-detail">长按空白处或底部操作可新建目录</view>
+          </view>
+          <view
+            wx:for="{{catalogRows}}"
+            wx:key="key"
+            class="catalog-row catalog-depth-{{item.depth}}"
+            data-key="{{item.key}}"
+            bindtap="selectCatalogRow"
+          >
+            <text class="catalog-node">{{item.hasChildren ? (item.expanded ? '⌄' : '›') : '•'}}</text>
+            <view class="catalog-row-title">{{item.title}}</view>
+            <view
+              wx:if="{{item.ownCount}}"
+              class="catalog-row-count catalog-row-count-active"
+              data-key="{{item.key}}"
+              catchtap="openCatalogSummary"
+            >{{item.totalCount}} 张</view>
+            <view wx:else class="catalog-row-count">{{item.totalCount}} 张</view>
+          </view>
+        </block>
+        <view wx:else class="catalog-summary">
+          <view
+            wx:for="{{catalogSummaryCards}}"
+            wx:key="id"
+            class="catalog-summary-item"
+            data-id="{{item.id}}"
+            bindtap="selectCatalogCard"
+          >
+            <text class="catalog-summary-number">{{item.summaryNumber}}</text>
+            <view class="catalog-summary-stem">{{item.title}}</view>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+</view>
+</view>

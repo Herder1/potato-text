@@ -1,0 +1,88 @@
+<view class="store-page">
+  <view class="store-account-band">
+    <view><text>{{subscriptions.length}}</text><label>有效订阅</label></view>
+    <view><text>{{aiCredits}}</text><label>AI 额度</label></view>
+  </view>
+
+  <view class="store-tabs">
+    <view wx:for="{{tabs}}" wx:key="id" class="store-tab {{activeTab === item.id ? 'store-tab-active' : ''}}" data-id="{{item.id}}" bindtap="selectTab">{{item.label}}</view>
+  </view>
+
+  <block wx:if="{{activeTab === 'subscriptions'}}">
+    <view class="store-section-head account-section-head">
+      <text>当前订阅</text>
+      <label>{{subscriptions.length}} 项有效</label>
+    </view>
+    <view class="account-empty" wx:if="{{!subscriptions.length}}">当前没有有效订阅</view>
+    <view class="account-list" wx:else>
+      <view class="subscription-row" wx:for="{{subscriptions}}" wx:key="id">
+        <view>
+          <text>{{item.product.name || '学习订阅'}}</text>
+          <label>{{item.product.scopeLabel || '订阅权益'}}</label>
+        </view>
+        <text>至 {{item.expiresText}}</text>
+      </view>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="store-section-head account-section-head">
+      <text>额度账户</text>
+      <label>共 {{aiCredits}} 点</label>
+    </view>
+    <view class="credit-balance-strip">
+      <view><text>{{aiCredits}}</text><label>总余额</label></view>
+      <view><text>{{expiringCredits}}</text><label>限时额度</label></view>
+      <view><text>{{permanentCredits}}</text><label>长期额度</label></view>
+    </view>
+
+    <view class="store-section-head transaction-section-head">
+      <text>额度流水</text>
+      <label>最近 {{creditTransactions.length}} 条</label>
+    </view>
+    <view class="account-empty" wx:if="{{!creditTransactions.length}}">暂无额度流水</view>
+    <view class="account-list" wx:else>
+      <view class="credit-transaction-row" wx:for="{{creditTransactions}}" wx:key="id">
+        <view><text>{{item.description || '额度变动'}}</text><label>{{item.timeText}}</label></view>
+        <text class="{{item.amount > 0 ? 'credit-positive' : 'credit-negative'}}">{{item.amountText}}</text>
+      </view>
+    </view>
+  </block>
+
+  <view class="store-section-head product-section-head">
+    <text>{{activeTab === 'subscriptions' ? '订阅套餐' : '补充 AI 额度'}}</text>
+    <label>{{visibleProducts.length}} 个商品</label>
+  </view>
+
+  <view class="store-loading" wx:if="{{loading && !visibleProducts.length}}">正在读取商品…</view>
+  <view class="store-empty" wx:elif="{{loadFailed && !visibleProducts.length}}" bindtap="loadProducts">商品加载失败，点击重试</view>
+  <view class="store-empty" wx:elif="{{!loading && !visibleProducts.length}}">当前暂无可购买商品</view>
+
+  <view
+    class="product-card {{item.featured ? 'product-card-featured' : ''}} {{item.storeType === 'credits' ? 'product-card-credits' : ''}}"
+    wx:for="{{visibleProducts}}"
+    wx:key="id"
+    data-id="{{item.id}}"
+    bindtap="openProduct"
+  >
+    <view class="product-topline"><text>{{item.featured ? '推荐套餐' : item.storeType === 'credits' ? '额度包' : '单科订阅'}}</text><label wx:if="{{item.owned}}">已订阅</label></view>
+    <view class="product-name">{{item.name}}</view>
+    <view class="product-scope">{{item.scopeLabel}}</view>
+    <view class="product-benefits"><view wx:for="{{item.benefits}}" wx:for-item="benefit" wx:key="*this"><text>✓</text><label>{{benefit}}</label></view></view>
+    <view class="product-purchase">
+      <view><text>{{item.priceLabel}}</text><label>{{item.priceSuffix}}</label></view>
+      <button data-id="{{item.id}}" catchtap="startPurchase">{{item.actionLabel}}</button>
+    </view>
+  </view>
+
+  <view class="store-footnote">订阅与额度相互独立，权益以支付确认页为准。</view>
+
+  <view class="product-detail-mask" wx:if="{{selectedProduct}}" bindtap="closeProduct"></view>
+  <view class="product-detail" wx:if="{{selectedProduct}}">
+    <view class="product-detail-handle"></view>
+    <view class="product-detail-head"><view><text>{{selectedProduct.storeType === 'credits' ? 'AI 额度' : '学习订阅'}}</text><view>{{selectedProduct.name}}</view></view><view class="product-detail-close" bindtap="closeProduct">×</view></view>
+    <view class="product-detail-scope">{{selectedProduct.scopeLabel}}</view>
+    <view class="product-detail-benefits"><view wx:for="{{selectedProduct.benefits}}" wx:key="*this"><text>✓</text><label>{{item}}</label></view></view>
+    <view class="product-detail-action"><view><text>{{selectedProduct.priceLabel}}</text><label>{{selectedProduct.priceSuffix}}</label></view><button data-id="{{selectedProduct.id}}" bindtap="startPurchase">{{selectedProduct.actionLabel}}</button></view>
+  </view>
+</view>

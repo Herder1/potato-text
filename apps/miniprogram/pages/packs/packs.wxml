@@ -1,0 +1,55 @@
+<view class="page-shell packs-page">
+  <view class="page-title">我的题包</view>
+  <view class="page-subtitle">{{intent === 'addQuestion' ? '选择一个题包，再继续录入题目' : '整理自己创建和从社区导入的题目'}}</view>
+
+  <view class="stats-row">
+    <view><text>{{stats.total}}</text><label>题包</label></view>
+    <view><text>{{stats.questions}}</text><label>题目</label></view>
+    <view><text>{{stats.imported}}</text><label>社区导入</label></view>
+  </view>
+
+  <view class="search-box">
+    <view class="search-icon"></view>
+    <input value="{{query}}" placeholder="搜索题包或标签" bindinput="updateSearch" />
+  </view>
+
+  <scroll-view class="filter-scroll" scroll-x="true" enhanced="true" show-scrollbar="false">
+    <view class="filters">
+      <view wx:for="{{filters}}" wx:key="id" class="filter {{activeFilter === item.id ? 'filter-active' : ''}}" data-id="{{item.id}}" bindtap="selectFilter">{{item.label}}</view>
+    </view>
+  </scroll-view>
+
+  <view class="empty" wx:if="{{visiblePacks.length === 0}}">
+    <view class="empty-mark">题</view>
+    <view class="empty-title">{{query ? '没有找到匹配题包' : '还没有私人题包'}}</view>
+    <view class="empty-desc" wx:if="{{!query}}">先创建一个题包，或把社区题包导入进来。</view>
+    <view class="empty-action" wx:if="{{!query}}" bindtap="createPack" role="button" aria-label="新建第一个题包">新建第一个题包</view>
+  </view>
+
+  <view class="pack-list" wx:else>
+    <view class="pack-row" wx:for="{{visiblePacks}}" wx:key="id" data-id="{{item.id}}" bindtap="openPack" hover-class="pack-row-pressed">
+      <view class="pack-symbol">{{item.source === 'community_import' ? '入' : '题'}}</view>
+      <view class="pack-main">
+        <view class="pack-name">{{item.name}}</view>
+        <view class="pack-description" wx:if="{{item.description}}">{{item.description}}</view>
+        <view class="pack-meta">
+          <text>{{item.questionIds.length}} 题</text>
+          <text>{{item.sourceLabel}}</text>
+          <text>{{item.visibilityLabel}}</text>
+        </view>
+      </view>
+      <view class="row-chevron"></view>
+    </view>
+  </view>
+
+  <view class="fab-menu {{actionMenuOpen ? 'fab-menu-open' : ''}}">
+    <view bindtap="openCommunity"><text>从社区导入</text><view>社</view></view>
+    <view bindtap="createPack"><text>新建题包</text><view>题</view></view>
+  </view>
+  <view class="fab" bindtap="toggleActionMenu" role="button" aria-label="新建或导入题包">
+    <view class="fab-glyph {{actionMenuOpen ? 'fab-glyph-close' : ''}}">
+      <view class="fab-stroke fab-stroke-horizontal"></view>
+      <view class="fab-stroke fab-stroke-vertical"></view>
+    </view>
+  </view>
+</view>

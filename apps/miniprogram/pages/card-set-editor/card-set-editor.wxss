@@ -1,0 +1,136 @@
+.page {
+  min-height: 100vh;
+  background: #f4f6f4;
+  box-sizing: border-box;
+}
+
+.editor-nav {
+  position: sticky;
+  z-index: 10;
+  top: 0;
+  display: flex;
+  padding-left: 16rpx;
+  align-items: center;
+  background: #f4f6f4;
+  border-bottom: 1rpx solid #e5eae6;
+  box-sizing: border-box;
+}
+
+.nav-back {
+  display: flex;
+  width: 68rpx;
+  height: 68rpx;
+  flex: 0 0 68rpx;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-back image {
+  width: 36rpx;
+  height: 36rpx;
+}
+
+.nav-title {
+  position: absolute;
+  left: 50%;
+  display: flex;
+  width: 220rpx;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: #222a25;
+  font-size: 27rpx;
+  font-weight: 800;
+  text-align: center;
+  text-overflow: ellipsis;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.editor-body {
+  padding: 30rpx 28rpx calc(64rpx + env(safe-area-inset-bottom));
+}
+
+.field {
+  padding: 23rpx 22rpx;
+  background: #fff;
+  border-radius: 8rpx;
+  box-shadow: 0 4rpx 14rpx rgba(40, 55, 46, .05);
+  box-sizing: border-box;
+}
+
+.field + .field {
+  margin-top: 18rpx;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 14rpx;
+  color: #526059;
+  font-size: 19rpx;
+}
+
+.field input {
+  height: 56rpx;
+  color: #28312b;
+  font-size: 26rpx;
+  font-weight: 650;
+}
+
+.field-description {
+  position: relative;
+  padding-bottom: 52rpx;
+}
+
+.field textarea {
+  width: 100%;
+  min-height: 190rpx;
+  color: #28312b;
+  font-size: 23rpx;
+  line-height: 1.55;
+  box-sizing: border-box;
+}
+
+.character-count {
+  position: absolute;
+  right: 22rpx;
+  bottom: 20rpx;
+  color: #9aa39e;
+  font-size: 17rpx;
+}
+
+.label-optional {
+  margin-left: 10rpx;
+  padding: 1rpx 8rpx;
+  color: #8b958f;
+  background: #eef1ee;
+  border-radius: 4rpx;
+  font-size: 16rpx;
+}
+
+.editor-actions {
+  margin-top: 30rpx;
+}
+
+.footer-save {
+  display: flex;
+  width: 100%;
+  height: 88rpx;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #0b9588;
+  border-radius: 20rpx;
+  box-shadow: 0 6rpx 16rpx rgba(11, 149, 136, .16);
+  font-size: 23rpx;
+  font-weight: 750;
+  box-sizing: border-box;
+}
+
+.footer-save:active {
+  opacity: .86;
+}
+
+.footer-save-disabled {
+  opacity: .5;
+}

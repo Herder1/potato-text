@@ -1,0 +1,35 @@
+{
+  "name": "shukao-todo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "薯考 - 汉语言文学题库与复习工具",
+  "scripts": {
+    "dev": "node apps/api/src/server.js",
+    "start": "node apps/api/src/server.js",
+    "test": "node --test tests/*.test.js",
+    "db:migrate": "knex migrate:latest --knexfile knexfile.js",
+    "db:migrate:status": "knex migrate:list --knexfile knexfile.js",
+    "db:rollback": "knex migrate:rollback --knexfile knexfile.js",
+    "db:import:dry": "node scripts/import-runtime-to-postgres.js --dry-run",
+    "db:import": "node scripts/import-runtime-to-postgres.js",
+    "db:verify": "node scripts/import-runtime-to-postgres.js --verify-only",
+    "storage:migrate:dry": "node scripts/migrate-files-to-kvault.js",
+    "storage:migrate": "node scripts/migrate-files-to-kvault.js --execute",
+    "storage:verify": "node scripts/migrate-files-to-kvault.js --verify-only",
+    "maintenance:retire-ungrouped-index": "node scripts/retire-question-family-unresolved-index.js",
+    "ai:blind-replay": "node --max-old-space-size=2048 scripts/run-classification-blind-replay.js",
+    "ai:blind-batch": "node --max-old-space-size=2048 scripts/run-classification-blind-batch.js",
+    "ai:blind-context": "node --max-old-space-size=4096 scripts/prepare-classification-blind-replay-context.js",
+    "ai:blind-samples": "node scripts/select-classification-blind-samples.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "knex": "^3.3.0",
+    "mammoth": "^1.10.0",
+    "pdf-parse": "^1.1.1",
+    "pg": "^8.22.0"
+  }
+}

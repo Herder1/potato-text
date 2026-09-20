@@ -1,0 +1,71 @@
+.discover-page { padding-top: 18rpx; }
+
+.channel-scroll { margin: 0 -28rpx; width: auto; white-space: nowrap; }
+.channel-row { display: flex; min-width: 100%; padding: 0 28rpx; gap: 30rpx; box-sizing: border-box; }
+.channel { position: relative; display: inline-flex; height: 64rpx; align-items: center; color: #8a8e8a; font-size: 24rpx; }
+.channel-active { color: #202420; font-weight: 850; }
+.channel-active::after { position: absolute; right: 8rpx; bottom: 3rpx; left: 8rpx; height: 5rpx; background: #1f2421; border-radius: 3rpx; content: ""; }
+
+.discover-spotlight { position: relative; display: flex; height: 220rpx; margin-top: 20rpx; padding: 30rpx; overflow: hidden; align-items: center; background: #eaf4f2; border: 1rpx solid #dfeae7; border-radius: 8rpx; box-sizing: border-box; }
+.spotlight-copy { position: relative; z-index: 2; max-width: 70%; }
+.spotlight-label { color: #27715e; font-size: 20rpx; font-weight: 800; }
+.spotlight-title { margin-top: 12rpx; color: #21302a; font-size: 34rpx; font-weight: 900; line-height: 1.35; }
+.spotlight-meta { margin-top: 12rpx; color: #6e7d76; font-size: 20rpx; }
+.discover-spotlight image { position: absolute; right: -8rpx; bottom: -30rpx; width: 190rpx; height: 190rpx; transform: rotate(-8deg); }
+
+.section-heading { display: flex; margin: 40rpx 0 18rpx; align-items: center; justify-content: space-between; }
+.section-title { margin: 0; color: #242824; font-size: 31rpx; font-weight: 900; }
+.section-heading > text { color: #959a96; font-size: 20rpx; }
+.product-scroll { margin: 0 -28rpx; width: auto; white-space: nowrap; }
+.product-row { display: flex; padding: 0 28rpx 4rpx; gap: 18rpx; }
+.product-card { width: 292rpx; flex: 0 0 292rpx; white-space: normal; }
+.product-cover { position: relative; display: flex; height: 188rpx; padding: 20rpx; overflow: hidden; flex-direction: column; justify-content: space-between; border: 1rpx solid rgba(255,255,255,.66); border-radius: 8rpx; box-sizing: border-box; }
+.product-cover::after { position: absolute; right: -34rpx; bottom: -46rpx; width: 150rpx; height: 150rpx; background: rgba(255,255,255,.42); border-radius: 50%; content: ""; }
+.product-cover text { color: rgba(25,37,32,.72); font-size: 19rpx; font-weight: 800; }
+.product-cover > view { position: relative; z-index: 1; color: rgba(25,37,32,.82); font-size: 58rpx; font-weight: 900; }
+.product-cover-cyan { background: #cfeef1; }
+.product-cover-green { background: #dcebdd; }
+.product-cover-amber { background: #f4e8c7; }
+.product-title { display: -webkit-box; margin-top: 16rpx; overflow: hidden; color: #252925; font-size: 25rpx; font-weight: 850; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.product-subtitle { margin-top: 7rpx; overflow: hidden; color: #7d837e; font-size: 19rpx; text-overflow: ellipsis; white-space: nowrap; }
+.product-foot { display: flex; margin-top: 13rpx; align-items: center; justify-content: space-between; }
+.product-foot text { color: #b0473f; font-size: 24rpx; font-weight: 850; }
+.product-foot label { color: #777f79; font-size: 17rpx; }
+.discover-empty { padding: 60rpx 20rpx; color: #8a908b; background: #fff; border-radius: 8rpx; font-size: 21rpx; text-align: center; }
+
+.learning-heading { margin-top: 46rpx; }
+.entrance-list { overflow: hidden; background: #fff; border: 1rpx solid #e9ebe8; border-radius: 8rpx; }
+.entrance-row { display: grid; min-height: 118rpx; padding: 18rpx 20rpx; align-items: center; border-bottom: 1rpx solid #ebedea; grid-template-columns: 72rpx minmax(0,1fr) auto 24rpx; box-sizing: border-box; }
+.entrance-row:last-child { border-bottom: 0; }
+.entrance-icon { position: relative; width: 54rpx; height: 54rpx; background: #edf1ee; border-radius: 50%; }
+.entrance-icon-play view { position: absolute; top: 16rpx; left: 21rpx; width: 0; height: 0; border-top: 11rpx solid transparent; border-bottom: 11rpx solid transparent; border-left: 17rpx solid #404943; }
+.entrance-icon-game::before, .entrance-icon-game::after { position: absolute; background: #404943; content: ""; }
+.entrance-icon-game::before { top: 25rpx; left: 15rpx; width: 23rpx; height: 5rpx; }
+.entrance-icon-game::after { top: 16rpx; left: 24rpx; width: 5rpx; height: 23rpx; }
+.entrance-main { min-width: 0; }
+.entrance-main view { color: #2a2f2b; font-size: 25rpx; font-weight: 800; }
+.entrance-main text { display: block; margin-top: 6rpx; overflow: hidden; color: #858b86; font-size: 19rpx; text-overflow: ellipsis; white-space: nowrap; }
+.entrance-row label { margin-left: 10rpx; color: #7f8781; font-size: 17rpx; }
+.entrance-chevron { width: 12rpx; height: 12rpx; margin-left: 8rpx; border-top: 2rpx solid #a5aaa6; border-right: 2rpx solid #a5aaa6; transform: rotate(45deg); }
+
+.future-slot { display: flex; min-height: 108rpx; margin-top: 20rpx; padding: 20rpx; align-items: center; color: #808681; border: 1rpx dashed #d8dcd8; border-radius: 8rpx; box-sizing: border-box; }
+.future-plus { display: flex; width: 52rpx; height: 52rpx; margin-right: 18rpx; align-items: center; justify-content: center; color: #737a75; background: #ebecea; border-radius: 50%; font-size: 34rpx; }
+.future-slot > view:last-child > view { color: #3c423e; font-size: 23rpx; font-weight: 750; }
+.future-slot text { display: block; margin-top: 4rpx; font-size: 18rpx; }
+
+.product-layer { position: fixed; z-index: 1200; display: flex; padding: 0 36rpx; align-items: center; justify-content: center; background: rgba(24,29,26,.42); inset: 0; box-sizing: border-box; }
+.product-dialog { position: relative; width: 100%; overflow: hidden; background: #fbfbfa; border-radius: 12rpx; }
+.dialog-cover { display: flex; height: 230rpx; padding: 30rpx; flex-direction: column; justify-content: space-between; }
+.dialog-cover text { color: rgba(25,37,32,.72); font-size: 20rpx; font-weight: 800; }
+.dialog-cover view { color: rgba(25,37,32,.82); font-size: 68rpx; font-weight: 900; }
+.dialog-content { padding: 30rpx; }
+.dialog-badge { display: inline-flex; padding: 7rpx 10rpx; color: #6f7671; background: #eceeeb; border-radius: 4rpx; font-size: 18rpx; }
+.dialog-title { margin-top: 18rpx; color: #222723; font-size: 34rpx; font-weight: 900; line-height: 1.4; }
+.dialog-subtitle { margin-top: 8rpx; color: #747b76; font-size: 21rpx; }
+.dialog-description { margin-top: 24rpx; color: #505852; font-size: 23rpx; line-height: 1.75; }
+.dialog-action-row { display: flex; margin-top: 32rpx; align-items: center; justify-content: space-between; gap: 20rpx; }
+.dialog-action-row > view { min-width: 0; }
+.dialog-action-row text { display: block; color: #ad463e; font-size: 34rpx; font-weight: 900; }
+.dialog-action-row label { display: block; margin-top: 4rpx; color: #929792; font-size: 17rpx; }
+.dialog-action-row button { width: 176rpx; height: 72rpx; margin: 0; padding: 0; color: #fff; background: #303532; border-radius: 8rpx; font-size: 22rpx; font-weight: 750; line-height: 72rpx; }
+.dialog-close { position: absolute; z-index: 2; top: 16rpx; right: 16rpx; display: flex; width: 58rpx; height: 58rpx; align-items: center; justify-content: center; color: #53605a; background: rgba(255,255,255,.78); border-radius: 50%; font-size: 34rpx; font-weight: 300; line-height: 1; box-sizing: border-box; }

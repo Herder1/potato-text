@@ -1,0 +1,27 @@
+<view class="page-shell privacy-page">
+  <view class="privacy-heading">
+    <view class="privacy-title">隐私与数据</view>
+    <view class="privacy-subtitle">生效日期：2026 年 8 月 5 日</view>
+  </view>
+
+  <view class="privacy-intro">薯考是一款题库与练习工具。我们仅在提供登录、练习同步、AI 辅助和问题反馈所必需的范围内处理个人信息。</view>
+
+  <view class="privacy-section" wx:for="{{sections}}" wx:key="title">
+    <view class="privacy-section-title">{{item.title}}</view>
+    <view class="privacy-item" wx:for="{{item.items}}" wx:key="*this">{{item}}</view>
+  </view>
+
+  <view class="privacy-section">
+    <view class="privacy-section-title">个人信息收集清单</view>
+    <view class="privacy-item">微信登录标识：登录时收集；用于账号识别和登录；保存至账号注销。</view>
+    <view class="privacy-item">昵称、头像：你授权微信资料时收集；用于个人页展示；保存至账号注销或你重新授权更新。</view>
+    <view class="privacy-item">学习记录：登录后同步；用于跨设备保存练习进度；保存至账号注销。</view>
+    <view class="privacy-item">AI 输入与结果：你使用 AI 功能时收集；用于完成本次分析、评分或问答；保存至账号注销。</view>
+    <view class="privacy-item">反馈内容、联系方式和截图：你主动提交时收集；用于处理客服工单；按处理需要保存。</view>
+  </view>
+
+  <view class="privacy-actions">
+    <button class="secondary-button" bindtap="openService">客服与反馈</button>
+    <button class="danger-button" bindtap="deleteAccount" loading="{{deleting}}" disabled="{{deleting}}">{{loggedIn ? '注销账号' : '登录后可注销账号'}}</button>
+  </view>
+</view>

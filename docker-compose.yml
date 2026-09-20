@@ -1,0 +1,34 @@
+# 薯考 API —— 单容器默认编排（文件持久化，无需数据库）。
+#
+#   docker compose up -d            # 用 GHCR 上的 latest 起服务
+#   docker compose up -d --build    # 用当前源码本地构建后起服务
+#   docker compose logs -f api
+#   docker compose down
+#
+# 想改用 PostgreSQL：叠加 docker-compose.postgres.yml，见 docs/DOCKER.md。
+name: shukao
+
+services:
+  api:
+    image: ghcr.io/herder1/potato-text:${SHUKAO_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shukao-api
+    restart: unless-stopped
+    ports:
+      - "${SHUKAO_PORT:-3212}:3212"
+    environment:
+      NODE_ENV: production
+      PORT: "3212"
+      HOST: 0.0.0.0
+      # 文件模式：数据落在 /app/.runtime 下的 JSON，已挂到宿主机仓库根的 .runtime 目录，备份即拷贝。
+      PERSISTENCE_DRIVER: ${PERSISTENCE_DRIVER:-file}
+      FILE_STORAGE_DRIVER: ${FILE_STORAGE_DRIVER:-local}
+      # 微信小程序凭据（不填则登录接口不可用，其余功能不受影响）。
+      WECHAT_APP_ID: ${WECHAT_APP_ID:-}
+      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:-}
+      # 试卷 PDF 导出用的中文字体；镜像内已装 Noto CJK，留空即自动探测。
+      SHUKAO_PDF_FONT_PATH: ${SHUKAO_PDF_FONT_PATH:-}
+    volumes:
+      - ./.runtime:/app/.runtime

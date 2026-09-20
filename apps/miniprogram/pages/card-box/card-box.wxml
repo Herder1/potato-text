@@ -1,0 +1,245 @@
+<page-meta page-style="{{pageScrollLocked ? 'overflow: hidden;' : ''}}" />
+<template name="setCardBody">
+  <block wx:if="{{!item.flipped}}">
+    <view class="set-face">
+      <view class="set-head">
+        <view class="set-count">{{item.count}} 张</view>
+        <view class="set-flip" catchtap="flipSet" data-id="{{item.id}}" role="button" aria-label="翻到卡集背面"><image src="/assets/icons/card-flip.svg" mode="aspectFit"/></view>
+      </view>
+      <view class="set-title">{{item.title}}</view>
+      <view class="set-foot"><text>{{item.progress}}% 已掌握</text><text style="{{item.colorAccent ? 'color: ' + item.colorAccent + ';' : ''}}" wx:if="{{item.due}}">{{item.due}} 待复习</text><text style="{{item.colorAccent ? 'color: ' + item.colorAccent + ';' : ''}}" wx:else>未开始</text></view>
+      <view class="progress"><view style="width: {{item.progress}}%;{{item.colorAccent ? ' background: ' + item.colorAccent + ';' : ''}}"></view></view>
+    </view>
+  </block>
+  <block wx:else>
+    <view class="set-face set-face-back">
+      <view class="set-head">
+        <view class="set-back-label">简介</view>
+        <view class="set-flip set-flip-back" catchtap="flipSet" data-id="{{item.id}}" role="button" aria-label="翻回卡集正面"><image src="/assets/icons/card-flip.svg" mode="aspectFit"/></view>
+      </view>
+      <view class="set-back-text">{{item.displayDescription || '暂无简介'}}</view>
+      <view class="set-back-author">作者 · {{item.author || '我的整理'}}</view>
+    </view>
+  </block>
+</template>
+<view class="page" bindtap="handleBlankTap">
+  <view class="page-decor" aria-hidden="true">
+    <view class="page-arc page-arc-a"></view>
+    <view class="page-arc page-arc-b"></view>
+  </view>
+  <view class="card-box-nav" catchtap="noop">
+    <view class="back" bindtap="goBack" role="button" aria-label="返回"><image src="/assets/icons/arrow-left.svg" mode="aspectFit"/></view>
+    <view class="folder-bar">
+      <view class="folder-name" bindtap="toggleDirectory" bindlongpress="openActiveFolderActions">
+        <text>{{activeFolder}}</text><view class="folder-chevron {{directoryOpen ? 'folder-chevron-open' : ''}}"></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="search-row" catchtap="noop">
+    <view class="search"><text>⌕</text><input value="{{query}}" placeholder="搜索卡集" bindinput="search"/></view>
+  </view>
+
+  <view class="selection-toolbar selection-{{selectionAlign}} {{dragActive ? 'selection-toolbar-hidden' : ''}}" wx:if="{{selecting}}" catchtap="noop">
+    <view data-action="edit" bindtap="selectionAction"><image src="/assets/icons/pack-edit.svg" mode="aspectFit"/><label>编辑</label></view>
+    <view data-action="delete" bindtap="selectionAction"><image src="/assets/icons/pack-trash.svg" mode="aspectFit"/><label>删除</label></view>
+    <view data-action="move" bindtap="selectionAction"><image src="/assets/icons/pack-folder.svg" mode="aspectFit"/><label>移动</label></view>
+    <view data-action="pin" bindtap="selectionAction"><image src="/assets/icons/pack-pin.svg" mode="aspectFit"/><label>置顶</label></view>
+    <view data-action="color" bindtap="selectionAction"><image src="/assets/icons/pack-palette.svg" mode="aspectFit"/><label>颜色</label></view>
+    <view bindtap="cancelSelect"><image src="/assets/icons/pack-close.svg" mode="aspectFit"/><label>取消</label></view>
+  </view>
+
+  <view class="color-picker color-picker-{{selectionAlign}}" wx:if="{{setColorPickerOpen}}" style="top: {{setColorPickerTop}}px;" catchtap="noop">
+    <view class="color-dot color-dot-none {{selectedSetColor ? '' : 'color-dot-active'}}" data-key="" bindtap="selectSetColor" role="button" aria-label="无颜色"></view>
+    <view
+      wx:for="{{cardColors}}"
+      wx:key="key"
+      class="color-dot {{selectedSetColor === item.key ? 'color-dot-active' : ''}}"
+      style="background: {{item.soft}};"
+      data-key="{{item.key}}"
+      bindtap="selectSetColor"
+      role="button"
+      aria-label="{{item.label}}"
+    ></view>
+  </view>
+
+  <view class="grid">
+    <view
+      wx:for="{{visibleSets}}"
+      wx:key="id"
+      class="set {{item.colorSoft ? 'set-tinted' : ''}} {{item.selected ? 'set-selected' : ''}} {{selecting ? 'set-in-selection' : ''}} {{dragActive && item.id === dragKey ? 'set-drag-origin' : ''}}"
+      style="{{item.colorSoft ? '--card-edge: ' + item.colorEdge + '; background: ' + item.colorSoft + ';' : ''}}"
+      data-id="{{item.id}}"
+      catchtap="openOrToggle"
+      bindlongpress="startSelect"
+      bindtouchstart="handleSetTouchStart"
+      bindtouchmove="handleSetTouchMove"
+      bindtouchend="handleDragTouchEnd"
+      bindtouchcancel="handleDragTouchEnd"
+    >
+      <template is="setCardBody" data="{{item: item}}"/>
+    </view>
+  </view>
+
+  <view
+    wx:if="{{dragActive && dragGhost}}"
+    class="drag-ghost"
+    style="{{dragStyle}}"
+  ><template is="setCardBody" data="{{item: dragGhost}}"/></view>
+
+  <view
+    wx:if="{{dragIndicator}}"
+    class="drag-indicator drag-indicator-{{dragIndicator.kind}}"
+    style="left: {{dragIndicator.left}}px; top: {{dragIndicator.top}}px; width: {{dragIndicator.width}}px; height: {{dragIndicator.height}}px;"
+  ></view>
+
+  <view class="directory-mask" wx:if="{{directoryOpen}}" catchtap="closeDirectory"></view>
+  <view class="directory" wx:if="{{directoryOpen}}" catchtap="noop">
+    <view class="directory-head">
+      <view class="directory-title">切换文件夹</view>
+      <view class="create-folder" bindtap="startCreateFolder"><text>＋</text><label>新建</label></view>
+    </view>
+    <view class="directory-row {{activeFolder === '全部卡集' ? 'directory-active' : ''}}" data-folder="全部卡集" bindtap="selectFolder">
+      <text class="directory-name">全部卡集</text><text class="directory-check">{{activeFolder === '全部卡集' ? '✓' : ''}}</text>
+    </view>
+    <view
+      wx:for="{{folders}}"
+      wx:key="*this"
+      class="directory-row {{activeFolder === item ? 'directory-active' : ''}} {{folderActionTarget === item ? 'directory-managing' : ''}}"
+      data-folder="{{item}}"
+      bindtap="selectFolder"
+      bindlongpress="openFolderRowActions"
+    >
+      <text class="directory-name">{{item}}</text>
+      <view class="folder-row-actions" wx:if="{{folderActionTarget === item}}">
+        <view class="folder-row-action" data-folder="{{item}}" catchtap="startRenameFolder">编辑</view>
+        <view class="folder-row-action folder-action-delete" data-folder="{{item}}" catchtap="deleteFolder">删除</view>
+      </view>
+      <text class="directory-check" wx:else>{{activeFolder === item ? '✓' : ''}}</text>
+    </view>
+    <view class="folder-inline-editor" wx:if="{{folderInlineCreateOpen}}">
+      <input value="{{folderEditorValue}}" placeholder="输入文件夹名称" focus="{{folderInlineCreateOpen}}" bindinput="updateFolderEditor" maxlength="20"/>
+      <view class="inline-editor-cancel" bindtap="closeInlineCreate">取消</view>
+      <view class="inline-editor-save" bindtap="saveFolderEditor">保存</view>
+    </view>
+  </view>
+
+  <view class="rename-mask" wx:if="{{folderEditorOpen}}" bindtap="closeFolderEditor"></view>
+  <view class="rename-box" wx:if="{{folderEditorOpen}}" catchtap="noop">
+    <text>编辑文件夹名</text>
+    <input value="{{folderEditorValue}}" placeholder="输入文件夹名称" focus="{{folderEditorOpen}}" bindinput="updateFolderEditor" maxlength="20"/>
+    <view><text bindtap="closeFolderEditor">取消</text><text bindtap="saveFolderEditor">保存</text></view>
+  </view>
+
+  <view class="float-bar" wx:if="{{!selecting}}" role="navigation" aria-label="卡集底部导航">
+    <view class="float-action" bindtap="smartPractice" role="button" aria-label="智能练习"><text class="float-smart">✦</text><label>智能练习</label></view>
+    <view class="float-primary" bindtap="createSet" role="button" aria-label="新建卡集"><text class="float-plus">＋</text><label>新建卡集</label></view>
+    <view class="float-action" bindtap="openMoreDrawer" role="button" aria-label="更多"><text class="float-more">···</text><label>更多</label></view>
+  </view>
+
+  <view class="drawer-layer" wx:if="{{colorPanelOpen}}" catchtouchmove="stopTouchMove" catchtap="noop">
+    <view class="drawer-mask" bindtap="closeColorPanel"></view>
+    <view class="more-drawer color-panel">
+      <view class="drawer-head">
+        <text>选择卡盒颜色</text>
+        <text class="drawer-close" bindtap="closeColorPanel">关闭</text>
+      </view>
+      <view class="color-modes">
+        <view class="color-mode {{colorMode === 'uniform' ? 'color-mode-active' : ''}}" data-mode="uniform" bindtap="selectColorMode" role="button" aria-label="统一颜色">
+          <image src="/assets/icons/palette.svg" mode="aspectFit"/>
+          <label>统一颜色</label>
+        </view>
+        <view class="color-mode {{colorMode === 'rainbow' ? 'color-mode-active' : ''}}" data-mode="rainbow" bindtap="selectColorMode" role="button" aria-label="彩虹色">
+          <image src="/assets/icons/card-flip.svg" mode="aspectFit"/>
+          <label>彩虹色</label>
+        </view>
+      </view>
+      <block wx:if="{{colorMode === 'uniform'}}">
+        <view class="color-sheet-grid">
+          <view class="color-swatch color-dot-none {{selectedSetColor ? '' : 'color-swatch-active'}}" data-key="" bindtap="applyUniformColor" role="button" aria-label="无颜色"></view>
+          <view
+            wx:for="{{cardColors}}"
+            wx:key="key"
+            class="color-swatch {{selectedSetColor === item.key ? 'color-swatch-active' : ''}}"
+            style="background: {{item.soft}};"
+            data-key="{{item.key}}"
+            bindtap="applyUniformColor"
+            role="button"
+            aria-label="{{item.label}}"
+          ></view>
+        </view>
+        <view class="color-note">统一颜色会应用到{{colorScopeLabel}}。</view>
+      </block>
+      <block wx:else>
+        <view class="color-note">彩虹色会把{{colorScopeLabel}}按当前顺序依次套用渐变色，颜色循环使用色板。</view>
+        <view class="color-apply" bindtap="applyRainbow" role="button" aria-label="应用渐变色">应用渐变色</view>
+      </block>
+    </view>
+  </view>
+
+  <view class="drawer-layer" wx:if="{{moreDrawerOpen}}" catchtouchmove="stopTouchMove" catchtap="noop">
+    <view class="drawer-mask" bindtap="closeMoreDrawer"></view>
+    <view class="more-drawer">
+      <view class="drawer-head">
+        <text>{{activeFolder}}</text>
+        <text class="drawer-close" bindtap="closeMoreDrawer">关闭</text>
+      </view>
+      <view class="drawer-section">
+        <view class="drawer-section-title">分享与导入</view>
+        <view class="drawer-grid">
+          <view class="drawer-item drawer-item-share-host">
+            <image src="/assets/icons/share.svg" mode="aspectFit"/><label>分享卡集</label>
+            <button class="drawer-share-trigger" open-type="share" aria-label="分享卡集"></button>
+          </view>
+          <view class="drawer-item" bindtap="importCardSet" role="button" aria-label="导入卡集"><image src="/assets/icons/card-import.svg" mode="aspectFit"/><label>导入卡集</label></view>
+        </view>
+      </view>
+      <view class="drawer-section">
+        <view class="drawer-section-title">样式设置</view>
+        <view class="drawer-grid">
+          <view class="drawer-item" data-key="color" bindtap="drawerAction" role="button" aria-label="更换颜色"><image src="/assets/icons/palette.svg" mode="aspectFit"/><label>更换颜色</label></view>
+        </view>
+      </view>
+      <view class="drawer-section">
+        <view class="drawer-section-title">卡盒管理</view>
+        <view class="drawer-grid">
+          <view class="drawer-item" data-key="folders" bindtap="drawerAction" role="button" aria-label="管理文件夹"><image src="/assets/icons/sliders.svg" mode="aspectFit"/><label>管理文件夹</label></view>
+          <view class="drawer-item" data-key="newFolder" bindtap="drawerAction" role="button" aria-label="新建文件夹"><image src="/assets/icons/plus.svg" mode="aspectFit"/><label>新建文件夹</label></view>
+          <view class="drawer-item" data-key="renameFolder" bindtap="drawerAction" role="button" aria-label="重命名文件夹"><image src="/assets/icons/card-rename.svg" mode="aspectFit"/><label>重命名文件夹</label></view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="drawer-layer" wx:if="{{importSheetOpen}}" catchtouchmove="stopTouchMove" catchtap="noop">
+    <view class="drawer-mask" bindtap="closeImportSheet"></view>
+    <view class="more-drawer import-drawer">
+      <view class="drawer-head">
+        <text>导入卡集</text>
+        <text class="drawer-close" bindtap="closeImportSheet">关闭</text>
+      </view>
+      <view class="import-note">来自知识库社区精选的卡片集，导入后会出现在我的卡集里。</view>
+      <scroll-view class="import-scroll" scroll-y="true">
+        <view
+          wx:for="{{importOptions}}"
+          wx:key="id"
+          class="import-row {{item.imported ? 'import-row-done' : ''}}"
+          data-id="{{item.id}}"
+          bindtap="selectImportCardSet"
+          role="button"
+          aria-label="导入 {{item.title}}"
+        >
+          <view class="import-mark">集</view>
+          <view class="import-copy">
+            <text>{{item.title}}</text>
+            <label>{{item.contributor}}{{item.count ? ' · ' + item.count + ' 张' : ' · 暂无卡片内容'}}</label>
+            <label wx:if="{{item.path}}">{{item.path}}</label>
+          </view>
+          <view class="import-state">{{item.imported ? '已导入' : '导入'}}</view>
+        </view>
+        <view class="import-empty" wx:if="{{importLoading}}">正在读取社区卡集…</view>
+        <view class="import-empty" wx:elif="{{!importOptions.length}}">暂时没有可导入的社区卡集</view>
+      </scroll-view>
+    </view>
+  </view>
+</view>

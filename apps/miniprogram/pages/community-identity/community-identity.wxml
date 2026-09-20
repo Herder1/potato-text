@@ -1,0 +1,40 @@
+<view class="page-shell identity-page">
+  <view class="identity-profile">
+    <image wx:if="{{avatarUrl}}" class="identity-avatar" src="{{avatarUrl}}" mode="aspectFill" />
+    <view wx:else class="identity-avatar identity-avatar-fallback">薯</view>
+    <view class="identity-profile-main">
+      <view class="identity-name">{{nickname}}</view>
+      <view class="identity-level">{{identity.current.label}}</view>
+    </view>
+    <view class="sync-state" wx:if="{{syncing}}">同步中</view>
+  </view>
+
+  <view class="progress-section">
+    <view class="progress-head">
+      <view>{{identity.next ? '下一身份 · ' + identity.next.label : '身份进度'}}</view>
+      <text>{{identity.progress}}%</text>
+    </view>
+    <view class="progress-track"><view class="progress-value" style="width: {{identity.progress}}%;"></view></view>
+    <view class="progress-note">{{identity.progressText}}</view>
+  </view>
+
+  <view class="identity-metrics">
+    <view><text>{{identity.published}}</text><label>公开内容</label></view>
+    <view><text>{{identity.favorites}}</text><label>获收藏</label></view>
+    <view><text>{{identity.copies}}</text><label>被导入</label></view>
+  </view>
+
+  <view class="section-head"><text>身份阶梯</text><label>按真实贡献自动更新</label></view>
+  <view class="level-list">
+    <view class="level-row {{item.current ? 'level-current' : ''}}" wx:for="{{identity.levels}}" wx:key="id">
+      <view class="level-state {{item.achieved ? 'level-state-achieved' : ''}}">{{item.achieved ? '✓' : ''}}</view>
+      <view class="level-main"><text>{{item.label}}</text><label>{{item.requirement}}</label></view>
+      <view class="current-label" wx:if="{{item.current}}">当前</view>
+    </view>
+  </view>
+
+  <view class="identity-actions">
+    <button class="primary-action" bindtap="openContributions">查看我的贡献</button>
+    <button class="secondary-action" bindtap="openAssets">管理我的资产</button>
+  </view>
+</view>

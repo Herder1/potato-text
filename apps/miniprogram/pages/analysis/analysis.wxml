@@ -1,0 +1,105 @@
+<view class="page-shell analysis-page" wx:if="{{analysis}}">
+  <view class="radar-section">
+    <view class="section-head">
+      <view class="section-subject">
+        <view class="section-subject-trigger {{subjectMenuOpen ? 'section-subject-trigger-open' : ''}}" bindtap="toggleSubjectMenu" role="button" aria-label="切换学情分析学科，当前{{activeSubjectName}}"><text>{{analysis.subjectName}}</text><view class="section-subject-chevron"></view></view>
+        <view class="section-subject-menu" wx:if="{{subjectMenuOpen}}">
+          <view class="section-subject-option {{activeSubjectId === item.id ? 'section-subject-option-active' : ''}}" wx:for="{{subjects}}" wx:key="id" data-id="{{item.id}}" bindtap="selectSubject"><text>{{item.name}}</text><label>{{activeSubjectId === item.id ? '当前' : ''}}</label></view>
+        </view>
+      </view>
+      <view class="sample-count"><text>{{analysis.totalAttempts}}</text> 次有效作答</view>
+    </view>
+
+    <view class="overview-tabs" role="tablist" aria-label="切换学情概览图表">
+      <view class="overview-tab {{activeOverviewTab === 'ability' ? 'overview-tab-active' : ''}}" data-overview="ability" bindtap="selectOverviewTab" role="tab" aria-selected="{{activeOverviewTab === 'ability'}}">能力图</view>
+      <view class="overview-tab {{activeOverviewTab === 'trend' ? 'overview-tab-active' : ''}}" data-overview="trend" bindtap="selectOverviewTab" role="tab" aria-selected="{{activeOverviewTab === 'trend'}}">学习趋势</view>
+    </view>
+
+    <view class="overview-content" style="height: {{462 + analysis.dimensions.length * 50}}rpx;">
+      <block wx:if="{{activeOverviewTab === 'ability'}}">
+        <canvas canvas-id="abilityRadar" id="abilityRadar" class="ability-radar" width="330" height="230"></canvas>
+        <view class="dimension-list">
+          <view class="dimension-row" wx:for="{{analysis.dimensions}}" wx:key="id">
+            <view class="dimension-name">{{item.label}}</view>
+            <view class="dimension-track"><view style="width: {{item.hasData ? item.accuracy : 0}}%;" class="dimension-value {{item.errorRate >= 50 ? 'dimension-value-weak' : ''}}"></view></view>
+            <view class="dimension-score">{{item.hasData ? item.accuracy + '%' : '暂无'}}</view>
+          </view>
+        </view>
+      </block>
+
+      <view wx:else class="trend-panel">
+        <view class="trend-toolbar">
+          <view class="trend-switch" role="tablist" aria-label="切换趋势周期">
+            <view
+              wx:for="{{trendPeriodOptions}}"
+              wx:key="*this"
+              class="trend-switch-item {{trendPeriodDays === item ? 'trend-switch-item-active' : ''}}"
+              data-days="{{item}}"
+              bindtap="selectTrendPeriod"
+              role="tab"
+              aria-selected="{{trendPeriodDays === item}}"
+            >{{item}}天</view>
+          </view>
+          <view class="trend-switch" role="tablist" aria-label="切换趋势指标">
+            <view class="trend-switch-item {{activeTrendMetric === 'accuracy' ? 'trend-switch-item-active' : ''}}" data-metric="accuracy" bindtap="selectTrendMetric" role="tab" aria-selected="{{activeTrendMetric === 'accuracy'}}">正确率</view>
+            <view class="trend-switch-item {{activeTrendMetric === 'attempts' ? 'trend-switch-item-active' : ''}}" data-metric="attempts" bindtap="selectTrendMetric" role="tab" aria-selected="{{activeTrendMetric === 'attempts'}}">刷题量</view>
+          </view>
+        </view>
+        <view class="trend-comparison-row">
+          <text class="trend-comparison trend-comparison-{{trendSummary.direction}}">{{trendSummary.comparisonLabel}}</text>
+        </view>
+        <canvas wx:if="{{trendSummary.hasData}}" type="2d" id="learningTrend" class="learning-trend"></canvas>
+        <view wx:else class="trend-empty">{{trendSummary.emptyText}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="analysis-tabs" role="tablist" aria-label="切换学情分析内容">
+    <view class="analysis-tab {{activeAnalysisTab === 'diagnosis' ? 'analysis-tab-active' : ''}}" data-tab="diagnosis" bindtap="selectAnalysisTab" role="tab" aria-selected="{{activeAnalysisTab === 'diagnosis'}}">学习诊断</view>
+    <view class="analysis-tab {{activeAnalysisTab === 'missing' ? 'analysis-tab-active' : ''}}" data-tab="missing" bindtap="selectAnalysisTab" role="tab" aria-selected="{{activeAnalysisTab === 'missing'}}">遗忘点</view>
+    <view class="analysis-tab {{activeAnalysisTab === 'weak' ? 'analysis-tab-active' : ''}}" data-tab="weak" bindtap="selectAnalysisTab" role="tab" aria-selected="{{activeAnalysisTab === 'weak'}}">薄弱{{analysis.dimensionLabel}}</view>
+    <view class="analysis-tab {{activeAnalysisTab === 'attribution' ? 'analysis-tab-active' : ''}}" data-tab="attribution" bindtap="selectAnalysisTab" role="tab" aria-selected="{{activeAnalysisTab === 'attribution'}}">错误归因</view>
+  </view>
+
+  <view class="ai-diagnosis analysis-tab-panel" wx:if="{{activeAnalysisTab === 'diagnosis'}}">
+    <view class="diagnosis-kicker">学习诊断</view>
+    <view class="diagnosis-title">{{analysis.summary}}</view>
+    <view class="diagnosis-copy">{{analysis.recommendation}}</view>
+    <view class="ai-generated" wx:if="{{aiAdvice}}"><text>AI 补充</text>{{aiAdvice}}</view>
+    <view class="diagnosis-actions">
+      <button bindtap="startTargetedPractice">练习薄弱{{analysis.dimensionLabel}}</button>
+      <button bindtap="requestAiAdvice" disabled="{{aiGenerating}}">{{aiGenerating ? '分析中' : (aiAdvice ? '重新生成' : 'AI 建议')}}</button>
+    </view>
+  </view>
+
+  <view class="analysis-block analysis-tab-panel" wx:elif="{{activeAnalysisTab === 'weak'}}">
+    <view class="block-heading"><view>薄弱{{analysis.dimensionLabel}}</view><text>按错误率排序</text></view>
+    <view wx:if="{{analysis.weakUnits.length}}" class="weak-list">
+      <view class="weak-row" wx:for="{{analysis.weakUnits}}" wx:key="id">
+        <view class="weak-rank">{{index + 1}}</view>
+        <view class="weak-main"><view>{{item.label}}</view><text>{{item.attemptCount}} 次作答 · {{item.wrongCount}} 次错误</text></view>
+        <view class="weak-rate">{{item.errorRate}}%</view>
+      </view>
+    </view>
+    <view wx:else class="block-empty">当前还没有可归入该科目的错题。</view>
+  </view>
+
+  <view class="analysis-block analysis-tab-panel" wx:elif="{{activeAnalysisTab === 'missing'}}">
+    <view class="block-heading"><view>遗忘点</view><text>主观题遗漏的结构化得分点</text></view>
+    <view wx:if="{{analysis.missingPoints.length}}" class="memory-list">
+      <view class="memory-row" wx:for="{{analysis.missingPoints}}" wx:key="label"><view>{{item.label}}</view><text>遗漏 {{item.count}} 次</text></view>
+    </view>
+    <view wx:else class="block-empty">完成主观题 AI 评分后，会在这里沉淀遗漏的得分点。</view>
+  </view>
+
+  <view class="analysis-block analysis-tab-panel" wx:elif="{{activeAnalysisTab === 'attribution'}}">
+    <view class="block-heading"><view>错误归因</view><text>决定下一组题练什么</text></view>
+    <view wx:if="{{analysis.errorAttributions.length}}" class="cause-list">
+      <view class="cause-row" wx:for="{{analysis.errorAttributions}}" wx:key="id">
+        <view><text class="cause-label">{{item.label}}</text><text class="cause-count">{{item.count}} 次</text></view>
+        <text>{{item.advice}}</text>
+      </view>
+    </view>
+    <view wx:else class="block-empty">错题积累后，系统会区分时序、人名、作品归属和概念边界问题。</view>
+  </view>
+</view>

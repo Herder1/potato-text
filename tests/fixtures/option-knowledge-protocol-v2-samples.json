@@ -1,0 +1,174 @@
+{
+  "schemaVersion": "option-knowledge-protocol-samples-v1",
+  "optionKnowledgeProtocolVersion": "option-knowledge-v2",
+  "purpose": "protocol_only",
+  "includedInModelAccuracy": false,
+  "sourceBatchId": null,
+  "samples": [
+    {
+      "id": "protocol-all-question-only",
+      "category": "all_question_only",
+      "question": {
+        "id": "protocol-all-question-only",
+        "type": "single_choice",
+        "stem": "Apply the same stated rule to both examples.",
+        "options": [{ "key": "A", "text": "Example A" }, { "key": "B", "text": "Example B" }]
+      },
+      "profile": {
+        "optionKnowledgeProtocolVersion": "option-knowledge-v2",
+        "choiceStructure": "direct_options",
+        "optionFeatures": [
+          { "key": "A", "knowledgeRelation": "question_only", "knowledgeHints": [], "basis": "The question-level rule is sufficient after deletion testing." },
+          { "key": "B", "knowledgeRelation": "question_only", "knowledgeHints": [], "basis": "The question-level rule is sufficient after deletion testing." }
+        ],
+        "atomicStatements": [],
+        "optionComposition": []
+      }
+    },
+    {
+      "id": "protocol-all-option-specific",
+      "category": "all_option_specific",
+      "question": {
+        "id": "protocol-all-option-specific",
+        "type": "single_choice",
+        "stem": "Which statement is correct?",
+        "options": [{ "key": "A", "text": "Statement about rule A" }, { "key": "B", "text": "Statement about rule B" }]
+      },
+      "profile": {
+        "optionKnowledgeProtocolVersion": "option-knowledge-v2",
+        "choiceStructure": "direct_options",
+        "optionFeatures": [
+          { "key": "A", "knowledgeRelation": "option_specific", "knowledgeHints": ["rule A"], "basis": "Rule A is necessary to verify this option." },
+          { "key": "B", "knowledgeRelation": "option_specific", "knowledgeHints": ["rule B"], "basis": "Rule B is necessary to eliminate this option." }
+        ],
+        "atomicStatements": [],
+        "optionComposition": []
+      }
+    },
+    {
+      "id": "protocol-mixed-relations",
+      "category": "mixed",
+      "question": {
+        "id": "protocol-mixed-relations",
+        "type": "single_choice",
+        "stem": "Choose the valid analysis.",
+        "options": [{ "key": "A", "text": "Direct application" }, { "key": "B", "text": "Additional exception" }]
+      },
+      "profile": {
+        "optionKnowledgeProtocolVersion": "option-knowledge-v2",
+        "choiceStructure": "direct_options",
+        "optionFeatures": [
+          { "key": "A", "knowledgeRelation": "question_only", "knowledgeHints": [], "basis": "The shared question rule is sufficient." },
+          { "key": "B", "knowledgeRelation": "option_specific", "knowledgeHints": ["exception rule"], "basis": "The exception is necessary after deletion testing." }
+        ],
+        "atomicStatements": [],
+        "optionComposition": []
+      }
+    },
+    {
+      "id": "protocol-composed-statements",
+      "category": "composed_options",
+      "question": {
+        "id": "protocol-composed-statements",
+        "type": "single_choice",
+        "stem": "Which combination is correct?",
+        "options": [
+          { "key": "A", "text": "I and II" },
+          { "key": "B", "text": "I and III" },
+          { "key": "C", "text": "II and III" },
+          { "key": "D", "text": "I, II and III" }
+        ]
+      },
+      "profile": {
+        "optionKnowledgeProtocolVersion": "option-knowledge-v2",
+        "choiceStructure": "composed_options",
+        "optionFeatures": [
+          { "key": "A", "basis": "Combination wrapper only." },
+          { "key": "B", "basis": "Combination wrapper only." },
+          { "key": "C", "basis": "Combination wrapper only." },
+          { "key": "D", "basis": "Combination wrapper only." }
+        ],
+        "atomicStatements": [
+          { "key": "I", "text": "Atomic statement I", "knowledgeRelation": "question_only", "knowledgeHints": [], "verdict": "true", "basis": "The question-level rule is sufficient." },
+          { "key": "II", "text": "Atomic statement II", "knowledgeRelation": "option_specific", "knowledgeHints": ["rule II"], "verdict": "false", "basis": "Rule II is required for this statement." },
+          { "key": "III", "text": "Atomic statement III", "knowledgeRelation": "question_only", "knowledgeHints": [], "verdict": "true", "basis": "The question-level rule is sufficient." }
+        ],
+        "optionComposition": [
+          { "optionKey": "A", "atomicKeys": ["I", "II"] },
+          { "optionKey": "B", "atomicKeys": ["I", "III"] },
+          { "optionKey": "C", "atomicKeys": ["II", "III"] },
+          { "optionKey": "D", "atomicKeys": ["I", "II", "III"] }
+        ]
+      }
+    },
+    {
+      "id": "protocol-all-above",
+      "category": "composed_all_above",
+      "question": {
+        "id": "protocol-all-above",
+        "type": "single_choice",
+        "stem": "Which option is correct?",
+        "options": [{ "key": "A", "text": "Statement I" }, { "key": "B", "text": "Statement II" }, { "key": "C", "text": "All statements above" }]
+      },
+      "profile": {
+        "optionKnowledgeProtocolVersion": "option-knowledge-v2",
+        "choiceStructure": "composed_options",
+        "optionFeatures": [
+          { "key": "A", "basis": "Combination wrapper only." },
+          { "key": "B", "basis": "Combination wrapper only." },
+          { "key": "C", "basis": "All-above wrapper only." }
+        ],
+        "atomicStatements": [
+          { "key": "I", "text": "Atomic statement I", "knowledgeRelation": "option_specific", "knowledgeHints": ["rule I"], "verdict": "true", "basis": "Rule I is required." },
+          { "key": "II", "text": "Atomic statement II", "knowledgeRelation": "option_specific", "knowledgeHints": ["rule II"], "verdict": "true", "basis": "Rule II is required." }
+        ],
+        "optionComposition": [
+          { "optionKey": "A", "atomicKeys": ["I"] },
+          { "optionKey": "B", "atomicKeys": ["II"] },
+          { "optionKey": "C", "atomicKeys": ["I", "II"] }
+        ]
+      }
+    },
+    {
+      "id": "protocol-insufficient-evidence",
+      "category": "undetermined",
+      "question": {
+        "id": "protocol-insufficient-evidence",
+        "type": "single_choice",
+        "stem": "Choose the supported statement.",
+        "options": [{ "key": "A", "text": "Supported" }, { "key": "B", "text": "Evidence gap" }]
+      },
+      "profile": {
+        "optionKnowledgeProtocolVersion": "option-knowledge-v2",
+        "choiceStructure": "direct_options",
+        "optionFeatures": [
+          { "key": "A", "knowledgeRelation": "question_only", "knowledgeHints": [], "basis": "The question-level evidence is sufficient." },
+          { "key": "B", "knowledgeRelation": "undetermined", "knowledgeHints": [], "uncertaintyNote": "The supplied evidence cannot complete the deletion test.", "basis": "The relation must remain abstained." }
+        ],
+        "atomicStatements": [],
+        "optionComposition": []
+      }
+    },
+    {
+      "id": "protocol-shared-rule-not-sufficient",
+      "category": "shared_rule_pair",
+      "pairId": "shared-rule-deletion-test",
+      "question": {
+        "id": "protocol-shared-rule-not-sufficient",
+        "type": "single_choice",
+        "stem": "Apply a shared rule and an explicit exception.",
+        "options": [{ "key": "A", "text": "Ordinary case" }, { "key": "B", "text": "Exception case" }]
+      },
+      "profile": {
+        "optionKnowledgeProtocolVersion": "option-knowledge-v2",
+        "choiceStructure": "direct_options",
+        "optionFeatures": [
+          { "key": "A", "knowledgeRelation": "question_only", "knowledgeHints": [], "basis": "The shared rule is sufficient." },
+          { "key": "B", "knowledgeRelation": "option_specific", "knowledgeHints": ["exception boundary"], "basis": "Deleting the exception boundary makes B undecidable." }
+        ],
+        "atomicStatements": [],
+        "optionComposition": []
+      }
+    }
+  ]
+}

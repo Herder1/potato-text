@@ -1,0 +1,42 @@
+<view class="page-shell contributions-page">
+  <view class="page-head">
+    <view><view class="page-title">我的贡献</view><view class="page-subtitle">公开内容与审核进度</view></view>
+    <view class="identity-entry" bindtap="openIdentity">社区身份</view>
+  </view>
+
+  <view class="contribution-summary">
+    <view><text>{{stats.published}}</text><label>已公开</label></view>
+    <view><text>{{stats.reviewing}}</text><label>审核中</label></view>
+    <view><text>{{stats.favorites}}</text><label>获收藏</label></view>
+    <view><text>{{stats.copies}}</text><label>被导入</label></view>
+  </view>
+
+  <scroll-view class="filter-scroll" scroll-x="true" enhanced="true" show-scrollbar="false">
+    <view class="filter-row">
+      <view wx:for="{{filters}}" wx:key="id" class="filter {{activeFilter === item.id ? 'filter-active' : ''}}" data-id="{{item.id}}" bindtap="selectFilter">{{item.label}}</view>
+    </view>
+  </scroll-view>
+
+  <view class="sync-note" wx:if="{{syncing}}">正在同步最新状态</view>
+  <view class="contribution-list" wx:if="{{visibleItems.length}}">
+    <view class="contribution-row" wx:for="{{visibleItems}}" wx:key="id" data-id="{{item.id}}" bindtap="openContribution">
+      <view class="type-mark type-{{item.type}}">{{item.type === 'question' ? '题' : (item.type === 'question_pack' ? '包' : (item.type === 'note' ? '记' : '卡'))}}</view>
+      <view class="contribution-main">
+        <view class="contribution-title">{{item.title}}</view>
+        <view class="contribution-path">{{item.pathText}}</view>
+        <view class="contribution-meta">
+          <text class="status status-{{item.moderationStatus}}">{{item.statusLabel}}</text>
+          <text>{{item.dateText}}</text>
+          <text wx:if="{{item.moderationStatus === 'published'}}">收藏 {{item.favoriteCount}} · 导入 {{item.copyCount}}</text>
+        </view>
+      </view>
+      <view class="row-arrow">›</view>
+    </view>
+  </view>
+
+  <view class="empty-state" wx:else>
+    <view>{{activeFilter === 'all' ? '还没有公开投稿记录' : '当前分类没有内容'}}</view>
+    <text wx:if="{{activeFilter === 'all'}}">公开自己的题目、笔记或卡片后，会在这里显示进度</text>
+    <button wx:if="{{activeFilter === 'all'}}" bindtap="openAssets">管理我的资产</button>
+  </view>
+</view>

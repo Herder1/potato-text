@@ -1,0 +1,101 @@
+<view class="note-compose-page">
+  <view class="editor-nav" style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;">
+    <view class="editor-nav-back" bindtap="goBack" role="button" aria-label="返回"><image src="/assets/icons/arrow-left.svg" mode="aspectFit" /></view>
+    <view class="editor-nav-title">{{noteId ? '编辑笔记' : '新建笔记'}}</view>
+    <view class="editor-nav-spacer"></view>
+    <view class="editor-nav-done" bindtap="completeEditing" role="button">完成</view>
+    <view class="editor-nav-more" bindtap="toggleMoreMenu" role="button" aria-label="更多操作">•••</view>
+  </view>
+  <view style="height: {{navTotalHeight}}px;"></view>
+
+  <view class="compose-main">
+    <input class="compose-title" value="{{title}}" maxlength="60" placeholder="标题" bindinput="updateTitle" />
+
+    <scroll-view class="editor-toolbar" style="top: {{navTotalHeight}}px;" scroll-x="true" enhanced="true" show-scrollbar="false">
+      <view class="toolbar-track">
+        <view class="tool-button" data-name="list" data-value="checked" bindtap="formatText" role="button" aria-label="清单"><text class="check-symbol">✓</text></view>
+        <view class="tool-button tool-wide {{toolPanel === 'style' ? 'tool-active' : ''}}" data-panel="style" bindtap="toggleToolPanel" role="button">正文</view>
+        <view class="tool-button color-tool {{toolPanel === 'color' ? 'tool-active' : ''}}" data-panel="color" bindtap="toggleToolPanel" role="button" aria-label="字体颜色"><text>A</text><view class="color-line"></view></view>
+        <view class="tool-button color-tool {{toolPanel === 'background' ? 'tool-active' : ''}}" data-panel="background" bindtap="toggleToolPanel" role="button" aria-label="文字背景颜色"><text>A</text><view class="background-mark"></view></view>
+        <view class="tool-button {{toolPanel === 'size' ? 'tool-active' : ''}}" data-panel="size" bindtap="toggleToolPanel" role="button" aria-label="字体大小"><text class="size-symbol">Aa</text></view>
+        <view class="tool-button format-bold" data-name="bold" bindtap="formatText" role="button" aria-label="加粗">B</view>
+        <view class="tool-button format-italic" data-name="italic" bindtap="formatText" role="button" aria-label="斜体">I</view>
+        <view class="tool-button format-underline" data-name="underline" bindtap="formatText" role="button" aria-label="下划线">U</view>
+        <view class="tool-button format-strike" data-name="strike" bindtap="formatText" role="button" aria-label="删除线">S</view>
+        <view class="tool-button" data-name="list" data-value="ordered" bindtap="formatText" role="button" aria-label="编号列表">1.</view>
+        <view class="tool-button" data-name="list" data-value="bullet" bindtap="formatText" role="button" aria-label="项目符号">•</view>
+        <view class="tool-button {{toolPanel === 'align' ? 'tool-active' : ''}}" data-panel="align" bindtap="toggleToolPanel" role="button" aria-label="文本对齐"><view class="align-symbol"><view></view><view></view><view></view></view></view>
+        <view class="tool-button" data-name="indent" data-value="-1" bindtap="formatText" role="button" aria-label="减少缩进">←</view>
+        <view class="tool-button" data-name="indent" data-value="+1" bindtap="formatText" role="button" aria-label="增加缩进">→</view>
+        <view class="tool-button" bindtap="insertCallout" role="button" aria-label="插入文本框"><text class="box-symbol">T</text></view>
+        <view class="tool-button tool-wide {{toolPanel === 'insert' ? 'tool-active' : ''}}" data-panel="insert" bindtap="toggleToolPanel" role="button">插入</view>
+      </view>
+    </scroll-view>
+
+    <view class="toolbar-popover" wx:if="{{toolPanel}}">
+      <view class="style-options" wx:if="{{toolPanel === 'style'}}">
+        <view wx:for="{{textStyles}}" wx:key="id" data-id="{{item.id}}" bindtap="applyTextStyle">{{item.label}}</view>
+      </view>
+      <view class="palette-options" wx:elif="{{toolPanel === 'color' || toolPanel === 'background'}}">
+        <view wx:for="{{colorOptions}}" wx:key="value" data-value="{{item.value}}" bindtap="applyColor"><view class="palette-swatch" style="background: {{item.value}};"></view><text>{{item.label}}</text></view>
+      </view>
+      <view class="size-options" wx:elif="{{toolPanel === 'size'}}">
+        <view wx:for="{{fontSizes}}" wx:key="value" data-value="{{item.value}}" bindtap="applyFontSize"><text style="font-size: {{item.preview}}rpx;">A</text><label>{{item.label}}</label></view>
+      </view>
+      <view class="align-options" wx:elif="{{toolPanel === 'align'}}">
+        <view data-name="align" data-value="left" bindtap="formatText">左对齐</view><view data-name="align" data-value="center" bindtap="formatText">居中</view><view data-name="align" data-value="right" bindtap="formatText">右对齐</view>
+      </view>
+      <view class="insert-options" wx:elif="{{toolPanel === 'insert'}}">
+        <view bindtap="chooseImages"><text>图</text><label>图片</label></view>
+        <view bindtap="openQuestionPicker"><text>题</text><label>题目</label></view>
+        <view bindtap="insertCallout"><text>T</text><label>重点框</label></view>
+      </view>
+    </view>
+
+    <editor
+      id="note-editor"
+      class="compose-editor"
+      placeholder="记录知识点、自己的理解或复习提示"
+      show-img-size="true"
+      show-img-toolbar="true"
+      show-img-resize="true"
+      bindready="onEditorReady"
+      bindinput="onEditorInput"
+      bindstatuschange="onFormatChange"
+    ></editor>
+
+    <view class="reference-strip" wx:if="{{questionRefs.length || images.length}}">
+      <view wx:if="{{questionRefs.length}}">已引用 {{questionRefs.length}} 道题目</view>
+      <view wx:if="{{images.length}}">已插入 {{images.length}} 张图片</view>
+    </view>
+  </view>
+
+  <view class="more-mask" wx:if="{{moreMenuOpen}}" bindtap="toggleMoreMenu"></view>
+  <view class="more-menu {{moreMenuOpen ? 'more-menu-open' : ''}}">
+    <view bindtap="openPreview">预览笔记</view>
+    <view bindtap="clearFormatting">清除选区格式</view>
+    <view bindtap="saveDraftManually">保存草稿</view>
+    <view class="danger" bindtap="discardDraft">放弃编辑</view>
+  </view>
+
+  <view class="question-picker-layer" wx:if="{{questionPickerOpen}}">
+    <view class="question-picker-mask" bindtap="closeQuestionPicker"></view>
+    <view class="question-picker-sheet">
+      <view class="question-picker-head"><view><text>引用题目</text><label>插入后将用于目录与标签推荐</label></view><view bindtap="closeQuestionPicker">×</view></view>
+      <scroll-view class="question-picker-list" scroll-y="true">
+        <view class="question-picker-empty" wx:if="{{!questionOptions.length}}">“我的资产”中还没有题目</view>
+        <view class="question-picker-row" wx:for="{{questionOptions}}" wx:key="id" data-id="{{item.id}}" bindtap="insertQuestionReference">
+          <view class="question-picker-mark">题</view><view><text>{{item.displayTitle}}</text><label>{{item.displayPath}}</label></view><view class="question-picker-add">＋</view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <view class="preview-layer" wx:if="{{previewOpen}}">
+    <view class="preview-head"><view class="preview-back" bindtap="closePreview" role="button" aria-label="返回编辑"><image src="/assets/icons/arrow-left.svg" mode="aspectFit" /></view><text>笔记预览</text><view bindtap="completeEditing">完成</view></view>
+    <scroll-view class="preview-scroll" scroll-y="true">
+      <view class="preview-title">{{title || '未命名笔记'}}</view>
+      <rich-text class="preview-content" nodes="{{contentHtml}}"></rich-text>
+    </scroll-view>
+  </view>
+</view>

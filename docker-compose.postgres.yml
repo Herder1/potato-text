@@ -1,0 +1,45 @@
+# PostgreSQL 叠加编排：在默认 docker-compose.yml 之上加一个 postgres 服务，
+# 并把 API 切到 PERSISTENCE_DRIVER=postgres。
+#
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml logs -f api
+#
+# 首次启动会自动执行 knex migrate:latest（幂等），再从空库跑起。
+# 把现有 .runtime/*.json 导入数据库（可选、可校验）：
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml run --rm api npm run db:import:dry
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml run --rm api npm run db:import
+# 迁移细节见 docs/POSTGRES_MIGRATION.md。
+name: shukao
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shukao-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shukao}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shukao}
+      POSTGRES_DB: ${POSTGRES_DB:-shukao}
+    volumes:
+      - shukao-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shukao} -d ${POSTGRES_DB:-shukao}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PERSISTENCE_DRIVER: postgres
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-shukao}:${POSTGRES_PASSWORD:-shukao}@postgres:5432/${POSTGRES_DB:-shukao}}
+      DATABASE_SSL: ${DATABASE_SSL:-false}
+      DATABASE_POOL_MIN: ${DATABASE_POOL_MIN:-0}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+    # 数据库就绪后先补迁移，再起服务（knex migrate:latest 幂等，重启安全）。
+    command: ["sh", "-c", "npm run db:migrate && node apps/api/src/server.js"]
+
+volumes:
+  shukao-postgres:

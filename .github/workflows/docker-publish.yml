@@ -1,0 +1,91 @@
+name: docker-publish
+
+# 触发时机：
+#   - push 到 main          → 构建并推送 latest + sha-<commit>（每次提交都有可追溯镜像）
+#   - push v* tag（如 v1.2.3）→ 额外推送 v1.2.3 / 1.2 / 1 / latest 语义化标签
+#   - pull_request          → 只构建不推送（用来验 Dockerfile 没被改坏）
+#   - 手动 workflow_dispatch → 可在 Actions 页面按需构建
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支/标签上并发构建时，取消旧的那次，避免两个构建抢推同一个 tag。
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # ghcr.io 要求仓库名全小写，而 GitHub 仓库名是 Herder1/potato-text（含大写），
+  # 所以这里显式写死小写路径，不要换成 ${{ github.repository }}。
+  IMAGE_NAME: ghcr.io/herder1/potato-text
+  # 默认只构建 amd64。需要 ARM（Apple Silicon / ARM VPS）时改成 "linux/amd64,linux/arm64"，
+  # 注意 arm64 在本机 runner 上要走 QEMU 模拟，构建时间会明显变长。
+  PLATFORMS: linux/amd64
+
+jobs:
+  # 单元测试。刻意不设为 docker 的依赖项、且 continue-on-error：
+  # 本仓库测试含大量后台页面契约断言，历史上出现过并行改动导致的偶发失败，
+  # 不能让一次无关的测试抖动把你"提交即出镜像"的链路堵死。
+  # 想把它变成发布门禁：删掉 continue-on-error 并给 docker 加 needs: test。
+  test:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,format=long,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false

@@ -1,0 +1,99 @@
+page {
+  min-height: 100%;
+  background: #f7f7f5;
+  color: #171717;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 28rpx;
+  letter-spacing: 0;
+}
+
+button {
+  letter-spacing: 0;
+}
+
+button::after {
+  border: 0;
+}
+
+.page-shell {
+  min-height: 100vh;
+  padding: 28rpx 28rpx calc(48rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+
+.tab-page {
+  padding-bottom: calc(166rpx + env(safe-area-inset-bottom));
+}
+
+.section-title {
+  margin: 38rpx 0 18rpx;
+  font-size: 32rpx;
+  line-height: 1.4;
+  font-weight: 700;
+}
+
+.muted {
+  color: #6c7771;
+}
+
+.panel {
+  background: #ffffff;
+  border: 1rpx solid #efefec;
+  border-radius: 16rpx;
+  box-shadow: none;
+}
+
+.primary-button,
+.secondary-button,
+.quiet-button {
+  min-height: 88rpx;
+  border-radius: 10rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 88rpx;
+  box-sizing: border-box;
+}
+
+.primary-button {
+  color: #ffffff;
+  background: #303030;
+}
+
+.secondary-button {
+  color: #303030;
+  background: #ffffff;
+  border: 1rpx solid #dededb;
+}
+
+.quiet-button {
+  color: #404040;
+  background: #eeeeec;
+  border: 1rpx solid #eeeeec;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42rpx;
+  padding: 0 14rpx;
+  color: #5f5f5f;
+  background: #eeeeec;
+  border-radius: 6rpx;
+  font-size: 22rpx;
+  line-height: 42rpx;
+}
+
+.tag-green {
+  color: #2d7b4b;
+  background: #e0f5e6;
+}
+
+.tag-amber {
+  color: #9a5b00;
+  background: #fff0c2;
+}
+
+.tag-red {
+  color: #b63636;
+  background: #ffe1df;
+}
