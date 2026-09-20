@@ -18,6 +18,7 @@ runtime
 
 # 临时验证产物
 tmp
+.smoke-docker
 
 # 文档与测试：镜像运行期用不到
 docs

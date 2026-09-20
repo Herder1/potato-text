@@ -22,3 +22,6 @@ tmp/
 /.tmp*
 # 本地 Docker 编译产物 / 绑定挂载点。
 .docker-data/
+# 隔离验证用的"镜像布局"副本：按 Dockerfile 的 COPY 清单复制的一份 apps/packages/scripts，
+# 由验证脚本临时生成、用完即删。绝不能进 git（2026-09-21 曾因 git add -A 误提交 281 个文件）。
+/.smoke-docker/
