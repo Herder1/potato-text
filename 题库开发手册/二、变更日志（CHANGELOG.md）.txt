@@ -6,6 +6,16 @@
 
 ---
 
+## 2026-09-21 07:52 +08:00｜DeepSeek｜试卷导出修复在 CI 转绿（test 1180/1180、docker 推送成功）；补 Python 产物忽略项
+
+- CI 结果（run 35545259855，commit `fa28ca3`，两个任务均 **success**，端到端约 2 分钟）：
+  · `test` 任务：**1180 用例 / 1180 通过 / 0 失败**（47.3 秒）。同一任务此前连续三次都是 1177/1180。runner 日志留下完整判据：`python 3.12.3 | reportlab 4.1.0`（依赖齐备）、`/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc` 存在（字体备齐）、字体探测输出 `picked CJK font: ShuKaoCJK` —— 证实上一条"能注册才算命中"的新逻辑在 Linux 上确实绕开了 OTTO 的 Noto、落到 TrueType 的 wqy-zenhei。
+  · `docker` 任务：镜像构建成功并推送 `ghcr.io/herder1/potato-text` 三个标签 `latest` / `main` / `sha-fa28ca3eaf1e870d21b6e79fc067f0f72ee409bd`，digest `sha256:20e10287d655281562f0042809ffd69a05d3ad835a3cae28c5232bc97cc2dcbd`，`--platform linux/amd64`（provenance 关闭）。
+  · 镜像运行层安装日志可见 `fonts-wqy-zenhei all 0.9.45-8`（来源 `deb.debian.org bookworm/main`），与 runner 上 Ubuntu noble 装的是**同一版本号**，故脚本里那条 `/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc` 候选在镜像内同样成立 —— 但"该包在 bookworm 里就落在这个路径"仍属**由包契约推断**，容器内的端到端试卷导出**仍待在装好 Docker 的环境复核**。
+- `.gitignore` 追加 `__pycache__/`、`*.pyc`：本轮为定位字体问题用 `py_compile` / `importlib` 加载过 `render-exam-pdf.py`，生成了 `apps/api/src/__pycache__/`（已删除）；仓库含 Python 脚本，这类产物不该有机会入库。
+
+---
+
 ## 2026-09-21 07:45 +08:00｜DeepSeek｜试卷 PDF 导出根因修复：候选字体改为"能注册才算命中"（Noto CJK 是 OTTO/CFF，reportlab 无法嵌入）
 
 - 触发：`test` 任务按上一条补装 `python3 + python3-reportlab + fonts-noto-cjk` 后**仍然红**（run 35544101109、35544913250 均为 1180 用例 / 3 失败，报错同为 `exam_export_renderer_unavailable`）。**上一条"纯环境缺依赖、不是代码缺陷"的判定被推翻**——这是本仓库 `render-exam-pdf.py` 的缺陷，并且**意味着镜像里的试卷导出同样是坏的**（Dockerfile 当时也只装了 Noto CJK）。
