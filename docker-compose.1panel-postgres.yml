@@ -1,0 +1,73 @@
+# 薯考 API + PostgreSQL —— 1Panel「容器 → 编排」可直接粘贴启动的版本。
+#
+# 与 docker-compose.1panel.yml 的差异：加一个 postgres 服务，API 切到 PERSISTENCE_DRIVER=postgres，
+# 并在起服务前先跑一次 knex 迁移（幂等，重启安全）。
+#
+# 前置条件（同一个）：私有 GHCR 包要么在 1Panel「容器 → 仓库」配好 ghcr.io 凭据，
+# 要么把 GitHub 上的包可见性改成 public，否则 unauthorized。详见 docs/DOCKER.md §9。
+#
+# 注意：
+#   · 下面三处密码要一起改（POSTGRES_PASSWORD、healthcheck 的 -U/-d 不用改、
+#     DATABASE_URL 里的密码必须与 POSTGRES_PASSWORD 一致；密码含 @ : / 等字符要做 URL 编码）。
+#   · 首次启动后同样去 API 容器日志里找随机初始密码。
+#   · /app/.runtime 仍要挂卷：上传件、导出件、对象缓存都落在那里，与数据库无关。
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "shukao"
+      POSTGRES_PASSWORD: "shukao"
+      POSTGRES_DB: "shukao"
+      TZ: "Asia/Shanghai"
+    volumes:
+      - shukao-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shukao -d shukao"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    image: ghcr.io/herder1/potato-text:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3212:3212"
+    environment:
+      NODE_ENV: "production"
+      PORT: "3212"
+      HOST: "0.0.0.0"
+      TZ: "Asia/Shanghai"
+      PERSISTENCE_DRIVER: "postgres"
+      FILE_STORAGE_DRIVER: "local"
+      DATABASE_URL: "postgresql://shukao:shukao@postgres:5432/shukao"
+      DATABASE_SSL: "false"
+      DATABASE_POOL_MIN: "0"
+      DATABASE_POOL_MAX: "10"
+      WECHAT_APP_ID: ""
+      WECHAT_APP_SECRET: ""
+      # ADMIN_INIT_USERNAME: "admin"
+      # ADMIN_INIT_PASSWORD: "换成强密码"
+      SHUKAO_PDF_FONT_PATH: ""
+    # 数据库健康后再补迁移，然后起服务。
+    command: ["sh", "-c", "npm run db:migrate && node apps/api/src/server.js"]
+    volumes:
+      - shukao-runtime:/app/.runtime
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  shukao-postgres:
+  shukao-runtime:

@@ -1,0 +1,53 @@
+# 薯考 API —— 1Panel「容器 → 编排」可直接粘贴启动的版本。
+#
+# 与仓库根 docker-compose.yml 的差异（就是为了能在 1Panel 里一键起来）：
+#   1. 去掉 build:  —— 1Panel 的编排目录（/opt/1panel/docker/compose/<项目>/）里没有源码，
+#      带 build 的编排在面板里会走构建并失败；这里只拉 GHCR 上的现成镜像。
+#   2. 不依赖 .env 与 ${VAR:-默认值} —— 全部写字面量，粘贴即用，面板里"环境变量"页留空也能起。
+#   3. 数据用命名卷 shukao-runtime —— 相对路径绑定（./.runtime）在 1Panel 下会落在面板的编排目录里，
+#      既不好找也不好备份；命名卷能在「容器 → 存储卷」里直接看到并备份。
+#   4. 去掉 name: 与 container_name: —— 项目名/容器名交给 1Panel 管，避免重新部署时撞名。
+#   5. 补 TZ、日志轮转（服务器上 json 日志不设上限会一直涨）。
+#
+# 前置条件（唯一一个：镜像要拉得动）：
+#   本仓库是私有仓库，GHCR 上的包默认也是私有的。二选一：
+#     A. 在 1Panel「容器 → 仓库」新增 ghcr.io 账号：用户名填 GitHub 用户名，密码填带 read:packages 的 PAT；
+#     B. 在 GitHub 上把 Packages 里 potato-text 的可见性改成 public。
+#   否则拉取会报 unauthorized。详见 docs/DOCKER.md §9。
+#
+# 首次启动后：后台没有账号时会自动创建首个超级管理员，随机初始密码只打印一次，
+# 去「容器 → 日志」里找这一行：[薯考后台] 初始密码（仅本次显示，请登录后立即修改）：……
+
+services:
+  api:
+    image: ghcr.io/herder1/potato-text:latest
+    restart: unless-stopped
+    ports:
+      # 用 1Panel 反向代理时建议改成 "127.0.0.1:3212:3212"，不对公网直接暴露。
+      - "3212:3212"
+    environment:
+      NODE_ENV: "production"
+      PORT: "3212"
+      HOST: "0.0.0.0"
+      TZ: "Asia/Shanghai"
+      # 文件模式：数据落在 /app/.runtime（JSON 库 + 上传件 + 导出件），已挂命名卷。
+      PERSISTENCE_DRIVER: "file"
+      FILE_STORAGE_DRIVER: "local"
+      # 微信小程序登录凭据；不填则小程序登录不可用，后台与其余接口不受影响。
+      WECHAT_APP_ID: ""
+      WECHAT_APP_SECRET: ""
+      # 想自己指定首个超管的账号密码就打开下面两行（留空则自动生成随机密码并打印到日志）。
+      # ADMIN_INIT_USERNAME: "admin"
+      # ADMIN_INIT_PASSWORD: "换成强密码"
+      # 试卷 PDF 导出字体：镜像内已装 wqy-zenhei（+ Noto CJK），留空即自动探测，一般不用填。
+      SHUKAO_PDF_FONT_PATH: ""
+    volumes:
+      - shukao-runtime:/app/.runtime
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  shukao-runtime:

@@ -6,6 +6,24 @@
 
 ---
 
+## 2026-09-21 08:37 +08:00｜DeepSeek｜新增 1Panel 可直接启动的编排（去 build / 去 .env / 命名卷），并补部署文档与初始化管理员说明
+
+- 触发：产品负责人反馈根目录 `docker-compose.yml` 在 1Panel「容器 → 编排」里**无法直接启动**，要求一份面板可用版本。
+- 根因（对比两份编排 + 面板执行方式逐项得出，非猜测）：① 根编排带 `build: context: .`，而 1Panel 是在自建目录 `/opt/1panel/docker/compose/<项目>/` 里执行 `docker compose up -d`，那里没有源码 → 构建必失败；② 相对路径绑定挂载 `./.runtime` 会落到面板的编排目录，而非预期数据位置，既难找也难备份；③ 全篇 `${VAR:-默认值}` 需要 `.env`，面板里没有；④ `name:` + `container_name:` 重新部署时容易撞名。
+- 新增两份"粘贴即用"编排：
+  · `docker-compose.1panel.yml` —— 单容器 + 文件持久化，数据在命名卷 `shukao-runtime`（面板「容器 → 存储卷」可见、可备份）。
+  · `docker-compose.1panel-postgres.yml` —— 追加 `postgres:16-alpine`，API 切 `PERSISTENCE_DRIVER=postgres`，`depends_on: service_healthy` 后先 `npm run db:migrate` 再起服务。
+  两份共同点：只拉 GHCR 现成镜像、**无 `build:`**、环境变量**全字面量且全为字符串**（compose 对裸布尔/数字会报类型错）、补 `TZ: Asia/Shanghai` 与 json 日志轮转、去掉 `name:`/`container_name:` 交给面板管、`HOST` 保持 `0.0.0.0` 且**不加 `user:`**（否则入口脚本无法把 `/app/.runtime` chown 给容器内 `node`）。
+- 文档同步：`docs/DOCKER.md` 新增 **§9「在 1Panel 里部署」**（私有 GHCR 包必须先配仓库凭据或改包可见性、首次登录随机密码在容器日志里取、反代与端口绑定建议、备份对象是 `shukao-runtime`、升级回滚用 `:sha-<commit>` 标签、禁止加 `user:`）；§4 环境变量表补 `ADMIN_INIT_USERNAME/PASSWORD/DISPLAY_NAME` 行；§8 排错表补三行（面板里带 build 报 `failed to solve`、私有包 `unauthorized`、ARM 服务器 `exec format error`）。
+- 验证（本机**无 Docker 守护进程**，故为静态校验 + 真 schema，未真跑容器）：
+  · 真 YAML 解析器（PyYAML 6.0.3）严格解析两份文件并**探测重复键**，**47 项断言全通过**（`tmp/verify-1panel-compose.py`）：无 build、无 container_name、无 `user:` 覆盖、端口 3212 与 Dockerfile `EXPOSE`/`ENV PORT` 一致、数据目录与 `VOLUME ["/app/.runtime"]` 一致、命名卷均已声明、环境变量名逐个对得上代码里真实读取的名字（`server.js`/`knexfile.js`/`render-exam-pdf.py` 逐一核对）、postgres 版健康检查用 `pg_isready` 且迁移先于启动。
+  · 官方 **compose-spec JSON Schema**（现场从 compose-spec 仓库取回并缓存）校验：**2/2 文件合规**（`tmp/verify-compose-schema.py`）。
+  · 全量回归 `npm test`：**1180 用例 / 1180 通过 / 0 失败**（6.0 秒，NODE_ENV 清空）。本次未改应用代码，仅新增编排与文档。
+- 未验证项（明确标注）：**两份编排没有在 1Panel / docker compose 下真拉起过**（本机无 Docker，`docker compose config` 亦无法执行），故本条只声明"结构与运行时契约校验通过"，**"面板里能起来"待产品负责人在 1Panel 实测**；镜像侧另有一条既有未验证项（容器内试卷导出为包契约推断）。
+- 本轮还确认了一条既有行为（未改代码，仅写进文档）：账号表为空时用 `ADMIN_INIT_*` 建首个超管，**密码留空则生成随机密码并只在容器日志打印一次**（`server.js:2896-2926`），这正是面板部署推荐用法。
+
+---
+
 ## 2026-09-21 07:52 +08:00｜DeepSeek｜试卷导出修复在 CI 转绿（test 1180/1180、docker 推送成功）；补 Python 产物忽略项
 
 - CI 结果（run 35545259855，commit `fa28ca3`，两个任务均 **success**，端到端约 2 分钟）：
