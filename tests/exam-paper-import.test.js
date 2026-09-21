@@ -3,6 +3,11 @@ const assert = require("node:assert/strict");
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
+// 测试上传必须落在临时目录：server.js 的默认上传根是仓库内 .runtime/exams/uploads，
+// 不注入就会把夹具写进正式数据目录（2026-09-21 清查时已累积 1394 个 1759B 夹具）。
+const EXAM_UPLOAD_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "shukao-exam-uploads-"));
+test.after(() => fs.rmSync(EXAM_UPLOAD_ROOT, { recursive: true, force: true }));
 const JSZip = require("jszip");
 const { createServer } = require("./helpers/admin-auth");
 const { createMemoryAiConfigStore } = require("../apps/api/src/ai-config");
@@ -143,7 +148,7 @@ test("formal exam drafts can be deleted but published exams cannot", async (cont
   const draft = examStore.create({ title: "待删除试卷", questionIds: ["demo-modern-chinese-001"], durationMinutes: 60 });
   const published = examStore.create({ title: "已发布试卷", questionIds: ["demo-modern-chinese-001"], durationMinutes: 60 });
   examStore.action(published.id, "publish");
-  const server = createServer({ aiConfigStore: createMemoryAiConfigStore(), examStore });
+  const server = createServer({ examUploadRoot: EXAM_UPLOAD_ROOT, aiConfigStore: createMemoryAiConfigStore(), examStore });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => new Promise((resolve) => server.close(resolve)));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -249,7 +254,7 @@ test("AI answer supplementation fills one draft question and rejects malformed o
     ],
   });
   const aiTaskStore = createMemoryAiTaskStore();
-  const server = createServer({ aiConfigStore, examImportStore, aiTaskStore });
+  const server = createServer({ examUploadRoot: EXAM_UPLOAD_ROOT, aiConfigStore, examImportStore, aiTaskStore });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => new Promise((resolve) => server.close(resolve)));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -340,7 +345,7 @@ test("AI answer supplementation fills one draft question and rejects malformed o
 test("admin can delete an unconfirmed recognition draft", async (context) => {
   const examImportStore = createMemoryExamImportStore();
   const draft = examImportStore.create({ metadata: { title: "接口删除稿" }, source: { fileName: "draft.pdf" }, questions: [{ stem: "测试题" }] });
-  const server = createServer({ aiConfigStore: createMemoryAiConfigStore(), examImportStore });
+  const server = createServer({ examUploadRoot: EXAM_UPLOAD_ROOT, aiConfigStore: createMemoryAiConfigStore(), examImportStore });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => new Promise((resolve) => server.close(resolve)));
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/exams/imports/${draft.id}`, { method: "DELETE" });
@@ -372,7 +377,7 @@ test("an exam import can become a draft with doubtful AI answers", async (contex
       answerReviewStatus: "doubtful",
     }],
   });
-  const server = createServer({ aiConfigStore: createMemoryAiConfigStore(), examImportStore, questionStore, examStore });
+  const server = createServer({ examUploadRoot: EXAM_UPLOAD_ROOT, aiConfigStore: createMemoryAiConfigStore(), examImportStore, questionStore, examStore });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => new Promise((resolve) => server.close(resolve)));
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/exams/imports/${draft.id}/confirm`, {
@@ -388,7 +393,7 @@ test("an exam import can become a draft with doubtful AI answers", async (contex
 });
 
 test("exam PDF endpoint accepts direct PDF bodies without Base64 expansion", async (context) => {
-  const server = createServer({ aiConfigStore: createMemoryAiConfigStore() });
+  const server = createServer({ examUploadRoot: EXAM_UPLOAD_ROOT, aiConfigStore: createMemoryAiConfigStore() });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => new Promise((resolve) => server.close(resolve)));
   const pdf = fs.readFileSync(path.resolve(__dirname, "../node_modules/pdf-parse/test/data/01-valid.pdf"));
@@ -443,7 +448,7 @@ test("multipart import accepts a Word paper with a separate PDF answer", async (
     routes: { exam_paper_extraction: { mode: "provider", providerId: provider.id, model: "exam-model", temperature: 0.1, maxTokens: 2000 } },
   });
   const examImportStore = createMemoryExamImportStore();
-  const server = createServer({ aiConfigStore, examImportStore });
+  const server = createServer({ examUploadRoot: EXAM_UPLOAD_ROOT, aiConfigStore, examImportStore });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => new Promise((resolve) => server.close(resolve)));
 
@@ -532,7 +537,7 @@ test("background exam import returns immediately, reports progress and retries m
   const examImportStore = createMemoryExamImportStore();
   const examJobRoot = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "shukao-exam-jobs-"));
   context.after(() => fs.rmSync(examJobRoot, { recursive: true, force: true }));
-  const server = createServer({ aiConfigStore, aiTaskStore, examImportStore, examJobRoot });
+  const server = createServer({ examUploadRoot: EXAM_UPLOAD_ROOT, aiConfigStore, aiTaskStore, examImportStore, examJobRoot });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => new Promise((resolve) => server.close(resolve)));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -1032,7 +1037,7 @@ test("a comprehensive exam keeps each question's own subject and textbook", asyn
       { subjectId: "ancient-literature", bookId: "ancient-literature-2-1", type: "single_choice", stem: "中国古代第一部诗歌总集是？", options: [{ key: "A", text: "《诗经》" }, { key: "B", text: "《楚辞》" }], correctAnswer: ["A"], referenceAnswer: "A", answerSource: "team_verified", maxScore: 2, chapter: "先秦文学", knowledgePoints: ["《诗经》"] },
     ],
   });
-  const server = createServer({ aiConfigStore: createMemoryAiConfigStore(), examImportStore, questionStore, examStore });
+  const server = createServer({ examUploadRoot: EXAM_UPLOAD_ROOT, aiConfigStore: createMemoryAiConfigStore(), examImportStore, questionStore, examStore });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => new Promise((resolve) => server.close(resolve)));
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/exams/imports/${draft.id}/confirm`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
