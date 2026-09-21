@@ -8,6 +8,9 @@ coverage/
 # 本地启动脚本的日志目录（start-server*.cmd / *.vbs 用 cwd 写出来的 server-3212*.log）。
 # 原来只靠上面的 *.log 挡住文件、目录本身没被锚定，`git add -A` 一类操作会把空目录/其它残留带进来。
 /runtime/
+# 归档区：按"要删的东西先归档、不直接抹掉"的规则保留的移除件（2026-09-21 起）。
+# 只作证据与可回滚用，不进版本库。
+/删除件归档/
 project.private.config.json
 *.log
 .DS_Store

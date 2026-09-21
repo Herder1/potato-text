@@ -34,6 +34,7 @@
 | `.runtime/` | 正式运行数据（JSON）与备份；**禁止手改** |
 | `题库开发手册/` | 一产品手册、二变更日志、三交流文档、四链路职责矩阵 |
 | `题目录入/` | 教材 PDF、试卷、录题稿等原始资料（**本地保留，不入 git / 不进镜像**，见 `.gitignore`、`.dockerignore`） |
+| `删除件归档/` | 按"要删的东西先归档、不直删"规则保留的移除件（**本地保留，不入 git / 不进镜像**）。当前：`2026-09-21-工程整理/微信小程序历史残留`（仓库根历史 `project.config.json`，appid 与真实小程序不一致）、`…/测试夹具残留`（1394 个被测试写进 `.runtime` 的上传夹具，根因已修）。每个归档目录内含 `README.txt` 说明判据与恢复方法 |
 | `Dockerfile`、`.dockerignore`、`docker/entrypoint.sh` | 容器镜像定义、构建上下文排除清单与入口脚本（操作说明正文 `docs/DOCKER.md`） |
 | `docker-compose.yml`、`docker-compose.postgres.yml` | 源码构建用的单容器默认编排 / 叠加 PostgreSQL 的可选编排 |
 | `docker-compose.1panel.yml`、`docker-compose.1panel-postgres.yml` | **1Panel 面板粘贴即用**编排（只拉 GHCR 现成镜像、无 `build:`、无 `.env` 依赖、命名卷持久化）；操作正文见 `docs/DOCKER.md` §9 |

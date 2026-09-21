@@ -6,6 +6,25 @@
 
 ---
 
+## 2026-09-21 09:55 +08:00｜DeepSeek｜修测试污染正式数据目录（上传夹具），并按"先归档不直删"规则归档小程序残留与 1394 个夹具
+
+- 触发：产品负责人在本轮授权两项清理 —— ① 删根目录微信小程序历史残留配置；② 修测试不再往 `.runtime` 写夹具并清残留；并追加规则"需要删掉的东西先放一个文件夹，不要直接抹掉"。
+- 一、测试卫生缺陷（先修根因、再动残留）：
+  · 根因：`apps/api/src/server.js:2762` 的上传根默认值是 `<仓库>/.runtime/exams/uploads`，而 `tests/exam-paper-import.test.js` 的 8 处 `createServer({...})` 均未注入 `examUploadRoot` → 每跑一次 `npm test` 就往**正式数据目录**写一份合成 docx 夹具。该文件第 914 行早有正确做法（`mkdtemp` + `context.after`），只是其余用例没跟上。
+  · 修复：文件头部新增 `EXAM_UPLOAD_ROOT = fs.mkdtempSync(os.tmpdir()…)` 与 `test.after` 清理，并给 8 处 `createServer({...})` 注入该根。
+  · 验证（金丝雀对账）：修复后连跑两次全量（含归档动作之后一次），`.runtime/exams/uploads` **新增 0 个文件**、稳定在 18 个真实上传；两次全量均 **1180 用例 / 1180 通过 / 0 失败**。
+- 二、归档（按新规则，不直删）：新增 `删除件归档/2026-09-21-工程整理/`（2.4MB，已加入 `.gitignore` 与 `.dockerignore` —— 不入版本库、不进镜像，另见 `docs/PROJECT_MAP.md` §1）：
+  · `微信小程序历史残留/`：仓库根 `project.config.json`（appid `wx3987…`，与真实小程序 `apps/miniprogram/project.config.json` 的 `wxe0d7…` 不一致，且无 `miniprogramRoot`）与 `project.private.config.json`；仓库内该文件已随之删除。
+  · `测试夹具残留/`：1394 个 `exam-import-*-paper.docx`（每个 1759B）。
+  · 归档目录内附 `README.txt`：写清这是什么、判定判据、恢复方法与"可随时彻底丢弃"的说明。
+- 三、判为"测试夹具"的三条证据（可复核，不是凭感觉）：
+  · a) 1394 个文件的 docx 内部正文 `word/document.xml` 哈希去重后 **= 1 种**；该正文首句"2026 年汉语言文学学科基础模拟试卷"就写在 `tests/exam-paper-import.test.js` 第 41／456／546 行。
+  · b) 这 1394 个 importId 在 `.runtime` 下全部 **155 个 JSON** 记录中检索 **命中 0** —— 不在任何正式数据链路上（测试用内存 Store 写出的孤儿文件）。
+  · c) 对照：同目录另 18 个文件正文哈希去重 = 14 种，`-paper`/`-answer` 成对且互不相同、大小 53KB～1MB、时间跨 2026-07-31～08-09 → 判为**真实上传**，一个都没移动。
+  · 过程如实记录（判据翻车与自纠）：首轮判据用"整文件 sha256 唯一"，实测为 **721 种**（DOCX 是 zip，JSZip 给条目盖的时间戳每次不同 → 字节必然不同），守卫当场中止、**未移动任何文件**；改用正文哈希后才通过归档。此失败一次写在这里，避免后来者重踩。
+- 四、文档与忽略同步：`docs/PROJECT_MAP.md` §1 新增 `删除件归档/` 行；`.gitignore`、`.dockerignore` 各增一条归档区排除。
+- 未验证/未做：① **未推送**（本轮无推送凭据，提交仅在本机）；② `题目录入/` 881.7MB 与 `.runtime` 可再生成目录（`blind-replay-contexts` 876.6MB 等）仍在原位，未获授权；③ 本轮之前直删的 430MB 未跟踪垃圾**不可恢复**（`Remove-Item` 不进回收站），已向产品负责人如实说明。
+
 ## 2026-09-21 09:42 +08:00｜DeepSeek｜工程整理：清理未跟踪垃圾 430MB、scripts/ 按用途四分组并同步全部引用
 
 - 触发：产品负责人要求"整理整个工程、删除非必要垃圾文件、对项目文件夹进行分类"。
