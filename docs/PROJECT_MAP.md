@@ -29,13 +29,14 @@
 | `apps/admin/` | 网页管理后台（`index.html` / `app.js` / `styles.css`，静态资源用 `?v=` 破缓存） |
 | `packages/domain/` | 领域模型与 SQL 草案（`catalog.js`、`schema.sql`、`assessment-action-semantics.js`） |
 | `docs/` | 现行导航、产品摘要、上线清单、模块文档、迁移与存储说明 |
-| `tests/` | 123 个 `node:test` 用例文件（`npm test`） |
-| `scripts/` | 迁移、维护、盲测回放/批量/上下文准备等脚本 |
+| `tests/` | 126 个 `*.test.js`（`npm test` 当前 1180 个用例）+ `fixtures/`、`helpers/` |
+| `scripts/` | 运维与工具脚本，2026-09-21 按用途分为四组：`scripts/db/`（数据库/文件存储迁移，3）、`scripts/classification/`（金标冻结与盲测回放链路，9）、`scripts/maintenance/`（一次性维护任务，1）、`scripts/tools/`（本地素材工具，1）。**`tests/*.test.js` 与 `package.json` 是入口**，路径改动必须同步二者；历史账本 `题库开发手册/` 中仍保留旧平铺路径（历史记录不改写） |
 | `.runtime/` | 正式运行数据（JSON）与备份；**禁止手改** |
 | `题库开发手册/` | 一产品手册、二变更日志、三交流文档、四链路职责矩阵 |
 | `题目录入/` | 教材 PDF、试卷、录题稿等原始资料（**本地保留，不入 git / 不进镜像**，见 `.gitignore`、`.dockerignore`） |
 | `Dockerfile`、`.dockerignore`、`docker/entrypoint.sh` | 容器镜像定义、构建上下文排除清单与入口脚本（操作说明正文 `docs/DOCKER.md`） |
-| `docker-compose.yml`、`docker-compose.postgres.yml` | 单容器默认编排 / 叠加 PostgreSQL 的可选编排 |
+| `docker-compose.yml`、`docker-compose.postgres.yml` | 源码构建用的单容器默认编排 / 叠加 PostgreSQL 的可选编排 |
+| `docker-compose.1panel.yml`、`docker-compose.1panel-postgres.yml` | **1Panel 面板粘贴即用**编排（只拉 GHCR 现成镜像、无 `build:`、无 `.env` 依赖、命名卷持久化）；操作正文见 `docs/DOCKER.md` §9 |
 | `.github/workflows/docker-publish.yml` | 推送 `main` 或 `v*` tag 时自动构建并发布镜像到 GHCR（触发与标签策略正文在该文件内） |
 
 ## 2. 已拆分模块（第一批）

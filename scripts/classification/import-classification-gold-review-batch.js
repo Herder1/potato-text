@@ -7,7 +7,7 @@ const {
   OPTION_KNOWLEDGE_PROTOCOL_VERSION,
   OPTION_KNOWLEDGE_RELATIONS,
   createFileClassificationGoldReviewStore,
-} = require("../apps/api/src/classification-gold-review-store");
+} = require("../../apps/api/src/classification-gold-review-store");
 const {
   FORMAL_STATE_FILES,
   hashFormalState,
@@ -60,8 +60,8 @@ function readOptionValue(argv, index, argument) {
 function parseArgs(argv) {
   const options = {
     batchPath: DEFAULT_BATCH_PATH,
-    runtimeDir: path.resolve(__dirname, "../.runtime"),
-    storePath: path.resolve(__dirname, "../.runtime/classification-gold-reviews.json"),
+    runtimeDir: path.resolve(__dirname, "../../.runtime"),
+    storePath: path.resolve(__dirname, "../../.runtime/classification-gold-reviews.json"),
     batchId: DEFAULT_BATCH_ID,
     title: DEFAULT_TITLE,
     version: DEFAULT_VERSION,
@@ -586,7 +586,7 @@ function buildImportPayload(options, artifacts) {
       manifestSnapshotPath: artifacts.manifestSnapshotPath,
       manifestSha256: artifacts.manifestSha256,
       baselineHashes: artifacts.summary.baselineHashes,
-      importedBy: "scripts/import-classification-gold-review-batch.js",
+      importedBy: "scripts/classification/import-classification-gold-review-batch.js",
       reviewMethod: "human_independent_gold_v1",
       aiComparisonPolicy: "reveal_after_corresponding_human_stage_v1",
       optionKnowledgeProtocolVersion: OPTION_KNOWLEDGE_PROTOCOL_VERSION,
@@ -600,7 +600,7 @@ function buildImportPayload(options, artifacts) {
 function usage() {
   return [
     "Usage:",
-    "  node scripts/import-classification-gold-review-batch.js [options]",
+    "  node scripts/classification/import-classification-gold-review-batch.js [options]",
     "",
     "Options:",
     "  --batch <directory-or-summary.json>  Override the default 20-question batch.",

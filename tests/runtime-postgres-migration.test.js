@@ -10,8 +10,8 @@ const {
   sanitizeForPostgres,
   storeKey,
   verifyPayload,
-} = require("../scripts/runtime-migration-lib");
-const { parseArguments } = require("../scripts/import-runtime-to-postgres");
+} = require("../scripts/db/runtime-migration-lib");
+const { parseArguments } = require("../scripts/db/import-runtime-to-postgres");
 
 test("runtime migration reads primary JSON data with a stable checksum", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "shukao-migration-"));

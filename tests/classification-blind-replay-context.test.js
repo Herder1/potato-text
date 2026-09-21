@@ -22,7 +22,7 @@ const {
   sanitizeAiConfig,
   sanitizeContextQuestion,
   writeReplayContext,
-} = require("../scripts/classification-blind-replay-context");
+} = require("../scripts/classification/classification-blind-replay-context");
 
 function family(questionId, mode) {
   const nodeId = `node-${questionId}`;

@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const TARGET_STATE_VERSION = 4;
-const DEFAULT_FILE_PATH = path.resolve(__dirname, "../.runtime/question-families.json");
+const DEFAULT_FILE_PATH = path.resolve(__dirname, "../../.runtime/question-families.json");
 
 function parseArguments(argv = process.argv.slice(2)) {
   const options = {
@@ -154,7 +154,7 @@ function run(options = {}) {
 
 function usage() {
   return [
-    "Usage: node scripts/retire-question-family-unresolved-index.js [--execute] [--file PATH] [--questions-file PATH] [--backup-dir PATH]",
+    "Usage: node scripts/maintenance/retire-question-family-unresolved-index.js [--execute] [--file PATH] [--questions-file PATH] [--backup-dir PATH]",
     "Without --execute the command is a read-only dry run.",
   ].join("\n");
 }

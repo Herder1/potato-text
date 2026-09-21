@@ -13,7 +13,7 @@ const {
   questionContentSignature,
   selectBalancedCandidates,
   writeSelectionReports,
-} = require("../scripts/select-classification-blind-samples");
+} = require("../scripts/classification/select-classification-blind-samples");
 
 function question(id, stem, overrides = {}) {
   return {

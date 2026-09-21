@@ -4,7 +4,7 @@ const test = require("node:test");
 const {
   buildItem,
   parseArgs,
-} = require("../scripts/import-classification-gold-review-batch");
+} = require("../scripts/classification/import-classification-gold-review-batch");
 
 function rawReplay(mode = "mature") {
   const family = {

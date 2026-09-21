@@ -4,10 +4,10 @@ const path = require("node:path");
 
 const {
   buildQuestionFamilyCatalogProjection,
-} = require("../apps/api/src/question-family-catalog-projection");
+} = require("../../apps/api/src/question-family-catalog-projection");
 const {
   CORE_KNOWLEDGE_ROLES,
-} = require("../apps/api/src/classification-gold-review-store");
+} = require("../../apps/api/src/classification-gold-review-store");
 
 const DEFAULT_LIMIT_PER_MODE = 12;
 const MODES = ["mature", "singleton", "unmatched"];
@@ -739,7 +739,7 @@ function writeSelectionReports(manifest, { outputRoot, runtimeDir, now = new Dat
 }
 
 function runSampleSelection(options = {}) {
-  const projectRoot = path.resolve(options.projectRoot || path.join(__dirname, ".."));
+  const projectRoot = path.resolve(options.projectRoot || path.join(__dirname, "../.."));
   const runtimeDir = path.resolve(options.runtimeDir || path.join(projectRoot, ".runtime"));
   const outputRoot = path.resolve(options.outputRoot || defaultOutputRoot(projectRoot));
   assertOutputOutsideRuntime(outputRoot, runtimeDir);
@@ -768,7 +768,7 @@ function runSampleSelection(options = {}) {
 function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
-    process.stdout.write("用法：node scripts/select-classification-blind-samples.js [--book-id ID] [--limit-per-mode 数量] [--output-root 目录]\n");
+    process.stdout.write("用法：node scripts/classification/select-classification-blind-samples.js [--book-id ID] [--limit-per-mode 数量] [--output-root 目录]\n");
     return;
   }
   const result = runSampleSelection(options);

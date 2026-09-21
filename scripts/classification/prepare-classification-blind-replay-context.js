@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const crypto = require("node:crypto");
 const path = require("node:path");
 
-const { readFrozenGoldSnapshot } = require("../apps/api/src/classification-gold-review-store");
+const { readFrozenGoldSnapshot } = require("../../apps/api/src/classification-gold-review-store");
 const {
   buildGoldSemanticPreflight,
   buildReplayContextFromRuntime,
@@ -18,7 +18,7 @@ function parsePositiveInteger(value, errorCode) {
 function parseArgs(argv) {
   const options = {
     goldSnapshotPath: "",
-    runtimeDir: path.resolve(__dirname, "../.runtime"),
+    runtimeDir: path.resolve(__dirname, "../../.runtime"),
     outputPath: "",
     reportPath: "",
     expectedCount: undefined,
@@ -94,8 +94,8 @@ function main() {
   if (options.help) {
     process.stdout.write([
       "用法：",
-      "  node scripts/prepare-classification-blind-replay-context.js --gold-snapshot 快照.json --semantic-only [--snapshot-only] [--report 预检.json]",
-      "  node scripts/prepare-classification-blind-replay-context.js --gold-snapshot 快照.json --output 回放上下文C1.json [--runtime-dir .runtime] [--expected-count 20]",
+      "  node scripts/classification/prepare-classification-blind-replay-context.js --gold-snapshot 快照.json --semantic-only [--snapshot-only] [--report 预检.json]",
+      "  node scripts/classification/prepare-classification-blind-replay-context.js --gold-snapshot 快照.json --output 回放上下文C1.json [--runtime-dir .runtime] [--expected-count 20]",
       "",
     ].join("\n"));
     return;

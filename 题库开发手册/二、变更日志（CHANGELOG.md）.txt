@@ -6,6 +6,29 @@
 
 ---
 
+## 2026-09-21 09:42 +08:00｜DeepSeek｜工程整理：清理未跟踪垃圾 430MB、scripts/ 按用途四分组并同步全部引用
+
+- 触发：产品负责人要求"整理整个工程、删除非必要垃圾文件、对项目文件夹进行分类"。
+- 一、垃圾清理（**只删未跟踪文件**，未触碰任何被跟踪文件、`.runtime` 正式数据、冻结金标）：
+  · 根目录 121 个散落排查产物：`.tmp-*` 67 个、`tmp-*` 14 个、`*.log` 40 个（接口转储 JSON、探针脚本、无头截图）。
+  · 4 个纯临时目录：`.tmp/` 25.3MB、`.tmp-family-server-state/` 28.3MB、`tmp-shots/` 606 文件 18.2MB、`runtime/`（本地启动脚本写出的 `server-3212*.log`）。
+  · `tmp/` 内旧转储 354 个条目 / 301.8MB；**保留**仍在用的验证脚本（`verify-1panel-compose.py`、`verify-compose-schema.py`、`verify-remote-content.mjs`、`poll-ci.js`、`reclassify-scripts.mjs`、`fix-script-refs.mjs`、`fix-scripts-depth.mjs`、`verify-scripts-layout.mjs`）与 `venv-cfg/`。
+  · 合计删除 2293 个文件 / 430MB，工作区 3201.5 → 2771.7 MB；清理后 `git status` 仍为 clean（=确实没动任何被跟踪文件）。
+- 二、忽略规则加固：`.gitignore` 新增 `/runtime/` 锚定。此前该目录只靠 `*.log` 挡住内部文件、目录本身未被忽略，属"随时可能被 `git add` 带进来"的隐患。
+- 三、`scripts/` 按用途四分组（内部重构，AGENTS §3 属可自行执行项）：`scripts/db/`（3：PostgreSQL/对象存储迁移）、`scripts/classification/`（9：金标冻结与盲测回放/批量/上下文/抽样链路）、`scripts/maintenance/`（1：退役派生索引）、`scripts/tools/`（1：玻璃背景素材生成）。同步 27 个文件 / 80 行：
+  · `package.json` 9 条 npm 入口；`tests/` 10 个文件的 13 处 `require("../scripts/<名>")`；`docs/modules/03`、`04` 的 2 处链接；脚本自身用法文案；
+  · **`apps/api/src/postgres-persistence.js` 的运行期 `require("../../../scripts/db/runtime-migration-lib")`**——这是 API 代码引用、不在 tests 覆盖可见范围内，靠"旧平铺名失效引用扫描"才捞出，单独回写。
+- 四、改写纪律（首轮规则误伤 → 精确回修）：机械规则"被移动文件内相对路径层级 +1"首轮把**非 `__dirname` 锚定**的 `".."` 字面量也改了，误伤 6 处——3 处越界守卫 `startsWith("..")`（改成 `"../.."` 会放宽路径越界判定）与 3 处 `path.join/resolve(projectRoot, "..", "outputs")`（输出目录会从 `D:\龙虾工作站\outputs` 漂到盘根）。已全部回修，并加"移动前后非锚定 `..` 用法逐字一致"等价校验（6 行全一致）。
+- 五、验证（可复跑）：
+  · 全量回归 `npm test`：**1180 用例 / 1180 通过 / 0 失败**，6.05s（与移动前同命令同结果）。
+  · 结构校验 `tmp/verify-scripts-layout.mjs` 4 项 PASS：相对 `require`/`__dirname` 拼接目标全部存在（13 个 .js）、`node --check` 13 个文件、`package.json` 13 条入口文件存在、失效引用扫描 0 处（覆盖 tests/docs/apps/packages/scripts/.github/根配置，**带/不带扩展名两种写法都抓**）。
+  · `git status` 显示 14 个文件全部识别为 rename（历史保留）。
+- 六、文档同步：`docs/PROJECT_MAP.md` §1 结构表更新（`tests/` 126 个用例文件、`scripts/` 四组说明、补登两份 1Panel 编排）；模块文档 03/04 的脚本链接已随改写更新。
+- 未验证/待产品负责人决定（本轮**未动**，均需明确授权）：① `.runtime/` 1818MB（其中 `blind-replay-contexts` 876.6MB 可按 `scripts/classification/prepare-classification-blind-replay-context.js` 重新生成、`textbook-knowledge-backups` 150.5MB、`question-merge-snapshots` 125.6MB）与 `题目录入/` 881.7MB 的归档/清理；② 根目录 `project.config.json` 的 appid（`wx3987…`）与真实小程序（`apps/miniprogram/project.config.json` 的 `wxe0d7…`）不一致且无 `miniprogramRoot`，疑为历史残留，删除需确认。
+- 未推送：本轮结尾无推送凭据（上一把 PAT 用后已删），仅本地提交，待产品负责人给出推送方式。
+
+---
+
 ## 2026-09-21 08:37 +08:00｜DeepSeek｜新增 1Panel 可直接启动的编排（去 build / 去 .env / 命名卷），并补部署文档与初始化管理员说明
 
 - 触发：产品负责人反馈根目录 `docker-compose.yml` 在 1Panel「容器 → 编排」里**无法直接启动**，要求一份面板可用版本。

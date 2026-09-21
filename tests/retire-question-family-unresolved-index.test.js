@@ -8,7 +8,7 @@ const {
   factHash,
   parseArguments,
   run,
-} = require("../scripts/retire-question-family-unresolved-index");
+} = require("../scripts/maintenance/retire-question-family-unresolved-index");
 
 function fixture() {
   return {

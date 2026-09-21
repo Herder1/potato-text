@@ -1,7 +1,7 @@
 // 盲测金标「覆盖门禁」契约测试
 //
 // 目的：审核页门禁（classification-gold-review-store）与 C1 零模型预检
-// （scripts/classification-blind-replay-context）必须对同一份金标给出同一个结论。
+// （scripts/classification/classification-blind-replay-context）必须对同一份金标给出同一个结论。
 // 2026-09-05 的事故正是两处各写一份判断：页面按“祖先节点容忍”放行，预检按
 // “规范节点集合”阻断，导致第 5、10 题在页面上永远显示可冻结。
 //
@@ -16,7 +16,7 @@ const {
 } = require("../apps/api/src/classification-gold-review-store");
 const {
   buildGoldSemanticPreflight,
-} = require("../scripts/classification-blind-replay-context");
+} = require("../scripts/classification/classification-blind-replay-context");
 
 const BOOK_ID = "modern-chinese-7-1";
 const node = (id, title, path) => ({

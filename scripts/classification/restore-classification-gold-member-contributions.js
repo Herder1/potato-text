@@ -8,9 +8,9 @@
 // 只恢复贡献知识，不改题族定义、状态、审核结论或题目版本；已冻结批次拒绝执行。
 //
 // 用法：
-//   node scripts/restore-classification-gold-member-contributions.js            # 预演
-//   node scripts/restore-classification-gold-member-contributions.js --apply    # 写入（先自动备份）
-//   node scripts/restore-classification-gold-member-contributions.js --batch <批次ID> [--apply]
+//   node scripts/classification/restore-classification-gold-member-contributions.js            # 预演
+//   node scripts/classification/restore-classification-gold-member-contributions.js --apply    # 写入（先自动备份）
+//   node scripts/classification/restore-classification-gold-member-contributions.js --batch <批次ID> [--apply]
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -18,9 +18,9 @@ const {
   inheritFrozenMembership,
   readFrozenGoldSnapshot,
   validateGoldReviewBatchFamilySemantics,
-} = require("../apps/api/src/classification-gold-review-store");
+} = require("../../apps/api/src/classification-gold-review-store");
 
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(__dirname, "../..");
 const statePath = path.join(root, ".runtime", "classification-gold-reviews.json");
 const backupDir = path.join(root, ".runtime", "maintenance-backups");
 

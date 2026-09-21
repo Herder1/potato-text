@@ -2,30 +2,30 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { createServer } = require("../apps/api/src/server");
-const { createMemoryAiConfigStore } = require("../apps/api/src/ai-config");
-const { createMemoryAiTaskStore } = require("../apps/api/src/ai-task-store");
-const { createMemoryQuestionStore } = require("../apps/api/src/question-store");
-const { createMemoryQuestionFamilyStore } = require("../apps/api/src/question-family-store");
-const { createMemoryKnowledgeStructureStore } = require("../apps/api/src/knowledge-structure-store");
-const { createMemoryTextbookKnowledgeStore } = require("../apps/api/src/textbook-knowledge-store");
-const { createMemoryTextbookCatalogStore } = require("../apps/api/src/textbook-catalog-store");
-const { createMemoryKnowledgeClassificationExperienceStore } = require("../apps/api/src/knowledge-classification-experience-store");
-const { createMemoryKnowledgeDossierStore } = require("../apps/api/src/knowledge-dossier-store");
-const { createMemoryKnowledgeClassificationStore } = require("../apps/api/src/knowledge-classification-store");
-const { createMemoryAdminOperationStore } = require("../apps/api/src/admin-operation-store");
-const { createMemoryClassificationCommitStore } = require("../apps/api/src/classification-commit-store");
+const { createServer } = require("../../apps/api/src/server");
+const { createMemoryAiConfigStore } = require("../../apps/api/src/ai-config");
+const { createMemoryAiTaskStore } = require("../../apps/api/src/ai-task-store");
+const { createMemoryQuestionStore } = require("../../apps/api/src/question-store");
+const { createMemoryQuestionFamilyStore } = require("../../apps/api/src/question-family-store");
+const { createMemoryKnowledgeStructureStore } = require("../../apps/api/src/knowledge-structure-store");
+const { createMemoryTextbookKnowledgeStore } = require("../../apps/api/src/textbook-knowledge-store");
+const { createMemoryTextbookCatalogStore } = require("../../apps/api/src/textbook-catalog-store");
+const { createMemoryKnowledgeClassificationExperienceStore } = require("../../apps/api/src/knowledge-classification-experience-store");
+const { createMemoryKnowledgeDossierStore } = require("../../apps/api/src/knowledge-dossier-store");
+const { createMemoryKnowledgeClassificationStore } = require("../../apps/api/src/knowledge-classification-store");
+const { createMemoryAdminOperationStore } = require("../../apps/api/src/admin-operation-store");
+const { createMemoryClassificationCommitStore } = require("../../apps/api/src/classification-commit-store");
 const {
   CORE_KNOWLEDGE_ROLES,
   OPTION_KNOWLEDGE_PROTOCOL_VERSION,
   normalizeAtomicStatement,
   normalizeOptionKnowledge,
   readFrozenGoldSnapshot,
-} = require("../apps/api/src/classification-gold-review-store");
+} = require("../../apps/api/src/classification-gold-review-store");
 const {
   compareAssessmentActions: compareSharedAssessmentActions,
   normalizeAssessmentActionSemantics: normalizeSharedAssessmentActionSemantics,
-} = require("../packages/domain/assessment-action-semantics");
+} = require("../../packages/domain/assessment-action-semantics");
 const {
   FORMAL_STATE_FILES,
   hashFormalState,
@@ -1762,7 +1762,7 @@ function scopedExperienceState(state, bookId) {
 }
 
 async function runBlindReplay(options = {}) {
-  const projectRoot = path.resolve(__dirname, "..");
+  const projectRoot = path.resolve(__dirname, "../..");
   const runtimeDir = path.join(projectRoot, ".runtime");
   const startedAt = new Date();
   const replayId = `blind-replay-${timestampForPath(startedAt)}`;
@@ -1994,7 +1994,7 @@ async function runBlindReplay(options = {}) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
-    process.stdout.write("用法：node scripts/run-classification-blind-replay.js --gold-snapshot 冻结快照.json --replay-context 回放上下文C1.json --question-id ID [--timeout-ms 毫秒] [--output-root 目录]\n");
+    process.stdout.write("用法：node scripts/classification/run-classification-blind-replay.js --gold-snapshot 冻结快照.json --replay-context 回放上下文C1.json --question-id ID [--timeout-ms 毫秒] [--output-root 目录]\n");
     return;
   }
   await runBlindReplay(options);

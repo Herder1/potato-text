@@ -8,7 +8,7 @@ const {
   fileDescriptor,
   objectKeyFor,
   parseArguments,
-} = require("../scripts/migrate-files-to-kvault");
+} = require("../scripts/db/migrate-files-to-kvault");
 
 test("file migration inventories durable files and excludes derived caches", (context) => {
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "shukao-storage-migration-"));

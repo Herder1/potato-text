@@ -3,8 +3,8 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const knexFactory = require("knex");
-const knexfile = require("../knexfile");
-const { createObjectStorageFromEnv, defaultMimeType } = require("../apps/api/src/object-storage");
+const knexfile = require("../../knexfile");
+const { createObjectStorageFromEnv, defaultMimeType } = require("../../apps/api/src/object-storage");
 
 const MIGRATED_DIRECTORIES = ["textbooks", "exams/uploads", "exam-exports"];
 const DERIVED_DIRECTORIES = ["textbook-page-previews", "exams/jobs"];
@@ -13,7 +13,7 @@ function parseArguments(argv) {
   const options = {
     execute: false,
     verifyOnly: false,
-    runtimeRoot: path.resolve(__dirname, "../.runtime"),
+    runtimeRoot: path.resolve(__dirname, "../../.runtime"),
   };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];

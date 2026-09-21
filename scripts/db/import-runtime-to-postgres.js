@@ -1,7 +1,7 @@
 const crypto = require("node:crypto");
 const path = require("node:path");
 const knexFactory = require("knex");
-const knexConfig = require("../knexfile").development;
+const knexConfig = require("../../knexfile").development;
 const {
   collectRuntimeDocuments,
   documentManifest,
@@ -11,7 +11,7 @@ const {
 const ADVISORY_LOCK_KEY = 741_202_608;
 
 function parseArguments(argv) {
-  const options = { dryRun: false, verifyOnly: false, runtimeRoot: path.resolve(__dirname, "../.runtime") };
+  const options = { dryRun: false, verifyOnly: false, runtimeRoot: path.resolve(__dirname, "../../.runtime") };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--dry-run") options.dryRun = true;

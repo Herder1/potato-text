@@ -11,13 +11,13 @@ const {
   knowledgeNodesCompatible,
   knowledgeSetsCompatible,
   readFrozenGoldSnapshot,
-} = require("../apps/api/src/classification-gold-review-store");
+} = require("../../apps/api/src/classification-gold-review-store");
 const {
   normalizeAssessmentActionSemantics,
-} = require("../packages/domain/assessment-action-semantics");
+} = require("../../packages/domain/assessment-action-semantics");
 const {
   normalizeConfig,
-} = require("../apps/api/src/ai-config");
+} = require("../../apps/api/src/ai-config");
 
 const CONTEXT_SCHEMA_VERSION = "ClassificationBlindReplayContextV1";
 const BINDING_SCHEMA_VERSION = "ClassificationBlindReplayBindingV1";
@@ -1776,7 +1776,7 @@ function writePreflightReport(report, outputPath) {
 
 function buildReplayContextFromRuntime(options = {}) {
   const loadedGold = readFrozenGoldSnapshot(options.goldSnapshotPath, { requireSidecar: true });
-  const runtimeDir = path.resolve(options.runtimeDir || path.join(__dirname, "../.runtime"));
+  const runtimeDir = path.resolve(options.runtimeDir || path.join(__dirname, "../../.runtime"));
   const runtimeState = runtimeStateFromDirectory(runtimeDir);
   const prepared = createReplayContextDocument({
     loadedGold,

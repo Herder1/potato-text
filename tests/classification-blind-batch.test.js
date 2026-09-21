@@ -5,13 +5,13 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { FORMAL_STATE_FILES } = require("../scripts/classification-blind-replay-state");
+const { FORMAL_STATE_FILES } = require("../scripts/classification/classification-blind-replay-state");
 const { contentHash } = require("../apps/api/src/classification-gold-review-store");
 const { readFrozenGoldSnapshot } = require("../apps/api/src/classification-gold-review-store");
 const {
   createReplayContextDocument,
   writeReplayContext: writeReplayContextFile,
-} = require("../scripts/classification-blind-replay-context");
+} = require("../scripts/classification/classification-blind-replay-context");
 const {
   aggregateMetrics,
   aggregateOptionKnowledgeMetrics,
@@ -21,7 +21,7 @@ const {
   readAndValidateManifest,
   renderMarkdown,
   runBlindReplayBatch,
-} = require("../scripts/run-classification-blind-batch");
+} = require("../scripts/classification/run-classification-blind-batch");
 
 function createFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "blind-batch-"));

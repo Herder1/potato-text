@@ -25,7 +25,7 @@ const {
   sanitizeQuestionForBlindReplay,
   setMetrics,
   summarizeReplayRetries,
-} = require("../scripts/run-classification-blind-replay");
+} = require("../scripts/classification/run-classification-blind-replay");
 
 test("frozen replay restores the official library shell only inside memory", () => {
   const frozen = frozenQuestionFromItem({
@@ -624,7 +624,7 @@ test("blind replay parses and validates DEC-026 modes and gold status", () => {
 });
 
 test("blind replay consumes a pre-masked C1 item context instead of live runtime or gold-built input", () => {
-  const source = fs.readFileSync(path.join(__dirname, "../scripts/run-classification-blind-replay.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "../scripts/classification/run-classification-blind-replay.js"), "utf8");
   const runSource = source.slice(source.indexOf("async function runBlindReplay"), source.indexOf("async function main"));
   assert.match(runSource, /replayContext\.data\.itemContexts\?\.\[options\.questionId\]/);
   assert.match(runSource, /itemContext\.input\?\.questionFamilies/);

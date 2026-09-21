@@ -115,6 +115,6 @@
 
 - 代码：[`question-family-store.js`](../../apps/api/src/question-family-store.js)、[`question-family-relations.js`](../../apps/api/src/question-family-relations.js)、[`question-family-catalog-projection.js`](../../apps/api/src/question-family-catalog-projection.js)、[`knowledge-classification-pipeline.js`](../../apps/api/src/knowledge-classification-pipeline.js)（Agent 3 题族核验）。
 - 测试：[`tests/question-family.test.js`](../../tests/question-family.test.js)、[`question-family-relations.test.js`](../../tests/question-family-relations.test.js)、[`question-family-catalog-projection.test.js`](../../tests/question-family-catalog-projection.test.js)、[`admin-question-family-set-ui.test.js`](../../tests/admin-question-family-set-ui.test.js)、[`admin-question-family-search-ui.test.js`](../../tests/admin-question-family-search-ui.test.js)、[`admin-question-family-dialog-layout.test.js`](../../tests/admin-question-family-dialog-layout.test.js)、[`retire-question-family-unresolved-index.test.js`](../../tests/retire-question-family-unresolved-index.test.js)。
-- 维护脚本：[`scripts/retire-question-family-unresolved-index.js`](../../scripts/retire-question-family-unresolved-index.js)。
+- 维护脚本：[`scripts/maintenance/retire-question-family-unresolved-index.js`](../../scripts/maintenance/retire-question-family-unresolved-index.js)。
 - 规则正文：产品手册 §4.10、§4.11、§4.12、§6.2、§7.3。
 - 历史决策：DEC-015–024、037、038、039（索引见产品手册 §0.4）；076+ 索引缺口见 [`../OPEN_DECISIONS.md`](../OPEN_DECISIONS.md) C2。

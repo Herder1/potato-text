@@ -1,12 +1,12 @@
 // 金标 optionKnowledge 回填 · 只读 dry-run
 // 目的：把金标审核条目里"人工确认过的" optionKnowledge 回填到题目正式指纹。
 // 本脚本默认只读：生成报告到 tmp/backfill-option-knowledge-report.json，不修改任何数据。
-// 用法：node scripts/backfill-gold-option-knowledge.js            （dry-run，只出报告）
-//       node scripts/backfill-gold-option-knowledge.js --execute  （执行；先自动备份）
+// 用法：node scripts/classification/backfill-gold-option-knowledge.js            （dry-run，只出报告）
+//       node scripts/classification/backfill-gold-option-knowledge.js --execute  （执行；先自动备份）
 const fs = require("node:fs");
 const path = require("node:path");
 
-const root = path.join(__dirname, "..");
+const root = path.join(__dirname, "../..");
 const runtimeDir = path.join(root, ".runtime");
 const goldPath = path.join(runtimeDir, "classification-gold-reviews.json");
 const structurePath = path.join(runtimeDir, "knowledge-structures.json");

@@ -25,7 +25,7 @@ const { createMemoryUserAuthStore } = require("./user-auth-store");
 const { createMemoryUserRestrictionStore } = require("./user-restriction-store");
 const { createMemoryCommunityInteractionStore } = require("./community-interaction-store");
 const { createMemoryAiConfigStore } = require("./ai-config");
-const { recordCount, sanitizeForPostgres } = require("../../../scripts/runtime-migration-lib");
+const { recordCount, sanitizeForPostgres } = require("../../../scripts/db/runtime-migration-lib");
 
 const STORE_SPECS = [
   { option: "aiConfigStore", key: "ai-config", factory: createMemoryAiConfigStore, mutations: ["save"], snapshot: (store) => store.load() },

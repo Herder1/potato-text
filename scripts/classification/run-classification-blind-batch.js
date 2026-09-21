@@ -1,7 +1,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { readFrozenGoldSnapshot } = require("../apps/api/src/classification-gold-review-store");
+const { readFrozenGoldSnapshot } = require("../../apps/api/src/classification-gold-review-store");
 
 const {
   FORMAL_STATE_FILES,
@@ -829,7 +829,7 @@ function defaultSleep(delayMs) {
 
 async function runBlindReplayBatch(options = {}, dependencies = {}) {
   if (options.manifestPath) throw new Error("blind_batch_manifest_not_supported_use_frozen_gold_snapshot");
-  const projectRoot = path.resolve(options.projectRoot || path.join(__dirname, ".."));
+  const projectRoot = path.resolve(options.projectRoot || path.join(__dirname, "../.."));
   const runtimeDir = path.resolve(options.runtimeDir || path.join(projectRoot, ".runtime"));
   const outputRoot = path.resolve(options.outputRoot || path.join(projectRoot, "..", "outputs", "AI盲测批次"));
   const expectedCount = options.expectedCount === undefined
@@ -1129,7 +1129,7 @@ async function runBlindReplayBatch(options = {}, dependencies = {}) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
-    process.stdout.write("用法：node scripts/run-classification-blind-batch.js --gold-snapshot 冻结金标快照.json --replay-context 回放上下文C1.json [--run-kind calibration|contract_smoke|gate|diagnostic] [--expected-count 20] [--max-technical-retries 2] [--retry-delays-ms 10000,30000] [--timeout-ms 毫秒] [--output-root 目录]\n");
+    process.stdout.write("用法：node scripts/classification/run-classification-blind-batch.js --gold-snapshot 冻结金标快照.json --replay-context 回放上下文C1.json [--run-kind calibration|contract_smoke|gate|diagnostic] [--expected-count 20] [--max-technical-retries 2] [--retry-delays-ms 10000,30000] [--timeout-ms 毫秒] [--output-root 目录]\n");
     return;
   }
   await runBlindReplayBatch(options);

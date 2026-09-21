@@ -10,17 +10,17 @@
     "db:migrate": "knex migrate:latest --knexfile knexfile.js",
     "db:migrate:status": "knex migrate:list --knexfile knexfile.js",
     "db:rollback": "knex migrate:rollback --knexfile knexfile.js",
-    "db:import:dry": "node scripts/import-runtime-to-postgres.js --dry-run",
-    "db:import": "node scripts/import-runtime-to-postgres.js",
-    "db:verify": "node scripts/import-runtime-to-postgres.js --verify-only",
-    "storage:migrate:dry": "node scripts/migrate-files-to-kvault.js",
-    "storage:migrate": "node scripts/migrate-files-to-kvault.js --execute",
-    "storage:verify": "node scripts/migrate-files-to-kvault.js --verify-only",
-    "maintenance:retire-ungrouped-index": "node scripts/retire-question-family-unresolved-index.js",
-    "ai:blind-replay": "node --max-old-space-size=2048 scripts/run-classification-blind-replay.js",
-    "ai:blind-batch": "node --max-old-space-size=2048 scripts/run-classification-blind-batch.js",
-    "ai:blind-context": "node --max-old-space-size=4096 scripts/prepare-classification-blind-replay-context.js",
-    "ai:blind-samples": "node scripts/select-classification-blind-samples.js"
+    "db:import:dry": "node scripts/db/import-runtime-to-postgres.js --dry-run",
+    "db:import": "node scripts/db/import-runtime-to-postgres.js",
+    "db:verify": "node scripts/db/import-runtime-to-postgres.js --verify-only",
+    "storage:migrate:dry": "node scripts/db/migrate-files-to-kvault.js",
+    "storage:migrate": "node scripts/db/migrate-files-to-kvault.js --execute",
+    "storage:verify": "node scripts/db/migrate-files-to-kvault.js --verify-only",
+    "maintenance:retire-ungrouped-index": "node scripts/maintenance/retire-question-family-unresolved-index.js",
+    "ai:blind-replay": "node --max-old-space-size=2048 scripts/classification/run-classification-blind-replay.js",
+    "ai:blind-batch": "node --max-old-space-size=2048 scripts/classification/run-classification-blind-batch.js",
+    "ai:blind-context": "node --max-old-space-size=4096 scripts/classification/prepare-classification-blind-replay-context.js",
+    "ai:blind-samples": "node scripts/classification/select-classification-blind-samples.js"
   },
   "engines": {
     "node": ">=22"
