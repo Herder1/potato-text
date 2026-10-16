@@ -3,31 +3,66 @@
   <view style="height: {{navTotalHeight}}px;"></view>
 
   <view class="page-shell tab-page profile-content">
+  <!-- 2026-09-23 00:1x 产品负责人要「绿框这块给个淡的渐变背景色」：顶栏 + 身份区包一层 .profile-hero，
+       渐变画在这一层（详见 profile.wxss 的 .profile-hero 注释）；两个子节点的结构与事件一字未动。 -->
+  <view class="profile-hero">
   <view class="profile-topbar">
+    <!-- 2026-09-22 23:4x 真机反馈：消息通知从句首挪到右边「设置」旁边（两颗图标并排靠右，见 wxss 的 justify-content: flex-end）。 -->
     <view class="profile-notification-button" bindtap="openNotifications" role="button" aria-label="消息通知">
       <image src="/assets/icons/bell.svg" mode="aspectFit" />
       <view class="notification-dot" wx:if="{{unreadNotificationCount > 0}}"></view>
     </view>
-    <button data-name="设置" bindtap="openMenu">设置</button>
+    <!-- 顶栏右侧「设置」：2026-10-02 起直接进 pages/settings（退出登录已搬进设置页，见 profile.js 的 openSettings）。 -->
+    <view class="profile-settings-button" bindtap="openSettings" role="button" aria-label="设置">
+      <image src="/assets/icons/settings-gear.svg" mode="aspectFit" />
+    </view>
   </view>
 
   <view class="identity-block">
-    <image wx:if="{{avatarUrl}}" class="avatar avatar-image" src="{{avatarUrl}}" mode="aspectFill" />
-    <view wx:else class="avatar">薯</view>
-    <view class="nickname">{{nickname}}</view>
-    <view class="identity-note">{{loggedIn ? '微信账号已连接，学习记录可跨设备同步' : '登录后同步复习记录、订阅与 AI 额度'}}</view>
-    <button class="login-link" bindtap="login">{{loggedIn ? '账号已登录' : '微信快捷登录'}}</button>
+    <!-- 头像本身就是入口（产品负责人 2026-09-22 真机反馈）：未登录时点头像直接走微信登录、绿「+」是引导标志；
+         已登录时点头像进二级页「编辑资料」。原来那三行状态文案（已连接 / 账号已登录 / 编辑头像与昵称）都是多余的，已删。
+         2026-09-23 00:4x 真机反馈「➕号移动到头像中间，去掉林」：+ 从右下角挪到正中间，未登录时头像里**不再**显示昵称首字
+         （两个东西叠在一起既挤又像"半张头像"）；已登录且没有可用头像时仍然显示首字，否则圆里会空着。
+          2026-09-23 00:5x 两条反馈：「去掉这层深色的绿」（不要嵌在浅绿圆里的那颗深绿小圆）＋「这个加号感觉没居中，
+          而且可以换成白色」；01:05 又反馈「要原来这种颜色，中间+号改白色就行」。**01:1x 参考图定案**：圆底色＝原来的浅绿回落底，
+          圆里改成一个**青绿人形轮廓图标**（用 assets/icons/user-outline.svg），右边文案同时变成两行。 -->
+    <view class="avatar-wrap" bindtap="tapAvatar" role="button" aria-label="{{loggedIn ? '编辑头像与昵称' : '登录'}}">
+      <image wx:if="{{avatarUrl}}" class="avatar avatar-image" src="{{avatarUrl}}" mode="aspectFill" />
+      <view wx:else class="avatar avatar-fallback"><text wx:if="{{loggedIn}}">{{avatarChar}}</text></view>
+      <view wx:if="{{!loggedIn}}" class="avatar-badge">
+        <!-- 2026-09-23 01:1x 产品负责人参考图：圆里不再是白色「+」，而是**人形轮廓图标**（青绿细线）。
+             尺寸/颜色按参考图实测换算：图标墨水 36.5×39.8rpx（居中于圆）、线色 #0b9588
+             （量法见 tmp/measure-ref-crop-login.js，圆直径当标尺换算成 rpx）。 -->
+        <image class="avatar-user" src="/assets/icons/user-outline.svg" mode="aspectFit" />
+      </view>
+    </view>
+    <!-- 2026-09-22 真机参考图：横向排布——头像在左，昵称/小字/个性签名在右（产品负责人二选一后选定横向）。 -->
+    <view class="identity-main">
+      <!-- 2026-09-22 23:5x 反馈「点击头像、点击昵称、点击签名都会进入编辑资料」：
+           三个入口共用同一个处理函数 tapAvatar（已登录→「编辑资料」，未登录→微信登录），不各写一套。 -->
+      <view class="nickname" wx:if="{{loggedIn}}" bindtap="tapAvatar" role="button" aria-label="{{nickname}}，编辑资料">{{nickname}}</view>
+      <view class="identity-user-id" wx:if="{{loggedIn && userId}}" bindtap="copyUserId" role="button" aria-label="复制用户 ID"><text class="identity-id-value">ID：{{userId}}</text><text class="identity-id-copy">复制</text></view>
+      <!-- 小字＝「身份标签 · 已加入 N 天」，再下面一枚白底胶囊放个性签名（参考图里红框/绿框那两行的位置）。 -->
+      <view class="identity-meta" wx:if="{{loggedIn && joinedLabel}}">{{joinedLabel}}</view>
+      <view class="identity-signature" wx:if="{{loggedIn && signature}}" bindtap="tapAvatar" role="button" aria-label="个性签名，编辑资料">{{signature}}</view>
+      <!-- 未登录（2026-09-22 23:4x 真机反馈）：不再摆占位昵称与绿色胶囊按钮，只留轻盈文字；
+           2026-09-23 01:1x 起是两行（主行「点击登录」+ 副行一句说明），整块仍是登录入口、点击区 ≥72rpx。 -->
+      <view class="login-entry" wx:if="{{!loggedIn}}" bindtap="login" role="button" aria-label="点击登录，登录后同步学习记录与进度">
+        <view class="login-text">点击登录</view>
+        <view class="login-sub">登录后同步学习记录与进度</view>
+      </view>
+    </view>
   </view>
-
-  <view class="section-heading asset-heading">
-    <view class="section-title">我的资产</view>
-    <view class="section-more" data-name="我的资产" bindtap="openMenu">管理</view>
+  <!-- 2026-09-22 真机反馈：原「我的资产」标题 + 四宫格（绿框）换成参考图那张卡片——
+       白底圆角、三列，位置就在个性签名正下方，整张卡片可点、直接进资产入口。
+       三列口径按你 23:4x 的定法：学习天数（复习记录去重日期数）/ 卡集 / 题包（笔记下属于卡集，不再单列）。
+       2026-09-23 00:2x 真机反馈「要拉满这个区域（我指背景色）」：把这张卡片也挪进 .profile-hero——
+       底色从顶栏最上沿一路铺到卡片下沿，卡片不再骑在"没铺到"的那段上。 -->
+  <view class="asset-card" data-name="我的资产" bindtap="openMenu" role="button" aria-label="我的资产">
+    <view class="asset-card-item"><text class="asset-card-value">{{assetCard.studyDays}}</text><text class="asset-card-label">学习天数</text></view>
+    <view class="asset-card-item"><text class="asset-card-value">{{assetCard.cardSets}}</text><text class="asset-card-label">卡集</text></view>
+    <view class="asset-card-item"><text class="asset-card-value">{{assetCard.packs}}</text><text class="asset-card-label">题包</text></view>
   </view>
-  <view class="asset-summary" data-name="我的资产" bindtap="openMenu">
-    <view><text>{{assetStats.total}}</text><text>全部资产</text></view>
-    <view><text>{{assetStats.questions}}</text><text>题目</text></view>
-    <view><text>{{assetStats.packs}}</text><text>题包</text></view>
-    <view><text>{{assetStats.notes}}</text><text>笔记</text></view>
   </view>
 
   <view class="section-title menu-title">账户与服务</view>

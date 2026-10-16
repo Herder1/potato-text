@@ -1,0 +1,6 @@
+/* 「个人信息收集清单」页（2026-10-05，DEC-110）：正文改为读服务端已发布版本（独立的一份平台文本）。 */
+.pi-page { padding-bottom: calc(60rpx + env(safe-area-inset-bottom)); }
+.pi-heading { padding: 12rpx 4rpx 22rpx; }
+.pi-title { color: #232824; font-size: 36rpx; font-weight: 700; }
+.pi-subtitle { margin-top: 10rpx; color: #a3aaa6; font-size: 21rpx; }
+.pi-actions { margin-top: 42rpx; }

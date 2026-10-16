@@ -3,6 +3,7 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const zlib = require("node:zlib");
+const { normalizeQuestionType, normalizeQuestionTypeLabel } = require("../../miniprogram/utils/question-type");
 
 const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;
@@ -23,7 +24,6 @@ const typeLabels = {
   short_answer: "简答题",
   term_definition: "名词解释",
   material_analysis: "材料分析题",
-  appreciation: "作品赏析题",
   essay: "论述题",
 };
 const chineseSectionNumbers = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二"];
@@ -173,7 +173,7 @@ class PdfLayout {
 function groupQuestions(questions) {
   const groups = [];
   questions.forEach((question, index) => {
-    const type = String(question.type || "short_answer");
+    const type = normalizeQuestionType(question.type || "short_answer");
     const last = groups[groups.length - 1];
     if (!last || last.type !== type) groups.push({ type, questions: [{ question, index }] });
     else last.questions.push({ question, index });
@@ -254,7 +254,8 @@ function normalizeExamSnapshot(exam = {}, questions = []) {
   const normalizedQuestions = (Array.isArray(questions) ? questions : []).slice(0, 300).map((question, index) => ({
     ...question,
     id: String(question && question.id || `export-question-${index + 1}`),
-    type: String(question && question.type || "short_answer"),
+    type: normalizeQuestionType(question && question.type || "short_answer"),
+    typeLabel: normalizeQuestionTypeLabel(question && question.typeLabel, question && question.type),
     stem: cleanText(question && question.stem),
     material: cleanText(question && question.material),
     options: Array.isArray(question && question.options) ? question.options : [],

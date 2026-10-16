@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const { normalizeQuestionType } = require("../../miniprogram/utils/question-type");
 
 const VISUAL_BLOCK_TYPES = new Set(["figure", "image", "diagram", "chart", "illustration"]);
 
@@ -61,7 +62,10 @@ function evidenceReference(chunk, index) {
     ? `教材第${chunk.printedPageStart}${chunk.printedPageEnd > chunk.printedPageStart ? `-${chunk.printedPageEnd}` : ""}页`
     : `PDF第${chunk.pdfPageStart}页`;
   const evidenceText = typeof chunk.retrievalText === "string" ? chunk.retrievalText : chunk.text;
-  return `[证据${index + 1}｜片段ID:${chunk.id}｜${chunk.catalogPath}｜${printedPage}]\n${evidenceText}`;
+  // 跨册候选（同一科目多本教材一起当候选）时，证据必须自带"出自哪一册"，
+  // 否则模型无法把"这段正文说的事"归到上册还是下册。只有显式带了标签的检索路径才会打印。
+  const textbook = String(chunk.bookLabel || "").trim() ? `｜教材:${String(chunk.bookLabel).trim()}` : "";
+  return `[证据${index + 1}｜片段ID:${chunk.id}${textbook}｜${chunk.catalogPath}｜${printedPage}]\n${evidenceText}`;
 }
 
 function formatTextbookEvidence(chunks, maxCharacters = 12000) {
@@ -79,7 +83,7 @@ function formatTextbookEvidence(chunks, maxCharacters = 12000) {
 function generatedQuestionSchema() {
   return {
     questions: [{
-      type: "single_choice | multiple_choice | true_false | fill_blank | short_answer | term_definition | material_analysis | appreciation | essay",
+      type: "single_choice | multiple_choice | true_false | fill_blank | short_answer | term_definition | material_analysis | essay",
       stem: "题干",
       material: "可选材料",
       options: [{ key: "A", text: "选项" }],
@@ -114,11 +118,12 @@ function normalizeGeneratedQuestions(raw, context = {}) {
   if (!raw || !Array.isArray(raw.questions)) throw new Error("provider_output_format_error");
   const allowedTypes = new Set([
     "single_choice", "multiple_choice", "true_false", "fill_blank", "short_answer",
-    "term_definition", "material_analysis", "appreciation", "essay",
+    "term_definition", "material_analysis", "essay",
   ]);
   const availableChunks = new Map((context.evidenceChunks || []).map((chunk) => [chunk.id, chunk]));
   return raw.questions.slice(0, Math.max(1, Number(context.count) || 5)).map((item) => {
-    const type = allowedTypes.has(item.type) ? item.type : String(context.questionType || "single_choice");
+    const candidateType = normalizeQuestionType(item.type);
+    const type = allowedTypes.has(candidateType) ? candidateType : normalizeQuestionType(context.questionType || "single_choice");
     const options = Array.isArray(item.options) ? item.options.map((option, index) => ({
       key: String(option && option.key || String.fromCharCode(65 + index)).trim().toUpperCase(),
       text: String(option && option.text || "").trim(),

@@ -32,7 +32,7 @@ const defaultAnnouncements = [
     type: "权益通知",
     title: "平台题库已开通",
     summary: "内部测试期间，平台题库已为测试用户开放",
-    content: "内部测试期间，测试用户可使用已上线的平台题库。正式订阅与支付功能将在后续阶段接入，现阶段不会产生订阅费用。\n\nAI 解析与评分使用独立额度，当前余额可在“AI 额度明细”中查看。",
+    content: "内部测试期间，测试用户可使用已上线的平台题库。正式订阅与支付功能将在后续阶段接入，现阶段不会产生订阅费用。\n\nAI 解析与评分消耗豆币，当前豆币余额可在「豆币账户」中查看。",
     date: "2026年8月4日",
   },
   {
@@ -187,6 +187,13 @@ Page({
 
   onShow() {
     closeTransientLayers(this, ["projectMenuOpen","announcementOpen"]);
+    // 注册引导闸门（2026-10-03）：本页是 app.json 的 entryPagePath，冷启动一定先到这里。
+    // 放在这里而不是只挂在 App.onShow：App.onShow 早于首页创建，此时 wx.reLaunch 可能被微信忽略
+    // （真机反馈"不弹登录引导"的一种成因）；页面 onShow 时页面已建好，跳转一定生效。
+    if (typeof getApp === "function") {
+      const app = getApp();
+      if (app && typeof app.maybeGateOnboarding === "function" && app.maybeGateOnboarding()) return;
+    }
     const storedProjectId = wx.getStorageSync("shukao_review_project_id") || "chinese-upgrade";
     const activeProject = reviewProjects.find((project) => project.id === storedProjectId && project.enabled) || reviewProjects[0];
     const examDate = wx.getStorageSync(`shukao_exam_date_${activeProject.id}`) || "";

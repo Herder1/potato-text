@@ -130,6 +130,38 @@ test("adding and removing members keeps a confirmed family definition stable", (
   ]);
 });
 
+test("adding a prototype preserves an explicitly blank family definition and existing confirmations", () => {
+  const store = createMemoryQuestionFamilyStore({ families: [{
+    id: "blank-action-family",
+    bookId: "modern-chinese-7-1",
+    name: "不随新成员补写定义",
+    knowledgeNodeId: "stable-node",
+    assessmentAction: "",
+    status: "confirmed",
+    reviewedAt: 100,
+    reviewedBy: "原审核员",
+    members: [{ questionId: "existing", isPrimary: true, role: "similar", action: "" }],
+  }] });
+  const before = store.memberships(["existing"], { status: "all" });
+  const added = store.addMembers("blank-action-family", [question("new", "下列说法正确的是（ ）。")], "审核员");
+  assert.notEqual(added.family.members.find((member) => member.questionId === "new").action, "");
+  assert.equal(added.family.assessmentAction, "");
+  assert.equal(store.get("blank-action-family").assessmentAction, "");
+  assert.deepEqual(store.memberships(["existing"], { status: "all" }), before);
+  assert.equal(added.family.members.find((member) => member.questionId === "new").reviewStatus, "pending_fit");
+});
+
+test("legacy families without an assessment-action field still derive their existing prototype action", () => {
+  const store = createMemoryQuestionFamilyStore({ families: [{
+    id: "legacy-action-family",
+    bookId: "modern-chinese-7-1",
+    name: "兼容旧记录",
+    knowledgeNodeId: "stable-node",
+    members: [{ questionId: "existing", role: "prototype", action: "概念辨析" }],
+  }] });
+  assert.equal(store.get("legacy-action-family").assessmentAction, "概念辨析");
+});
+
 test("removing a prototype only reopens the promoted member relationship", () => {
   const store = createMemoryQuestionFamilyStore({ families: [{
     id: "prototype-removal-family",
@@ -1374,7 +1406,7 @@ test("families follow knowledge-tree order", () => {
   assert.deepEqual(result.families.map((family) => family.knowledgeNodeId), ["dialect", "consonant"]);
 });
 
-test("admin question-family API generates and confirms a family", async (context) => {
+test("admin question-family API previews, explicitly creates and confirms a family", async (context) => {
   const questions = [
     question("q1", "从发音方法来说，声母 b 是（ ）。"),
     question("q2", "从发音方法看，普通话声母 x 属于（ ）。"),
@@ -1404,13 +1436,19 @@ test("admin question-family API generates and confirms a family", async (context
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => new Promise((resolve) => server.close(resolve)));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  const generated = await fetch(`${baseUrl}/api/admin/question-families/generate`, {
+  const preview = await fetch(`${baseUrl}/api/admin/question-enrichment/completion-preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bookId: "modern-chinese-7-1" }),
   }).then((response) => response.json());
+  assert.equal(preview.success, true, JSON.stringify(preview));
+  assert.equal(questionFamilyStore.list({ status: "all" }).families.length, 0);
+  const generated = await fetch(`${baseUrl}/api/admin/question-enrichment/completion-commit`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items: preview.rows.map((row) => ({ questionId: row.questionId, token: row.token, fingerprint: false, familyId: "new" })) }),
+  }).then((response) => response.json());
   assert.equal(generated.success, true);
-  assert.equal(generated.familyCount, 1);
+  assert.equal(generated.familiesCreated, 1);
   const listing = await fetch(`${baseUrl}/api/admin/question-families?bookId=modern-chinese-7-1`).then((response) => response.json());
   assert.equal(listing.families[0].members[0].question.stem.length > 0, true);
   assert.deepEqual(listing.families[0].members[0].question.options, [{ key: "A", text: "塞音" }, { key: "B", text: "擦音" }]);
@@ -2377,7 +2415,7 @@ test("admin exposes question and family management in the unified question libra
   const app = await fetch(`http://127.0.0.1:${server.address().port}/admin/app.js`).then((response) => response.text());
   const styles = await fetch(`http://127.0.0.1:${server.address().port}/admin/styles.css`).then((response) => response.text());
   assert.match(html, /data-view="题库管理"/);
-  assert.match(html, /data-question-library-tab="library"[^>]*>题库</);
+  assert.match(html, /data-question-library-tab="library"[^>]*>题库管理</);
   assert.doesNotMatch(html, /data-question-library-tab="(?:questions|families)"/);
   assert.doesNotMatch(html, /data-question-workspace-mode=/);
   assert.match(html, /id="question-workspace-search"/);
@@ -2435,8 +2473,8 @@ test("admin exposes question and family management in the unified question libra
   assert.match(app, /function openQuestionFamilyPicker/);
   assert.match(app, /\["已归组题目", summary\.confirmedTopicQuestionCount \?\? summary\.questionCount \?\? 0\]/);
   assert.match(app, /\["待归组题目", summary\.pendingGroupingQuestionCount \|\| 0\]/);
-  assert.match(app, /\["无题族关系", summary\.unresolvedQuestionCount \|\| 0\]/);
-  assert.match(styles, /\.question-family-summary\s*\{[^}]*grid-template-columns:\s*repeat\(7, minmax\(0, 1fr\)\)/);
+  assert.match(app, /\["未归档", summary\.unresolvedQuestionCount \|\| 0\]/);
+  assert.match(styles, /\.question-family-summary\s*\{[^}]*display:\s*flex;[^}]*overflow-x:\s*auto;/);
   assert.match(app, /function questionOptionListHtml/);
   assert.match(app, /function questionFamilyPreviewHtml/);
   assert.match(app, /function openQuestionGrouping/);
@@ -2471,7 +2509,8 @@ test("admin exposes question and family management in the unified question libra
   assert.match(app, /expandedQuestionFamilyIds/);
   assert.match(app, /questionFamilyMatchedOptionsHtml\(question\.options\)/);
   assert.equal((app.match(/questionOptionListHtml\(question\.options/g) || []).length, 6);
-  assert.match(html, /按知识指纹重新生成/);
+  assert.doesNotMatch(html, /id="generate-question-families"/);
+  assert.match(html, /id="confirm-completion"/);
   assert.match(html, /人工确认后才进入智能复习/);
 });
 

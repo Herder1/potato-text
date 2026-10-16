@@ -34,3 +34,8 @@ __pycache__/
 # 隔离验证用的"镜像布局"副本：按 Dockerfile 的 COPY 清单复制的一份 apps/packages/scripts，
 # 由验证脚本临时生成、用完即删。绝不能进 git（2026-09-21 曾因 git add -A 误提交 281 个文件）。
 /.smoke-docker/
+# 本机 Agent 的视觉路由产物（截图、run 交接文件），纯本地产物，可在任意机器重新生成。
+/.dsh-vision-router/
+# 事故现场备份：文件被写坏时留下的 *.corrupt-<日期>.bak，只作本地取证，
+# 需要长期留档的走 /删除件归档/（已忽略），不进版本库。
+*.corrupt-*.bak

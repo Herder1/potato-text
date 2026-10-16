@@ -1,3 +1,5 @@
+const { normalizeQuestionType } = require("../../miniprogram/utils/question-type");
+
 const subjectiveQuestionTypes = new Set([
   "punctuation",
   "classical_word_explanation",
@@ -5,7 +7,6 @@ const subjectiveQuestionTypes = new Set([
   "short_answer",
   "term_definition",
   "material_analysis",
-  "appreciation",
   "essay",
 ]);
 
@@ -47,7 +48,7 @@ function detectScoringPointCandidates(referenceAnswer) {
 }
 
 function scoringPointStructure(type, referenceAnswer, scoringPoints, maxScore) {
-  if (!subjectiveQuestionTypes.has(type)) {
+  if (!subjectiveQuestionTypes.has(normalizeQuestionType(type))) {
     return { status: "not_required", candidates: [], candidateCount: 0 };
   }
   const points = Array.isArray(scoringPoints) ? scoringPoints : [];

@@ -151,16 +151,15 @@ test("question-family member rows keep intrinsic height inside the scrolling for
 });
 
 test("family definition state and member assignment state remain independent", () => {
-  assert.match(html, /<span>题族定义<\/span><select id="question-family-status"/);
-  assert.match(html, /<span>成员归属<\/span><select id="question-family-member-status"/);
+  assert.match(html, /id="question-status-filter"/);
+  assert.doesNotMatch(html, /id="question-family-status"|id="question-family-member-status"/);
 
   const loadSource = functionSource("loadQuestionFamilies");
-  assert.match(loadSource, /question-family-status/);
+  assert.match(loadSource, /questionWorkspaceFilters\(\)/);
   assert.doesNotMatch(loadSource, /question-family-member-status/);
 
-  const renderSource = functionSource("renderQuestionFamilyTable");
-  assert.match(renderSource, /question-family-member-status/);
-  assert.match(renderSource, /questionFamilyMatchesMemberReviewFilter/);
+  const renderSource = functionSource("questionFamilyRowHtml");
+  assert.match(renderSource, /workspaceMemberIds/);
   assert.match(functionSource("questionFamilyMemberReviewStatus"), /member\.reviewStatus/);
   assert.match(functionSource("questionFamilyMemberReviewStatus"), /family\.status === "pending_review" \? "pending_fit" : "confirmed"/);
 });
@@ -217,7 +216,7 @@ test("family workspace tree uses confirmed topic-family projection counts", () =
   assert.match(treeSource, /familyTreeSummary\?\.nodeQuestionCounts/);
   assert.match(treeSource, /已确认主题族投影/);
   const scopeSource = functionSource("renderQuestionFamilyScopeSummary");
-  assert.match(scopeSource, /正式投影（已确认题族定义 \+ 已确认成员归属、含下级、去重）/);
+  assert.match(scopeSource, /正式投影（已确认定义和归属、含下级、去重）/);
   assert.match(html, /id="question-family-scope-summary"/);
 });
 
@@ -242,7 +241,8 @@ test("question editor owns searchable formal-fingerprint pickers", () => {
   assert.match(html, /id="question-fingerprint-core"[^>]*hidden/);
   assert.match(html, /id="question-fingerprint-required"[^>]*multiple[^>]*hidden/);
   assert.match(html, /id="question-fingerprint-range"[^>]*multiple[^>]*hidden/);
-  assert.match(html, /id="question-fingerprint-theme-anchor"[^>]*hidden/);
+  assert.doesNotMatch(html, /id="question-fingerprint-theme-anchor"/);
+  assert.match(html, /id="question-family-set-attribution-list"/);
   assert.match(html, /id="load-question-fingerprint-candidate"/);
   assert.match(html, /id="save-question-fingerprint"/);
   const renderSource = functionSource("renderQuestionFingerprintPicker");
@@ -309,7 +309,7 @@ test("admin static assets bust the browser cache on every change", () => {
 test("question fingerprint keeps theme range separate while retaining the core in the minimum sufficient set", () => {
   const normalizeSource = functionSource("normalizeQuestionFingerprintDraftRequiredNodeIds");
   assert.match(normalizeSource, /state\.questionFingerprintDraftRequiredNodeIds/);
-  assert.match(normalizeSource, /nodeId !== themeAnchorNodeId \|\| nodeId === primaryNodeId/);
+  assert.match(normalizeSource, /filter\(Boolean\)/);
   assert.match(normalizeSource, /state\.questionFingerprintDraftProblemKnowledgeRangeNodeIds/);
 
   const applySource = functionSource("applyQuestionFingerprintDraft");
@@ -318,8 +318,8 @@ test("question fingerprint keeps theme range separate while retaining the core i
 
   const summarySource = functionSource("questionFingerprintSummary");
   assert.match(summarySource, /knowledgeThemeRangeAnchorNodeId/);
-  assert.match(summarySource, /知识主题范围锚点/);
-  assert.match(summarySource, /nodeId !== themeAnchorNodeId \|\| nodeId === primaryNodeId/);
+  assert.match(summarySource, /旧知识范围锚点（历史兼容）/);
+  assert.match(summarySource, /filter\(Boolean\)/);
   assert.match(app, /#question-fingerprint-required[\s\S]*normalizeQuestionFingerprintDraftRequiredNodeIds\(\)/);
 });
 
@@ -465,9 +465,9 @@ test("question-family primary anchor moves only through the normal save flow", (
 
 test("question-family status filter survives every workspace mutation and refresh", () => {
   const loadSource = functionSource("loadQuestionFamilies");
-  assert.match(loadSource, /status:\s*document\.querySelector\("#question-family-status"\)\.value/);
-  assert.doesNotMatch(app, /document\.querySelector\("#question-family-status"\)\.value\s*=\s*"all"/);
-  assert.match(app, /querySelector\("#refresh-question-families"\)\.addEventListener\("click",\s*loadQuestionFamilies\)/);
+  assert.match(loadSource, /questionWorkspaceFilters\(\)/);
+  assert.doesNotMatch(loadSource, /question-status-filter[^\n]*\.value\s*=/);
+  assert.match(app, /querySelector\("#refresh-question-workspace"\)\.addEventListener\("click",\s*loadCurrentQuestionLibraryContent\)/);
 
   for (const name of [
     "confirmQuestionGrouping",
@@ -478,7 +478,7 @@ test("question-family status filter survives every workspace mutation and refres
   ]) {
     const source = functionSource(name);
     assert.match(source, /await loadQuestionFamilies\(\)/, `${name} must refresh the filtered workspace`);
-    assert.doesNotMatch(source, /question-family-status[^\n]*\.value\s*=/, `${name} must not overwrite the active status filter`);
+    assert.doesNotMatch(source, /question-status-filter[^\n]*\.value\s*=/, `${name} must not overwrite the active status filter`);
   }
 });
 

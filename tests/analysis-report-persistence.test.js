@@ -24,8 +24,8 @@ test("learning diagnosis reports persist by subject and successful regeneration 
     }],
   ]);
   const app = {
-    globalData: { aiCredits: 5, apiBaseUrl: "https://example.test", officialQuestions: [] },
-    spendAiCredit: () => true,
+    globalData: { beans: 0.5, apiBaseUrl: "https://example.test", officialQuestions: [] },
+    spendBeans: () => true,
   };
   global.Page = (value) => { definition = value; };
   global.getApp = () => app;
@@ -72,7 +72,7 @@ test("learning diagnosis reports persist by subject and successful regeneration 
   page.requestAiAdvice();
   assert.equal(page.data.aiAdvice, "重新生成的现代汉语诊断");
   assert.equal(storage.get("shukao_learning_diagnosis_reports")["modern-chinese"].text, "重新生成的现代汉语诊断");
-  assert.equal(toastTitle, "生成失败，未扣额度");
+  assert.equal(toastTitle, "生成失败，未扣豆币");
 
   const reopenedPage = createPage(definition);
   reopenedPage.onLoad({ subjectId: "modern-chinese" });
@@ -265,8 +265,8 @@ test("a diagnosis response is saved under the subject that started the request",
   const storage = new Map();
   global.Page = (value) => { definition = value; };
   global.getApp = () => ({
-    globalData: { aiCredits: 2, apiBaseUrl: "https://example.test", officialQuestions: [] },
-    spendAiCredit: () => true,
+    globalData: { beans: 0.2, apiBaseUrl: "https://example.test", officialQuestions: [] },
+    spendBeans: () => true,
   });
   global.wx = {
     getStorageSync: (key) => storage.get(key) || "",

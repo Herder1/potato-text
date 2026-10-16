@@ -41,7 +41,7 @@ Page({
 
   loadDiscovery() {
     const app = getApp();
-    if (typeof wx.request !== "function") {
+    if (!app.globalData.apiBaseUrl || typeof wx.request !== "function") {
       this.applyDiscovery(fallbackDiscovery);
       return;
     }

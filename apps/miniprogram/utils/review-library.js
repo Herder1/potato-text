@@ -10,6 +10,16 @@ const wrongStatusLabels = {
 
 const subjectColors = ["#3977e8", "#8b63dc", "#d67434", "#119587", "#dc5d67", "#53a847"];
 
+// 04:9x：错误本页的学科圆标改成「淡色底 + 同色箭头」（产品负责人的效果图）。箭头是 3rpx 细笔画，压在**它自己的淡底**上
+// 必须还看得清（沿用收藏页图标口径：非文本 ≥3:1）。实测六个原色落在 13% 淡底上：蓝 3.59 / 紫 3.66 / 青 3.17 / 粉 3.11
+// 达标，但**橙 2.86、绿 2.63 不达标**——所以箭头色取「原色与黑混 18%」的加深档（六个色都 ≥3.5），圆标底色仍用原色淡铺。
+const deepenColor = (color, ratio = 0.18) => {
+  const value = String(color || "").replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(value)) return color;
+  const channels = [0, 2, 4].map((offset) => Math.round(parseInt(value.substr(offset, 2), 16) * (1 - ratio)));
+  return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+};
+
 function dateKey(timestamp = Date.now()) {
   const date = new Date(timestamp);
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
@@ -209,6 +219,7 @@ function buildDirectoryGroups(items) {
       id: subject.id,
       label: subject.label,
       color: subjectColors[index % subjectColors.length],
+      colorDeep: deepenColor(subjectColors[index % subjectColors.length]),
       count: subject.items.length,
       secondary: `${chapters.length} 个章节`,
       questionIds: subject.items.map((item) => item.id),
@@ -227,6 +238,7 @@ function buildKnowledgeGroups(items) {
     id: `knowledge-${index}-${label}`,
     label,
     color: subjectColors[index % subjectColors.length],
+    colorDeep: deepenColor(subjectColors[index % subjectColors.length]),
     count: groupItems.length,
     secondary: [...new Set(groupItems.map((item) => item.subjectName))].join(" / "),
     questionIds: groupItems.map((item) => item.id),

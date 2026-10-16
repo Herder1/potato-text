@@ -1,0 +1,136 @@
+<!-- 注册引导层：底部上滑面板 + 半透明背景。整页无返回，出口只有"登录完成"或"先随便看看"。 -->
+<view class="onboarding-page" style="padding-top: {{statusBarHeight}}px;">
+  <view class="onboarding-backdrop"></view>
+  <view class="onboarding-sheet">
+    <view class="sheet-handle"></view>
+
+    <view class="sheet-brand">
+      <view class="brand-mark">薯</view>
+      <view class="brand-copy">
+        <view class="brand-title">薯考</view>
+        <view class="brand-sub">汉语言文学题库 · 刷题与复习</view>
+      </view>
+    </view>
+
+    <block wx:if="{{stage === 'login'}}">
+      <view class="sheet-title">登录后开始</view>
+      <view class="sheet-note">学习记录、题包和收藏都跟着账号走，换设备也不丢。</view>
+      <!-- 隐私授权放在登录按钮上方：登录就要收 openid，后面还要收四项属性与头像昵称，一次同意覆盖全部收集。 -->
+      <view class="consent-row">
+        <view class="consent-box {{agreed ? 'consent-box-on' : ''}}" bindtap="toggleAgree" role="checkbox" aria-checked="{{agreed}}" aria-label="同意用户隐私保护指引">{{agreed ? '✓' : ''}}</view>
+        <view class="consent-copy" bindtap="toggleAgree">
+          <text>我已阅读并同意</text><text class="consent-link" catchtap="openPrivacyContract">《用户隐私保护指引》</text>
+        </view>
+      </view>
+      <!-- DEC-110 ③：微信那份指引之外，再给我们的《用户协议》《隐私政策》两个可点入口（未发布就显示「尚未发布」）。 -->
+      <view class="consent-docs">
+        <text class="consent-docs-label">同时可查看：</text>
+        <text class="consent-link" data-doc="terms" catchtap="openDoc">《用户协议》</text>
+        <text class="consent-link" data-doc="privacy" catchtap="openDoc">《隐私政策》</text>
+      </view>
+      <view class="primary-button {{(loggingIn || !agreed) ? 'primary-button-busy' : ''}}" bindtap="login" role="button" aria-label="微信一键登录">{{loggingIn ? '登录中…' : '微信一键登录'}}</view>
+      <view class="skip-entry" bindtap="skip" role="button" aria-label="先随便看看">先随便看看</view>
+      <view class="skip-note">可以浏览题库和练习，但这次的数据不会保存</view>
+    </block>
+
+    <block wx:else>
+      <view class="sheet-title">再填 4 项就开始</view>
+      <view class="sheet-note">用来看你考什么、复习到哪一档；只有你自己能看到。</view>
+
+      <view class="field-group">
+        <view class="field-label">性别</view>
+        <view class="chip-row">
+          <view
+            wx:for="{{genderOptions}}"
+            wx:key="id"
+            class="chip {{gender === item.id ? 'chip-active' : ''}}"
+            data-field="gender"
+            data-id="{{item.id}}"
+            bindtap="selectOption"
+            role="button"
+            aria-label="{{item.label}}"
+          >{{item.label}}</view>
+        </view>
+      </view>
+
+      <view class="field-group">
+        <view class="field-label">年龄段</view>
+        <view class="chip-row">
+          <view
+            wx:for="{{ageBandOptions}}"
+            wx:key="id"
+            class="chip {{ageBand === item.id ? 'chip-active' : ''}}"
+            data-field="ageBand"
+            data-id="{{item.id}}"
+            bindtap="selectOption"
+            role="button"
+            aria-label="{{item.label}}"
+          >{{item.label}}</view>
+        </view>
+      </view>
+
+      <view class="field-group">
+        <view class="field-label">目标考试项目</view>
+        <view class="chip-row">
+          <view
+            wx:for="{{projectOptions}}"
+            wx:key="id"
+            class="chip chip-wide {{examProjectId === item.id ? 'chip-active' : ''}}"
+            data-field="examProjectId"
+            data-id="{{item.id}}"
+            bindtap="selectOption"
+            role="button"
+            aria-label="{{item.label}}"
+          >{{item.label}}<text class="chip-sub" wx:if="{{item.sublabel}}">{{item.sublabel}}</text></view>
+        </view>
+        <view class="field-error" wx:if="{{projectError}}" bindtap="loadProjects" role="button" aria-label="重新加载考试项目">{{projectError}}</view>
+      </view>
+
+      <view class="field-group">
+        <view class="field-label">报考年份</view>
+        <view class="chip-row">
+          <view
+            wx:for="{{yearOptions}}"
+            wx:key="id"
+            class="chip {{examYear === item.id ? 'chip-active' : ''}}"
+            data-field="examYear"
+            data-id="{{item.id}}"
+            bindtap="selectOption"
+            role="button"
+            aria-label="{{item.label}}"
+          >{{item.label}}</view>
+        </view>
+      </view>
+
+      <view class="optional-row" bindtap="toggleOptional" role="button" aria-label="头像与昵称，选填">
+        <text>头像与昵称（选填）</text>
+        <text class="optional-arrow">{{optionalOpen ? '收起' : '展开'}}</text>
+      </view>
+      <view class="optional-body" wx:if="{{optionalOpen}}">
+        <view class="avatar-row">
+          <image wx:if="{{avatarUrl}}" class="optional-avatar" src="{{avatarUrl}}" mode="aspectFill" />
+          <view wx:else class="optional-avatar optional-avatar-fallback">薯</view>
+          <view class="avatar-button-wrap">
+            <text class="avatar-button-label">选择头像</text>
+            <!-- 微信现行合规采集方式：头像只能由用户自己点 open-type=chooseAvatar。 -->
+            <button class="avatar-button" open-type="chooseAvatar" bindchooseavatar="chooseAvatar" aria-label="选择头像"></button>
+          </view>
+        </view>
+        <input
+          class="optional-input"
+          type="nickname"
+          value="{{nickname}}"
+          maxlength="32"
+          placeholder="昵称，不填就叫「薯考同学」"
+          bindinput="inputNickname"
+          bindblur="inputNickname"
+        />
+      </view>
+
+      <view class="hint" wx:if="{{hint}}">{{hint}}</view>
+      <view class="primary-button {{submitting ? 'primary-button-busy' : ''}}" bindtap="submit" role="button" aria-label="开始使用">{{submitting ? '保存中…' : '开始使用'}}</view>
+      <view class="skip-entry" bindtap="skip" role="button" aria-label="先随便看看">先随便看看</view>
+      <view class="skip-note">跳过就只能浏览，不会保存任何数据</view>
+    </block>
+  </view>
+</view>

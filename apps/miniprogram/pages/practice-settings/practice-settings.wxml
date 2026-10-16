@@ -1,0 +1,12 @@
+<view class="page-shell ps-page">
+  <view class="ps-list panel">
+    <view class="ps-row" wx:for="{{items}}" wx:key="key" bindtap="notReady" hover-class="ps-row-press" role="button" aria-label="{{item.title}}">
+      <view class="ps-copy">
+        <text class="ps-title">{{item.title}}</text>
+        <text class="ps-note">{{item.note}}</text>
+      </view>
+      <text class="ps-arrow">›</text>
+    </view>
+  </view>
+  <view class="ps-placeholder">功能开发中：题目顺序、答题反馈与每日目标的口径确定后在此实现。</view>
+</view>

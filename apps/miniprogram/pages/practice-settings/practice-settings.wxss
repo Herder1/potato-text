@@ -1,0 +1,11 @@
+/* 练习设置占位页（2026-10-02）。 */
+.ps-page { padding-bottom: calc(60rpx + env(safe-area-inset-bottom)); }
+.ps-list { margin-top: 8rpx; overflow: hidden; }
+.ps-row { display: flex; padding: 28rpx 24rpx; align-items: center; border-bottom: 1rpx solid #f1f3f1; gap: 16rpx; }
+.ps-row:last-child { border-bottom: 0; }
+.ps-row-press { background: #f6f8f7; }
+.ps-copy { min-width: 0; flex: 1; }
+.ps-title { display: block; color: #232824; font-size: 27rpx; font-weight: 600; }
+.ps-note { display: block; margin-top: 6rpx; color: #8b938d; font-size: 21rpx; }
+.ps-arrow { flex: 0 0 auto; color: #b3bab6; font-size: 30rpx; line-height: 1; }
+.ps-placeholder { margin-top: 30rpx; padding: 24rpx; color: #8b938d; background: #f4f6f5; border-radius: 14rpx; font-size: 22rpx; line-height: 1.7; }

@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>薯考管理后台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="styles.css?v=20260921.46" />
+    <link rel="stylesheet" href="styles.css?v=20261016.115" />
+    <link rel="stylesheet" href="assessment-modes.css?v=20261016.115" />
   </head>
   <body class="admin-locked">
     <aside class="sidebar">
@@ -18,6 +19,7 @@
       </div>
       <nav id="nav">
         <button class="nav-item active" data-view="工作台">工作台</button>
+        <button class="nav-item" data-view="平台设置">平台设置</button>
 
         <button class="nav-item nav-group" data-nav-group="内容与题库" data-nav-default="教材与目录">
           内容与题库
@@ -55,7 +57,7 @@
         <div class="nav-sub" data-nav-sub="AI 与订阅" hidden>
           <button class="nav-item nav-sub-item" data-view="AI 模型路由">AI 模型路由</button>
           <button class="nav-item nav-sub-item" data-view="AI 任务记录">AI 任务记录</button>
-          <button class="nav-item nav-sub-item" data-view="订阅与额度">订阅与额度</button>
+          <button class="nav-item nav-sub-item" data-view="订阅与豆币">订阅与豆币</button>
         </div>
 
         <button class="nav-item nav-group" data-nav-group="系统与审计" data-nav-default="操作日志">
@@ -87,6 +89,14 @@
           </div>
         </div>
       </header>
+
+      <div class="stale-backend-banner" id="admin-backend-stale" hidden>
+        <div>
+          <strong>后端未重启，改动未生效</strong>
+          <span id="admin-backend-stale-detail"></span>
+        </div>
+        <button id="admin-backend-stale-dismiss" type="button" aria-label="关闭提示">×</button>
+      </div>
 
       <section class="content" id="dashboard">
         <div class="notice">
@@ -123,12 +133,23 @@
           <span class="config-status-dot"></span>
           <span>正在读取模型配置</span>
         </div>
+        <!-- 出站代理提示（2026-10-09）：Node 的 fetch 默认不读 Windows 系统代理，上游按地区限制时报 451。
+             只有「检测到代理但服务端没走」时才显示；事实来自 /health 的 outboundProxy。 -->
+        <div class="provider-proxy-warning" id="ai-config-proxy-warning" role="status" hidden></div>
 
         <div class="ai-config-grid">
           <section class="section ai-provider-section">
             <div class="section-head">
               <div><h2>模型供应商</h2><p>支持主流上游协议</p></div>
-              <button class="secondary-action" id="new-provider" type="button">新增供应商</button>
+              <div class="provider-section-tools">
+                <button class="secondary-action" id="batch-provider-test" type="button">批量测试 / 文档导入</button>
+                <button class="secondary-action" id="new-provider" type="button">新增供应商</button>
+              </div>
+            </div>
+            <div class="provider-selection-tools" id="provider-selection-tools" hidden>
+              <span id="provider-selection-count"></span>
+              <button class="secondary-action" id="group-selected-providers" type="button" title="仅合并列表显示，不改变供应商配置或场景路由" disabled>合并折叠</button>
+              <button class="text-action" id="clear-provider-selection" type="button">取消选择</button>
             </div>
             <div class="provider-list" id="provider-list"></div>
           </section>
@@ -189,51 +210,61 @@
 
       <section class="content question-library-view" id="question-library" hidden>
         <div class="question-library-tabs" id="question-library-tabs">
-          <button class="is-active" data-question-library-tab="library" type="button">题库</button>
+          <button class="is-active" data-question-library-tab="library" type="button">题库管理</button>
           <button data-question-library-tab="dossiers" type="button">知识档案</button>
           <button data-question-library-tab="authoring" type="button">题目录入</button>
           <button data-question-library-tab="enrichment" type="button">完善题目</button>
           <button data-question-library-tab="inspections" type="button">AI 巡检</button>
           <button data-question-library-tab="gold-review" type="button">盲测金标</button>
-          <button data-question-library-tab="adjudication" type="button">裁决台</button>
           <button data-question-library-tab="rules" type="button">教研规则</button>
         </div>
-        <div class="question-library-summary" id="question-library-summary"></div>
         <section class="section question-browser-section">
           <aside class="knowledge-tree-panel">
             <div class="knowledge-tree-head">
-              <div><strong>教材知识树</strong><span id="knowledge-tree-summary">正在读取</span></div>
+              <div><strong id="library-directory-title">题库目录</strong><span id="knowledge-tree-summary">正在读取</span></div>
               <div class="knowledge-tree-actions">
+                <button id="edit-directory-mapping" type="button" title="编辑两张目录的对应关知识树" disabled>映射编辑</button>
                 <button id="add-knowledge-node" type="button" title="新增知识点" aria-label="新增知识点" hidden>＋</button>
                 <button id="toggle-knowledge-tree-edit" type="button" title="编辑知识树" aria-label="编辑知识树">✎</button>
                 <button id="knowledge-structure-backups" type="button" title="知识树存档与回滚" aria-label="知识树存档与回滚">🗂</button>
                 <button id="generate-knowledge-structure" type="button" title="从目录补漏：只补目录里有、树里没有的节点，已有的节点不改名、不移动、不删除" aria-label="从目录补漏">↻</button>
               </div>
             </div>
+            <p id="directory-navigation-note" role="status" hidden></p>
             <div class="knowledge-tree" id="knowledge-tree"></div>
           </aside>
           <div class="question-browser-main">
+        <div class="question-library-summary" id="question-library-summary"></div>
+        <div class="question-family-summary" id="question-family-summary"></div>
         <div class="question-workspace-toolbar" id="question-workspace-toolbar">
-          <div class="question-workspace-title"><strong>题库工作区</strong><span id="question-workspace-copy">在题族中直接查看、编辑和管理题目</span></div>
-          <select id="question-subject-filter" aria-label="科目"><option value="all">全部科目</option></select>
-          <select id="question-book-filter" aria-label="教材"></select>
+            <div class="question-workspace-mode" role="group" aria-label="工作区视导入方式">
+              <button class="secondary-action" id="question-workspace-mode-families" type="button" aria-pressed="false">题族</button>
+              <button class="secondary-action" id="question-workspace-mode-questions" type="button" aria-pressed="false">题目列表</button>
+            </div>
           <div class="question-workspace-search-actions">
             <input id="question-workspace-search" type="search" placeholder="搜索题族、题干、选项或题目 ID" aria-label="搜索题库" />
+            <button class="secondary-action" id="create-question-family-set" type="button">新建题族集</button>
+            <button class="secondary-action" id="create-empty-question-family" type="button">新建空题取消</button>
+            <button class="secondary-action" id="refresh-question-workspace" type="button">刷新</button>
             <button class="secondary-action" id="toggle-question-family-management" type="button">管理</button>
           </div>
           <input id="question-search" type="hidden" />
           <input id="question-family-search" type="hidden" />
         </div>
+        <div class="question-workspace-filters" id="question-workspace-filters" role="group" aria-label="题库筛选">
+          <label><span>科目</span><select id="question-subject-filter" aria-label="科目"><option value="all">全部科目</option></select></label>
+          <label><span>教材</span><select id="question-book-filter" aria-label="教材"></select></label>
+          <label><span>状态</span><select id="question-status-filter" aria-label="状态"><option value="all">全部状态</option></select></label>
+          <label><span>题型</span><select id="question-type-filter" aria-label="题型"><option value="all">全部题型</option></select></label>
+          <label><span>批次</span><select id="question-import-batch-filter" aria-label="批次"><option value="all">全部批次</option></select></label>
+        </div>
+        <div class="question-workspace-loading" id="question-workspace-loading" role="status" aria-live="polite" hidden>正在载入题库，请稍候</div>
         <section class="question-list-section" id="question-list-panel">
           <div class="section-head question-list-head">
             <div><h2 id="question-library-heading">题库管理</h2><p id="question-library-copy">按科目、教材、章节和知识点管理题目</p></div>
             <div class="question-toolbar">
-              <select id="question-type-filter"><option value="all">全部题型</option></select>
-              <select id="question-status-filter"><option value="all">全部状态</option></select>
-              <select id="question-import-batch-filter"><option value="all">全部导入批次</option></select>
               <button class="secondary-action" id="edit-question-import-batch" type="button" disabled>统一修改批次</button>
               <button class="secondary-action" id="assess-question-difficulty" type="button">重算组内难度</button>
-              <button class="secondary-action" id="refresh-questions" type="button">刷新</button>
             </div>
           </div>
           <div class="question-batch-toolbar" id="question-batch-toolbar" hidden>
@@ -253,10 +284,8 @@
           </div>
         </section>
         <section class="question-family-panel" id="question-family-panel" hidden>
-          <div class="question-family-summary" id="question-family-summary"></div>
           <div class="section-head question-family-head">
             <div><h2>题族</h2><p>按同一教材知识树排列，人工确认后才进入智能复习</p></div>
-            <div class="question-family-actions"><button class="secondary-action" id="create-question-family-set" type="button">新建题族集</button><button class="secondary-action" id="create-empty-question-family" type="button">新建空题族</button><button class="secondary-action" id="refresh-question-families" type="button">刷新</button><button class="primary-action" id="generate-question-families" type="button">按知识指纹重新生成</button></div>
           </div>
           <div class="question-family-feedback" id="question-family-feedback" role="status" aria-live="polite" hidden></div>
           <div class="question-batch-toolbar question-family-batch-toolbar" id="question-family-batch-toolbar" hidden>
@@ -270,8 +299,6 @@
           </div>
           <div class="question-family-toolbar">
             <span class="question-family-scope-summary" id="question-family-scope-summary"></span>
-            <label><span>题族定义</span><select id="question-family-status"><option value="all">全部定义状态</option><option value="pending_review">待审核</option><option value="confirmed">已确认</option><option value="rejected">已驳回</option></select></label>
-            <label><span>成员归属</span><select id="question-family-member-status"><option value="all">全部成员状态</option><option value="pending_fit">待审核归属</option><option value="confirmed">已确认归属</option></select></label>
           </div>
           <div class="question-family-list" id="question-family-table-body"></div>
         </section>
@@ -279,7 +306,7 @@
           <div id="knowledge-inspection-results-page">
             <div class="knowledge-inspection-summary" id="knowledge-inspection-summary"></div>
             <div class="section-head knowledge-inspection-head">
-              <div><h2>AI 知识归类巡检</h2><p>四个 Agent 分别提取特征、归类、核验和沉淀，只生成待人工确认的建议。<button class="adjudication-hint" data-open-adjudication type="button">这些建议也会出现在「裁决台」</button></p></div>
+              <div><h2>AI 知识归类巡检</h2><p>AI 巡检只诊断、不改库：这里是只读体检清单（问题＋证据＋风险）。记录状态只有待复核／已复核／已修复／已忽略四态；改库请用「送去完善题目」到「完善题目」里完成模型</p></div>
               <div class="knowledge-inspection-actions">
                 <button class="secondary-action" id="refresh-knowledge-inspections" type="button">刷新</button>
                 <button class="primary-action" id="run-knowledge-inspections" type="button">启动 AI 巡检</button>
@@ -291,17 +318,19 @@
                 <div><strong>1</strong><span><b>特征提取</b><small>Agent 1 拆解题干、答案、每个选项与解题依赖。</small></span></div>
                 <div><strong>2</strong><span><b>混合归类</b><small>Agent 2 结合知识树、规则和相似案例逐层归类。</small></span></div>
                 <div><strong>3</strong><span><b>教材核验</b><small>Agent 3 核对教材证据、跨题族关系和重复题族。</small></span></div>
-                <div><strong>4</strong><span><b>人工沉淀</b><small>确认后由 Agent 4 保存案例、修正依据和规则例外。</small></span></div>
+                <div><strong>4</strong><span><b>人工沉淀</b><small>人工复核结论与反馈由 Agent 4 沉淀为案例、修正依据和规则例外（不改题库）。</small></span></div>
               </div>
-              <p>每次重新巡检都会保留一条不可覆盖的审核记录，便于追溯判断变化；列表默认只显示最新记录，需要复盘时可打开“显示旧记录”。</p>
+              <p>每次重新巡检都会保留一条不可覆盖的审核记录，便于追溯判断变化；列表默认只显示最新记录，需要复盘时可打开“显示旧记录”。巡检<b>记录状态只有四态</b>：<b>待复核</b>（尚未人工确认）、<b>已复核</b>（人工确认过结论）、<b>已修复</b>（问题已被改库处理）、<b>已忽略</b>（确认无需处理，不是“通过”）；「正在巡检」「高风险」是过程与风险展示、不是记录状态；「归为通过」是结论、不改变记录状态。题目被改过（知识／题族／答案／分值任一变更）时旧结论自动作废，回到「待复核」并提示“题目已变更，旧结论作废，需重新巡检”。</p>
             </details>
             <div class="knowledge-inspection-feedback" id="knowledge-inspection-feedback" role="status" aria-live="polite" hidden></div>
             <div class="knowledge-inspection-job" id="knowledge-inspection-job" hidden></div>
             <div class="knowledge-inspection-toolbar">
               <input id="knowledge-inspection-search" type="search" placeholder="搜索题干、知识点或题目 ID" />
-              <select id="knowledge-inspection-status"><option value="all">全部状态</option><option value="pending_review">待人工确认</option><option value="running">分析中</option><option value="applied">已采纳</option><option value="rejected">已拒绝</option><option value="stale">已过期</option><option value="failed">巡检失败</option></select>
+              <select id="knowledge-inspection-status" title="待复核是巡检记录状态；正在巡检／已过期／巡检失败是过程状态（不是记录状态）"><option value="all">全部状态</option><option value="pending_review">待复核（记录状态）</option><option value="running">正在巡检（过程）</option><option value="stale">已过期</option><option value="failed">巡检失败</option></select>
               <select id="knowledge-inspection-risk"><option value="all">全部风险</option><option value="high">高风险</option><option value="medium">中风险</option><option value="low">低风险</option></select>
-              <select id="knowledge-inspection-issue"><option value="all">全部问题</option><option value="confirmed">归类与核验一致</option><option value="moved">建议调整归属</option><option value="cross_knowledge">跨知识点题目</option><option value="answer_conflict">答案与已核验依据冲突</option><option value="previous_level_wrong">原层级判断错误</option><option value="missing_node">缺少合适知识节点</option><option value="uncertain">结论不确定</option><option value="failed">巡检失败</option><option value="stale">建议已过期</option></select>
+              <!-- DEC-100：问题筛选的选项由 app.js 按后端下发的唯一词表（issueLabels）生成，前端不写第二份中文表。-->
+              <select id="knowledge-inspection-issue" title="选项来自后端唯一词表（AI 项）"><option value="all">全部问题</option></select>
+              <select id="knowledge-inspection-family" title="按当前题族成员关系实时筛选（不落库）：「未成族」＝当前没有任何题族把它算作成员，待审核题族也算已进题族"><option value="all">全部题族状态</option><option value="none">未成族（没有题族）</option><option value="has">已进题族</option></select>
               <label class="knowledge-inspection-history-toggle"><input id="knowledge-inspection-show-history" type="checkbox" /> 显示旧记录 <span id="knowledge-inspection-history-count"></span></label>
             </div>
             <div class="table-wrap">
@@ -587,6 +616,11 @@
             </div>
         </section>
         <section class="teaching-rule-panel" id="teaching-rule-panel" hidden>
+          <div class="assessment-mode-tabs" role="tablist" aria-label="教研规则分类">
+            <button type="button" role="tab" data-teaching-section="experience" aria-selected="true" aria-controls="teaching-rule-legacy">归类经验</button>
+            <button type="button" role="tab" data-teaching-section="modes" aria-selected="false" aria-controls="assessment-mode-standards" tabindex="-1">考法标准</button>
+          </div>
+          <div id="teaching-rule-legacy" role="tabpanel">
           <div class="teaching-rule-summary" id="teaching-rule-summary"></div>
           <div class="section-head teaching-rule-head">
             <div><h2>教研规则</h2><p>审核巡检对话沉淀的经验；只有人工批准的规则会参与后续巡检</p></div>
@@ -603,6 +637,8 @@
               <tbody id="teaching-rule-table-body"></tbody>
             </table>
           </div>
+          </div>
+          <div id="assessment-mode-standards" role="tabpanel" hidden></div>
         </section>
         <section class="knowledge-dossier-panel" id="knowledge-dossier-panel" hidden>
           <div class="knowledge-dossier-summary" id="knowledge-dossier-summary"></div>
@@ -630,106 +666,80 @@
         <section class="question-authoring-panel" id="question-authoring-panel" hidden>
           <div class="section-head question-authoring-head">
             <div><h2>题目录入</h2><p>手动录一道新题，或批量导入题目文本；两条路径都只产生待确认内容，不会自动发布</p></div>
+            <button class="primary-action" id="new-question" type="button">新建一道题目</button>
           </div>
-          <div class="question-authoring-grid">
-            <section class="question-authoring-card">
-              <div class="question-authoring-card-head">
-                <strong>录入平台题目</strong>
-                <span>逐题填写题干、选项与答案；保存后可继续补全知识指纹</span>
+          <section class="question-authoring-card">
+            <div class="question-authoring-card-head">
+              <strong>导入题目文本</strong>
+              <span>上传文件或粘贴文本，解析预览确认后写入平台题库</span>
+            </div>
+            <div class="provider-form-status" id="question-import-status" role="status" hidden></div>
+            <div class="question-form-grid import-defaults-grid">
+              <label class="field"><span>默认科目（必填）</span><select id="import-subject" required></select></label>
+              <label class="field"><span>默认书籍（可暂缺）</span><select id="import-book"></select></label>
+              <label class="field"><span>默认章节（可暂缺）</span><input id="import-chapter" placeholder="文本未标章节时使用" /></label>
+            </div>
+            <p class="question-classification-hint-row">默认科目必填；默认书籍留空＝这批题标记为「待归类」，导入后可在「完善题目」里按批次补充归属。文本里已写明章节的以文本为准；未指定教材时不能用默认章节。</p>
+            <div class="question-file-row">
+              <label class="question-file-button" for="question-text-file">选择文本文件</label>
+              <input id="question-text-file" type="file" accept=".txt,.md,.json,text/plain,application/json" />
+              <span id="question-file-name">未选择文件</span>
+              <button class="text-action" id="download-question-template" type="button">下载模板</button>
+            </div>
+            <div class="question-import-workspace">
+              <label class="field question-import-text-field"><span>题目文本</span><textarea id="question-import-text" rows="13" placeholder="可直接粘贴多道题目文本"></textarea></label>
+              <div class="question-import-preview" id="question-import-preview" hidden>
+                <div class="question-import-preview-head"><strong id="question-import-preview-title"></strong><button type="button" class="secondary-action question-import-preview-filter" id="question-import-preview-filter-suspect" aria-pressed="false" hidden>只看疑似重复</button><span>有错误的题目不会写入</span></div>
+                <div class="question-import-preview-list" id="question-import-preview-list"></div>
               </div>
-              <ol class="question-authoring-steps">
-                <li>选定科目、教材与题型，填写题干与参考答案</li>
-                <li>主观题补齐结构化得分点，按需建立正式知识指纹</li>
-                <li>保存后进入题库；待补项会出现在「完善题目」</li>
-              </ol>
-              <button class="primary-action" id="new-question" type="button">新建一道题目</button>
-            </section>
-            <section class="question-authoring-card">
-              <div class="question-authoring-card-head">
-                <strong>导入题目文本</strong>
-                <span>上传文件或粘贴文本，解析预览确认后写入平台题库</span>
-              </div>
-              <div class="provider-form-status" id="question-import-status" role="status" hidden></div>
-              <div class="question-form-grid import-defaults-grid">
-                <label class="field"><span>默认科目</span><select id="import-subject"></select></label>
-                <label class="field"><span>默认书籍</span><select id="import-book"></select></label>
-                <label class="field"><span>默认章节</span><input id="import-chapter" placeholder="文本未标章节时使用" /></label>
-              </div>
-              <div class="question-file-row">
-                <label class="question-file-button" for="question-text-file">选择文本文件</label>
-                <input id="question-text-file" type="file" accept=".txt,.md,.json,text/plain,application/json" />
-                <span id="question-file-name">未选择文件</span>
-                <button class="text-action" id="download-question-template" type="button">下载模板</button>
-              </div>
-              <div class="question-import-workspace">
-                <label class="field question-import-text-field"><span>题目文本</span><textarea id="question-import-text" rows="13" placeholder="可直接粘贴多道题目文本"></textarea></label>
-                <div class="question-import-preview" id="question-import-preview" hidden>
-                  <div class="question-import-preview-head"><strong id="question-import-preview-title"></strong><span>有错误的题目不会写入</span></div>
-                  <div class="question-import-preview-list" id="question-import-preview-list"></div>
-                </div>
-              </div>
-              <div class="form-actions question-authoring-actions">
-                <button class="secondary-action" id="preview-question-import" type="button">解析预览</button>
-                <button class="primary-action" id="commit-question-import" type="button" disabled>导入平台题库</button>
-              </div>
-            </section>
-          </div>
+            </div>
+            <div class="form-actions question-authoring-actions">
+              <button class="secondary-action" id="preview-question-import" type="button">解析预览</button>
+              <button class="primary-action" id="commit-question-import" type="button" disabled>导入平台题库</button>
+            </div>
+          </section>
         </section>
         <section class="question-enrichment-panel" id="question-enrichment-panel" hidden>
           <div class="question-enrichment-summary" id="question-enrichment-summary"></div>
           <section class="section question-enrichment-section">
             <div class="section-head question-enrichment-head">
-              <div><h2>题目完善中心</h2><p>AI 仅生成建议稿；确认后才创建题目新版本，不影响题目发布状态。<button class="adjudication-hint" data-open-adjudication type="button">这些建议也会出现在「裁决台」</button></p></div>
+              <div><h2>题目完善中心</h2><p>AI 仅生成建议稿；确认后才创建题目新版本，不影响题目发布状态真实微信支付将在下一阶段接入</p></div>
             <div class="question-enrichment-actions">
               <button class="secondary-action" id="refresh-question-enrichment" type="button">刷新</button>
-              <button class="secondary-action" id="apply-question-enrichment-batch" type="button">采纳高置信度建议</button>
-              <button class="primary-action" id="run-question-enrichment" type="button">AI 批量完善</button>
+              <button class="secondary-action" id="run-deterministic-rebuild" type="button" title="另选教材或导入批次，预览缺失的知识指纹和题族归属；人工确认后只补缺失，不覆盖已有内容">补指纹与题族（选范围）</button>
+              <button class="primary-action" id="run-question-enrichment" type="button" title="按当前筛选条件生成科目、教材、章节、知识点和得分点的 AI 建议，最多 50 道；不受勾选限制，人工采纳前不改题">AI 生成建议（筛选结果）</button>
             </div>
           </div>
           <div class="question-enrichment-feedback" id="question-enrichment-feedback" role="status" aria-live="polite" hidden></div>
           <div class="question-enrichment-job" id="question-enrichment-job" hidden></div>
             <div class="question-enrichment-toolbar">
               <input id="question-enrichment-search" type="search" placeholder="搜索题干、章节或题目 ID" />
-              <select id="question-enrichment-subject"><option value="all">全部科目</option></select>
-              <select id="question-enrichment-book"><option value="all">全部教材</option></select>
-              <select id="question-enrichment-batch"><option value="all">全部导入批次</option></select>
-              <select id="question-enrichment-type"><option value="all">全部题型</option></select>
-              <select id="question-enrichment-need"><option value="all">全部待完善项</option><option value="chapter">待归类章节</option><option value="knowledge_points">待补知识点</option><option value="scoring_points">待结构化得分点</option></select>
-              <select id="question-enrichment-status"><option value="all">全部建议状态</option><option value="none">尚未生成</option><option value="recommended">AI 已推荐</option><option value="applied">已采纳</option><option value="reverted">已撤回</option><option value="rejected">已拒绝</option><option value="failed">生成失败</option><option value="stale">建议已过期</option></select>
+              <!-- 2026-10-12：六个筛选控件统一成「勾选式下拉」（可多选，不勾＝全部），
+                   由 app.js 的 renderFilterSelect 渲染；原「归类状态」下拉已删除，
+                   「待归类（缺归属）」改为勾「待完善项 → 归属」组即等价命中。 -->
+              <div class="filter-select" id="question-enrichment-subject" data-label="全部科目"></div>
+              <div class="filter-select" id="question-enrichment-book" data-label="全部教材"></div>
+              <div class="filter-select" id="question-enrichment-batch" data-label="全部导入批次"></div>
+              <div class="filter-select" id="question-enrichment-type" data-label="全部题型"></div>
+              <div class="filter-select" id="question-enrichment-need" data-label="全部待完善项"></div>
+              <div class="filter-select" id="question-enrichment-status" data-label="全部建议状态"></div>
             </div>
             <div class="question-enrichment-selection" id="question-enrichment-selection" hidden>
               <strong id="question-enrichment-selected-count">已选 0 道</strong>
-              <span>批量生成最多处理 50 道，批量采纳仅处理置信度不低于 85% 的建议</span>
+              <span>以下操作仅处理已勾选题强度</span>
+              <button class="secondary-action" id="run-selected-question-enrichment" type="button" disabled title="仅为已勾选题目生成科目、教材、章节、知识点和得分点的 AI 建议，最多 50 道；人工采纳前不改题">AI 生成建议（勾选题）</button>
+              <button class="secondary-action" id="run-deterministic-selection" type="button" disabled title="仅预览已勾选题目缺失的知识指纹和题族归属；人工确认后只补缺失，不覆盖已有内容">补指纹与题族（勾选题）</button>
+              <button class="secondary-action" id="apply-question-enrichment-batch" type="button" disabled title="仅采纳勾选题中置信度不低于 85% 的建议，最多 100 道；建议换科目须逐题审核">采纳勾选题建议</button>
               <button class="secondary-action" id="clear-question-enrichment-selection" type="button">取消选择</button>
             </div>
             <div class="table-wrap">
               <table class="question-enrichment-table">
-                <thead><tr><th class="question-select-cell"><input id="question-enrichment-select-all" type="checkbox" aria-label="选择当前题目" /></th><th>题目与当前状态</th><th>AI 建议</th><th>置信度与证据</th><th>操作</th></tr></thead>
+                <thead><tr><th class="question-select-cell"><input id="question-enrichment-select-all" type="checkbox" aria-label="选择当前题目" /></th><th colspan="2" class="enrichment-info-heading">题目信息</th><th>建议依据</th><th>操作</th></tr></thead>
                 <tbody id="question-enrichment-table-body"></tbody>
               </table>
             </div>
             <div class="question-enrichment-pagination"><span id="question-enrichment-page-copy">第 1 页</span><div><button class="secondary-action" id="question-enrichment-prev" type="button">上一页</button><button class="secondary-action" id="question-enrichment-next" type="button">下一页</button></div></div>
           </section>
-        </section>
-        <section class="adjudication-panel" id="adjudication-panel" hidden>
-          <div class="adjudication-summary" id="adjudication-summary"></div>
-          <div class="section-head adjudication-head">
-            <div><h2>裁决台</h2><p>两条产线的待裁决建议汇总在这里。本页只做分流与追溯，采纳 / 驳回 / 就地修正仍在各自的裁决界面完成</p></div>
-            <button class="secondary-action" id="refresh-adjudication" type="button">刷新</button>
-          </div>
-          <div class="adjudication-feedback" id="adjudication-feedback" role="status" aria-live="polite" hidden></div>
-          <div class="adjudication-toolbar">
-            <input id="adjudication-search" type="search" placeholder="搜索题干、建议 ID 或题目 ID" />
-            <select id="adjudication-source"><option value="all">全部来源</option></select>
-            <select id="adjudication-status"><option value="all">全部状态</option><option value="recommended">待处理</option><option value="applied">已采纳</option><option value="rejected">已驳回</option></select>
-          </div>
-          <div class="table-wrap">
-            <table class="adjudication-table">
-              <thead><tr><th>来源</th><th>题目</th><th>涉及字段</th><th>状态 / 留痕</th><th>更新时间</th><th>操作</th></tr></thead>
-              <tbody id="adjudication-table-body"></tbody>
-            </table>
-          </div>
-          <div class="adjudication-pagination"><span id="adjudication-page-copy">第 1 页</span><div><button class="secondary-action" id="adjudication-prev" type="button">上一页</button><button class="secondary-action" id="adjudication-next" type="button">下一页</button></div></div>
         </section>
           </div>
         </section>
@@ -805,6 +815,27 @@
         </section>
       </section>
 
+      <section class="content platform-content-admin-view" id="platform-content-admin" hidden>
+        <div class="operation-summary platform-content-summary-grid" id="platform-content-summary"></div>
+        <section class="section content-admin-section">
+          <div class="section-head operation-list-head">
+            <div>
+              <h2>平台设置</h2>
+              <p>用户协议、隐私政策等 7 份文本的正文、版本号与生效日期。用户端只读「已发布」版本；没有已发布版本时用户端显示「尚未发布」，不会拿占位文本充数。</p>
+            </div>
+            <div class="operation-toolbar">
+              <button class="secondary-action" id="refresh-platform-content" type="button">刷新</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="content-admin-table platform-content-table">
+              <thead><tr><th>文档</th><th>用户端当前可见</th><th>版本数</th><th>草稿</th><th>最近更新</th><th>操作</th></tr></thead>
+              <tbody id="platform-content-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
       <section class="content moderation-view" id="moderation" hidden>
         <div class="operation-summary" id="moderation-summary"></div>
         <section class="section operation-list-section">
@@ -812,9 +843,9 @@
             <div><h2>审核队列</h2><p>系统信心不足时不公开；每次处置自动写入操作日志</p></div>
             <div class="operation-toolbar">
               <input id="moderation-search" type="search" placeholder="搜索内容、原因或用户" />
-              <select id="moderation-status-filter"><option value="all">全部状态</option><option value="pending">待处理</option><option value="processing">处理中</option><option value="resolved">已处理</option><option value="rejected">不成立</option></select>
+              <select id="moderation-status-filter"><option value="all">全部状态</option><option value="pending">待处理</option><option value="processing">处理中</option><option value="awaiting_reply">待用户补充</option><option value="user_replied">用户已补充</option><option value="resolved">已处理</option><option value="rejected">不成立</option></select>
               <select id="moderation-risk-filter"><option value="all">全部风险</option><option value="high">高风险</option><option value="medium">中风险</option><option value="low">低风险</option></select>
-              <select id="moderation-type-filter"><option value="all">全部类型</option><option value="product_feedback">产品反馈</option><option value="question_error">题目纠错</option><option value="unsafe_content">内容安全</option><option value="spam">广告刷屏</option><option value="abuse">违规言论</option><option value="other">其他</option></select>
+              <select id="moderation-type-filter"><option value="all">全部类型</option><option value="product_feedback">产品反馈</option><option value="question_feedback">题目反馈</option><option value="question_error">题目纠错</option><option value="unsafe_content">内容安全</option><option value="spam">广告刷屏</option><option value="abuse">违规言论</option><option value="other">其他</option></select>
               <button class="secondary-action" id="refresh-moderation" type="button">刷新</button>
             </div>
           </div>
@@ -829,28 +860,58 @@
 
       <section class="content billing-view" id="billing-admin" hidden>
         <div class="operation-summary" id="billing-summary"></div>
-        <section class="section billing-product-section">
+        <section class="billing-view-head" aria-label="订阅与豆币操作">
+          <div>
+            <h2>订阅与豆币</h2>
+            <p>套餐订单（钱）与赠送豆币分账；真实微信支付将在下一阶段接入</p>
+          </div>
+          <div class="operation-toolbar">
+            <button class="secondary-action" id="billing-new-bean-product" type="button">新增豆币充值</button>
+            <button class="primary-action" id="billing-new-product" type="button">新增套餐组</button>
+          </div>
+        </section>
+        <nav class="billing-tabs" id="billing-tabs" role="tablist" aria-label="订阅与豆币模块">
+          <button class="is-active" id="billing-tab-products" type="button" role="tab" aria-selected="true" aria-controls="billing-panel-products" data-billing-tab="products">商品管理</button>
+          <button id="billing-tab-account" type="button" role="tab" aria-selected="false" aria-controls="billing-panel-account" data-billing-tab="account" tabindex="-1">用户权益</button>
+          <button id="billing-tab-ledger" type="button" role="tab" aria-selected="false" aria-controls="billing-panel-ledger" data-billing-tab="ledger" tabindex="-1">豆币流水</button>
+          <button id="billing-tab-orders" type="button" role="tab" aria-selected="false" aria-controls="billing-panel-orders" data-billing-tab="orders" tabindex="-1">订单管理</button>
+        </nav>
+        <section class="section billing-panel billing-product-section" id="billing-panel-products" role="tabpanel" aria-labelledby="billing-tab-products" data-billing-panel="products">
           <div class="section-head operation-list-head">
-            <div><h2>订阅与额度商品</h2><p>订阅权益与 AI 额度独立结算；真实微信支付将在下一阶段接入</p></div>
+            <div><h2>商品管理</h2><p>订阅商品按套餐组管理；每个期限是一条独立规格，豆币充值独立管理</p></div>
+          </div>
+          <div class="table-wrap"><table class="billing-product-table"><thead><tr><th>套餐组 / 规格</th><th>类型 / 范围</th><th>价格</th><th>订阅权益</th><th>豆币</th><th>状态</th><th>操作</th></tr></thead><tbody id="billing-product-table-body"></tbody></table></div>
+        </section>
+        <section class="section billing-panel billing-account-section" id="billing-panel-account" role="tabpanel" aria-labelledby="billing-tab-account" data-billing-panel="account" hidden>
+          <div class="section-head">
+            <div><h2>用户权益</h2><p>按用户查看会员、题库权益与豆币余额</p></div>
             <div class="operation-toolbar">
-              <button class="secondary-action" id="billing-grant-product" type="button">模拟开通</button>
-              <button class="secondary-action" id="billing-grant-credits" type="button">发放额度</button>
-              <button class="primary-action" id="billing-new-product" type="button">新增商品</button>
+              <input id="billing-users-search" type="search" placeholder="搜索数字 ID 或昵称" aria-label="搜索用户" />
+              <button class="secondary-action" id="billing-users-search-button" type="button">搜索</button>
+              <button class="secondary-action" id="billing-users-refresh" type="button">刷新</button>
+              <button class="secondary-action" id="billing-open-user" type="button">按 ID 查看</button>
             </div>
           </div>
-          <div class="table-wrap"><table class="billing-product-table"><thead><tr><th>商品</th><th>类型 / 范围</th><th>价格</th><th>订阅权益</th><th>AI 额度</th><th>状态</th><th>操作</th></tr></thead><tbody id="billing-product-table-body"></tbody></table></div>
+          <div class="table-wrap"><table class="billing-users-table"><thead><tr><th>用户 ID</th><th>昵称</th><th>会员权益</th><th>题库权益</th><th>豆币</th><th>订单</th><th>操作</th></tr></thead><tbody id="billing-users-body"></tbody></table></div>
+          <div class="billing-pagination"><span id="billing-users-page-label"></span><button class="secondary-action" id="billing-users-prev" type="button">上一页</button><button class="secondary-action" id="billing-users-next" type="button">下一页</button></div>
         </section>
-        <div class="billing-account-grid">
-          <section class="section billing-account-section">
-            <div class="section-head"><div><h2>测试账号权益</h2><p id="billing-account-copy">test-user · 薯考同学</p></div></div>
-            <div class="billing-entitlements" id="billing-entitlements"></div>
-            <div class="table-wrap"><table class="billing-lot-table"><thead><tr><th>额度来源</th><th>剩余 / 发放</th><th>有效期</th></tr></thead><tbody id="billing-lot-table-body"></tbody></table></div>
-          </section>
-          <section class="section billing-ledger-section">
-            <div class="section-head"><div><h2>AI 额度流水</h2><p>按到期时间优先扣减，失败调用不产生消费记录</p></div><button class="secondary-action" id="billing-refresh" type="button">刷新</button></div>
-            <div class="table-wrap"><table class="billing-ledger-table"><thead><tr><th>时间</th><th>类型 / 说明</th><th>变动</th><th>余额</th></tr></thead><tbody id="billing-ledger-table-body"></tbody></table></div>
-          </section>
-        </div>
+        <section class="section billing-panel billing-ledger-section" id="billing-panel-ledger" role="tabpanel" aria-labelledby="billing-tab-ledger" data-billing-panel="ledger" hidden>
+          <div class="section-head"><div><h2>豆币流水</h2><p>按到期时间优先扣减，失败调用不产生消费记录</p></div><button class="secondary-action" id="billing-refresh" type="button">刷新</button></div>
+          <div class="table-wrap"><table class="billing-ledger-table"><thead><tr><th>时间</th><th>类型 / 说明</th><th>变动</th><th>余额</th></tr></thead><tbody id="billing-ledger-table-body"></tbody></table></div>
+        </section>
+        <section class="section billing-panel billing-order-section" id="billing-panel-orders" role="tabpanel" aria-labelledby="billing-tab-orders" data-billing-panel="orders" hidden>
+          <div class="section-head">
+            <div><h2>订单管理</h2><p>测试订单与真实支付分开标识；退款按订单收回对应权益及未使用赠币</p></div>
+            <div class="operation-toolbar">
+              <input id="billing-orders-search" type="search" placeholder="订单号、数字用户 ID 或商品  aria-label="搜索订单" />
+              <select id="billing-orders-status" aria-label="订单状态"><option value="">全部状态</option><option value="paid">已支付</option><option value="refunded">已退款</option></select>
+              <button class="secondary-action" id="billing-orders-search-button" type="button">搜索</button>
+              <button class="secondary-action" id="billing-refresh-orders" type="button">刷新</button>
+            </div>
+          </div>
+          <div class="table-wrap"><table class="billing-order-table"><thead><tr><th>时间</th><th>用户 ID</th><th>订单 / 商品</th><th>金额</th><th>赠币（剩余 / 发放）</th><th>订阅权益</th><th>状态 / 操作</th></tr></thead><tbody id="billing-order-table-body"></tbody></table></div>
+          <div class="billing-pagination"><span id="billing-orders-page-label"></span><button class="secondary-action" id="billing-orders-prev" type="button">上一页</button><button class="secondary-action" id="billing-orders-next" type="button">下一页</button></div>
+        </section>
       </section>
 
       <section class="content operation-log-view" id="operation-logs" hidden>
@@ -860,7 +921,7 @@
             <div><h2>管理员操作记录</h2><p>记录内容、审核与模型配置变更，不保存密钥和用户答案正文</p></div>
             <div class="operation-toolbar">
               <input id="operation-search" type="search" placeholder="搜索动作、对象或编号" />
-              <select id="operation-category-filter"><option value="all">全部模块</option><option value="question">题库</option><option value="moderation">审核</option><option value="ai_config">AI 配置</option><option value="catalog">教材目录</option><option value="exam">模拟考试</option><option value="pack">题包</option><option value="announcement">公告</option><option value="billing">订阅额度</option></select>
+              <select id="operation-category-filter"><option value="all">全部模块</option><option value="question">题库</option><option value="moderation">审核</option><option value="ai_config">AI 配置</option><option value="catalog">教材目录</option><option value="exam">模拟考试</option><option value="pack">题包</option><option value="announcement">公告</option><option value="billing">订阅豆币</option></select>
               <select id="operation-actor-filter"><option value="all">全部操作人</option></select>
               <button class="secondary-action" id="refresh-operation-logs" type="button">刷新</button>
             </div>
@@ -934,11 +995,14 @@
         <div class="placeholder-band">
           <span>模块骨架已预留</span>
           <h2 id="placeholder-title"></h2>
-          <p>后续开发将在此接入真实数据库、权限校验和具体操作流程。</p>
+          <p id="placeholder-copy">后续开发将在此接入真实数据库、权限校验和具体操作流程。</p>
           <button class="primary-action" id="back-dashboard">返回工作台</button>
         </div>
       </section>
     </main>
+    <footer class="site-filing">
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026146542号</a>
+    </footer>
 
     <dialog class="config-dialog blind-gold-freeze-preview-dialog" id="blind-gold-freeze-preview-dialog" aria-labelledby="blind-gold-freeze-preview-title">
       <div class="provider-dialog-head">
@@ -1033,6 +1097,81 @@
       </div>
     </dialog>
 
+    <dialog class="provider-dialog provider-batch-dialog" id="provider-batch-dialog" aria-labelledby="provider-batch-title">
+      <div class="provider-dialog-head">
+        <div><h2 id="provider-batch-title">批量测试接口</h2><p>导入清单文档，逐条测试，只保留测试通过的</p></div>
+        <button class="dialog-close" id="close-provider-batch-dialog" type="button" aria-label="关闭批量测试" title="关闭">×</button>
+      </div>
+      <div class="provider-form-status" id="provider-batch-status" role="status" hidden></div>
+      <div class="provider-batch-body">
+        <section class="provider-batch-column">
+          <h3>1. 导入接口清单</h3>
+          <p class="provider-batch-hint">支持 <code>.txt</code> / <code>.md</code> / <code>.csv</code> / <code>.tsv</code>；每行一条：<code>BaseURL,APIKey[,模型ID]</code>，也可以是 <code>名称,BaseURL,APIKey</code>，或只写密钥并在下面填统一 Base URL。以 <code>#</code> 开头的行会被忽略。</p>
+          <label class="field">
+            <span>选择文档</span>
+            <input id="provider-batch-file" type="file" accept=".txt,.md,.csv,.tsv,text/plain,text/csv" />
+          </label>
+          <div class="provider-batch-hint" id="provider-batch-file-name">未选择文件</div>
+          <label class="field">
+            <span>接口清单内容（可直接粘贴）</span>
+            <textarea id="provider-batch-text" rows="7" placeholder="https://api.example.com/v1,sk-你的密钥&#10;# 只写密钥时，请在下面填统一 Base URL"></textarea>
+          </label>
+          <div class="form-row">
+            <label class="field">
+              <span>统一 Base URL</span>
+              <input id="provider-batch-base-url" type="url" autocomplete="off" placeholder="只写密钥时必填，例如 https://api.example.com/v1" />
+            </label>
+            <label class="field">
+              <span>统一协议</span>
+              <select id="provider-batch-protocol">
+                <option value="openai_chat_completions">OpenAI Chat Completions</option>
+                <option value="openai_responses">OpenAI Responses</option>
+                <option value="anthropic_messages">Anthropic Messages</option>
+                <option value="google_gemini">Google Gemini</option>
+                <option value="typesafe_systemone">Typesafe System One（结构化判定，不生成文本）</option>
+              </select>
+            </label>
+          </div>
+          <p class="provider-batch-hint">选了 System One（Typesafe / Jev）时，只做结构化判定的连通性测试；这类上游不能绑定到 AI 场景路由。</p>
+          <div class="form-row">
+            <label class="field">
+              <span>统一模型（可选）</span>
+              <input id="provider-batch-model" autocomplete="off" placeholder="留空则读取上游模型列表" />
+            </label>
+            <label class="field">
+              <span>单条超时</span>
+              <div class="input-suffix"><input id="provider-batch-timeout" type="number" min="3000" max="120000" step="1000" value="20000" /><em>ms</em></div>
+            </label>
+          </div>
+          <div class="form-row">
+            <label class="field">
+              <span>并发条数</span>
+              <input id="provider-batch-concurrency" type="number" min="1" max="5" step="1" value="3" />
+            </label>
+            <div class="toggle-field provider-batch-toggle">
+              <label><input id="provider-batch-save-passed" type="checkbox" checked /> 测试通过的写入供应商列表</label>
+            </div>
+          </div>
+        </section>
+        <section class="provider-batch-column">
+          <h3>2. 解析预览与测试结果</h3>
+          <div class="provider-batch-summary" id="provider-batch-summary">尚未解析。点「解析预览」先看这次会测哪些接口。</div>
+          <div class="provider-batch-progress" id="provider-batch-progress" hidden>
+            <progress id="provider-batch-bar" max="100" value="0"></progress>
+            <span id="provider-batch-progress-text">准备中</span>
+          </div>
+          <div class="provider-batch-list" id="provider-batch-preview" hidden></div>
+          <div class="provider-batch-list" id="provider-batch-results" hidden></div>
+        </section>
+      </div>
+      <div class="form-actions provider-dialog-actions">
+        <button class="secondary-action" id="cancel-provider-batch" type="button" hidden>取消测试</button>
+        <button class="secondary-action" id="close-provider-batch" type="button">关闭</button>
+        <button class="secondary-action" id="preview-provider-batch" type="button">解析预览</button>
+        <button class="primary-action" id="start-provider-batch" type="button">开始批量测试</button>
+      </div>
+    </dialog>
+
     <dialog class="provider-dialog" id="provider-dialog" aria-labelledby="provider-editor-title">
       <div class="provider-dialog-head">
         <div><h2 id="provider-editor-title">新增供应商</h2><p>密钥仅保存在本地服务端</p></div>
@@ -1052,7 +1191,9 @@
             <option value="openai_responses">OpenAI Responses</option>
             <option value="anthropic_messages">Anthropic Messages</option>
             <option value="google_gemini">Google Gemini</option>
+            <option value="typesafe_systemone">Typesafe System One（结构化判定，不生成文本）</option>
           </select>
+          <small>Typesafe / Jev 只有 <code>/v1/models</code> 与 <code>/v1/systemone</code>：可以测连通性，但不能绑定到 AI 场景路由。</small>
         </label>
         <label class="field">
           <span>API Base URL</span>
@@ -1084,50 +1225,82 @@
     </dialog>
 
     <dialog class="config-dialog billing-product-dialog" id="billing-product-dialog" aria-labelledby="billing-product-title">
-      <div class="provider-dialog-head"><div><h2 id="billing-product-title">新增商品</h2><p>价格当前仅用于展示和模拟开通</p></div><button class="dialog-close" id="close-billing-product" type="button" aria-label="关闭商品编辑" title="关闭">×</button></div>
+      <div class="provider-dialog-head"><div><h2 id="billing-product-title">新增套餐组</h2><p id="billing-product-description">套餐组确定课程范围，规格确定期限、价格和赠币</p></div><button class="dialog-close" id="close-billing-product" type="button" aria-label="关闭商品编辑" title="关闭">×</button></div>
       <div class="provider-form-status" id="billing-product-status" role="status" hidden></div>
       <form class="config-form" id="billing-product-form">
         <input type="hidden" id="billing-product-id" />
-        <div class="form-row">
-          <label class="field"><span>商品名称</span><input id="billing-product-name" required /></label>
-          <label class="field"><span>商品类型</span><select id="billing-product-type"><option value="project_subscription">项目年度套餐</option><option value="subject_subscription">单科年度订阅</option><option value="ai_credit_pack">AI 额度充值</option></select></label>
+        <div id="billing-product-group-fields">
+          <div class="form-row">
+            <label class="field"><span>套餐组名称</span><input id="billing-product-package-name" required /></label>
+            <label class="field"><span>商品类型</span><select id="billing-product-type"><option value="project_subscription">项目套餐</option><option value="subject_subscription">单科订阅</option><option value="bean_pack">豆币充值</option></select></label>
+          </div>
+          <div id="billing-product-subscription-fields">
+            <label class="field"><span>套餐组标识</span><input id="billing-product-package-key" placeholder="同组规格共用；留空自动生成" /><small>创建后不可修改，历史订单按此标识归并权益</small></label>
+            <label class="field"><span>考试项目</span><select id="billing-product-project"><option value="">请选择考试项目</option></select></label>
+            <label class="field"><span>范围说明</span><input id="billing-product-scope" placeholder="例如：现代汉语 · 上下册" /></label>
+            <div class="form-row">
+              <fieldset class="field billing-scope-field" id="billing-product-subjects"><legend>科目（可多选）</legend><div class="billing-scope-options" role="group" aria-label="选择科目"></div></fieldset>
+              <fieldset class="field billing-scope-field" id="billing-product-books"><legend>教材（可多选）</legend><div class="billing-scope-options" role="group" aria-label="选择教材"></div></fieldset>
+            </div>
+          </div>
         </div>
-        <label class="field"><span>范围说明</span><input id="billing-product-scope" placeholder="例如：现代汉语 · 上下册" /></label>
-        <div class="form-row">
-          <label class="field"><span>价格（元）</span><input id="billing-product-price" type="number" min="0" step="0.01" required /></label>
-          <label class="field"><span>订阅天数</span><input id="billing-product-duration" type="number" min="1" max="1095" value="365" /></label>
+        <div id="billing-product-variant-fields">
+          <label class="field"><span>规格名称</span><input id="billing-product-name" required placeholder="例如："0 天权益" /></label>
+          <div class="form-row">
+            <label class="field"><span>价格（元）</span><input id="billing-product-price" type="number" min="0" step="0.01" required /></label>
+            <label class="field"><span>订阅天数</span><input id="billing-product-duration" type="number" min="0" max="1095" list="billing-duration-presets" value="365" /><datalist id="billing-duration-presets"><option value="30"></option><option value="180"></option><option value="365"></option><option value="0"></option></datalist><small>30 / 180 / 365；填写 0 表示永久。同组期限不可重复</small></label>
+          </div>
+          <div class="form-row">
+            <label class="field"><span>订阅赠送豆币</span><input id="billing-product-bonus" type="number" min="0" step="0.1" value="0" /></label>
+            <label class="field"><span>赠送豆币有效期（天）</span><input id="billing-product-bonus-validity" type="number" min="0" value="365" /><small>填写 0 表示长期有效</small></label>
+          </div>
+          <label class="field"><span>充值豆币数量</span><input id="billing-product-credit-amount" type="number" min="0" step="0.1" value="0" /></label>
+          <label class="toggle-field"><input id="billing-product-active" type="checkbox" checked /> 保存后立即上架</label>
         </div>
-        <div class="form-row">
-          <label class="field"><span>订阅赠送额度</span><input id="billing-product-bonus" type="number" min="0" value="0" /></label>
-          <label class="field"><span>赠送额度有效期（天）</span><input id="billing-product-bonus-validity" type="number" min="0" value="365" /></label>
-        </div>
-        <label class="field"><span>充值额度数量</span><input id="billing-product-credit-amount" type="number" min="0" value="0" /></label>
-        <div class="form-row">
-          <label class="field"><span>科目 ID</span><input id="billing-product-subjects" placeholder="多个用逗号分隔" /></label>
-          <label class="field"><span>教材 ID</span><input id="billing-product-books" placeholder="多个用逗号分隔" /></label>
-        </div>
-        <label class="toggle-field"><input id="billing-product-active" type="checkbox" checked /> 保存后立即上架</label>
       </form>
       <div class="form-actions"><button class="secondary-action" id="cancel-billing-product" type="button">取消</button><button class="primary-action" id="save-billing-product" type="submit" form="billing-product-form">保存商品</button></div>
     </dialog>
 
+    <dialog class="config-dialog billing-account-dialog" id="billing-account-dialog" aria-labelledby="billing-account-title">
+      <div class="provider-dialog-head billing-account-head">
+        <div><h2 id="billing-account-title">用户详情</h2><p id="billing-account-copy">选择用户查看详情</p></div>
+        <div class="billing-account-toolbar">
+          <label class="billing-user-field"><span>用户 ID</span><input id="billing-user-id" value="test-user" placeholder="输入数字用户 ID" /></label>
+          <button class="secondary-action" id="billing-load-user" type="button">读取账号</button>
+          <button class="secondary-action" id="billing-refresh-account" type="button">刷新</button>
+        </div>
+        <button class="dialog-close" id="close-billing-account" type="button" aria-label="关闭用户详情" title="关闭">×</button>
+      </div>
+      <div class="billing-account-content">
+        <div class="provider-form-status" id="billing-account-status" role="status" hidden></div>
+        <div class="billing-entitlements" id="billing-entitlements"></div>
+        <div class="table-wrap"><table class="billing-lot-table"><thead><tr><th>豆币来源</th><th>剩余 / 发放</th><th>有效期</th></tr></thead><tbody id="billing-lot-table-body"></tbody></table></div>
+      </div>
+      <div class="form-actions">
+        <button class="secondary-action" id="billing-grant-product" type="button" disabled>模拟开通</button>
+        <button class="secondary-action" id="billing-grant-credits" type="button" disabled>发放豆币</button>
+        <button class="secondary-action" id="cancel-billing-account" type="button">关闭</button>
+      </div>
+    </dialog>
+
     <dialog class="config-dialog billing-grant-dialog" id="billing-grant-product-dialog" aria-labelledby="billing-grant-product-title">
-      <div class="provider-dialog-head"><div><h2 id="billing-grant-product-title">模拟开通商品</h2><p>用于支付接入前验证续费与赠送额度</p></div><button class="dialog-close" id="close-billing-grant-product" type="button" aria-label="关闭模拟开通" title="关闭">×</button></div>
+      <div class="provider-dialog-head"><div><h2 id="billing-grant-product-title">模拟开通商品</h2><p>用于支付接入前验证续费与赠送豆币</p></div><button class="dialog-close" id="close-billing-grant-product" type="button" aria-label="关闭模拟开通" title="关闭">×</button></div>
       <div class="provider-form-status" id="billing-grant-product-status" role="status" hidden></div>
       <form class="config-form" id="billing-grant-product-form">
-        <label class="field"><span>测试用户</span><input value="test-user · 薯考同学" disabled /></label>
+        <label class="field"><span>操作用户</span><input id="billing-grant-product-user" value="test-user" disabled /></label>
         <label class="field"><span>选择商品</span><select id="billing-grant-product-select"></select></label>
       </form>
       <div class="form-actions"><button class="secondary-action" id="cancel-billing-grant-product" type="button">取消</button><button class="primary-action" type="submit" form="billing-grant-product-form">确认模拟开通</button></div>
     </dialog>
 
     <dialog class="config-dialog billing-grant-dialog" id="billing-grant-credits-dialog" aria-labelledby="billing-grant-credits-title">
-      <div class="provider-dialog-head"><div><h2 id="billing-grant-credits-title">发放 AI 额度</h2><p>任务奖励可设置有效期，充值补单选择长期有效</p></div><button class="dialog-close" id="close-billing-grant-credits" type="button" aria-label="关闭额度发放" title="关闭">×</button></div>
+      <div class="provider-dialog-head"><div><h2 id="billing-grant-credits-title">发放豆币</h2><p>任务奖励与官方活动赠送可设置有效期，充值补单选择长期有效</p></div><button class="dialog-close" id="close-billing-grant-credits" type="button" aria-label="关闭豆币发放" title="关闭">×</button></div>
       <div class="provider-form-status" id="billing-grant-credits-status" role="status" hidden></div>
       <form class="config-form" id="billing-grant-credits-form">
-        <div class="form-row"><label class="field"><span>额度数量</span><input id="billing-grant-amount" type="number" min="1" value="10" required /></label><label class="field"><span>来源</span><select id="billing-grant-source"><option value="admin_adjustment">管理员调整</option><option value="task_reward">任务奖励</option><option value="contribution_reward">贡献奖励</option><option value="paid_recharge">充值补单</option></select></label></div>
+        <label class="field"><span>操作用户</span><input id="billing-grant-credits-user" value="test-user" disabled /></label>
+        <div class="form-row"><label class="field"><span>豆币数量</span><input id="billing-grant-amount" type="number" min="0.1" step="0.1" value="1" required /></label><label class="field"><span>来源</span><select id="billing-grant-source"><option value="admin_adjustment">管理员调整</option><option value="activity_reward">官方活动赠送</option><option value="task_reward">任务奖励</option><option value="contribution_reward">贡献奖励</option><option value="paid_recharge">充值补单</option></select></label></div>
         <label class="field"><span>有效期（天）</span><input id="billing-grant-validity" type="number" min="0" value="30" /><small>填写 0 表示长期有效</small></label>
-        <label class="field"><span>发放说明</span><input id="billing-grant-description" value="内部测试额度" required /></label>
+        <label class="field"><span>发放说明</span><input id="billing-grant-description" value="内部测试豆币" required /></label>
       </form>
       <div class="form-actions"><button class="secondary-action" id="cancel-billing-grant-credits" type="button">取消</button><button class="primary-action" type="submit" form="billing-grant-credits-form">确认发放</button></div>
     </dialog>
@@ -1440,11 +1613,22 @@
 
     <dialog class="knowledge-inspection-dialog" id="knowledge-inspection-dialog" aria-labelledby="knowledge-inspection-dialog-title">
       <div class="provider-dialog-head">
-        <div><h2 id="knowledge-inspection-dialog-title">审核 AI 巡检建议</h2><p id="knowledge-inspection-dialog-copy">AI 只提供建议，采纳前请核对教材证据与知识路径</p></div>
-        <button class="dialog-close" id="close-knowledge-inspection-dialog" type="button" aria-label="关闭巡检审核" title="关闭">×</button>
+        <div><h2 id="knowledge-inspection-dialog-title">查看 AI 巡检结论</h2><p id="knowledge-inspection-dialog-copy">AI 巡检只诊断、不改库：本页是只读体检清单，改库请用「送去完善题目核对教材证据与知识路径</p></div>
+        <button class="dialog-close" id="close-knowledge-inspection-dialog" type="button" aria-label="关闭巡检详情" title="关闭">×</button>
       </div>
       <div class="provider-form-status" id="knowledge-inspection-dialog-status" role="status" hidden></div>
       <div class="knowledge-inspection-dialog-body">
+        <section class="knowledge-inspection-review-record" id="knowledge-inspection-review-record" aria-labelledby="knowledge-inspection-review-record-title">
+          <div class="knowledge-inspection-review-record-head">
+            <h3 id="knowledge-inspection-review-record-title">巡检记录状态</h3>
+            <span class="knowledge-inspection-review-state" id="knowledge-inspection-review-state">待复核</span>
+          </div>
+          <p class="knowledge-inspection-review-state-scale">记录状态只有四态：待复核／已复核（人工确认过结论）／已修复（问题已被改库处理）／已忽略（确认无需处理，不是“通过”）。「正在巡检」是过程、「高风险」是风险展示，两者都不是记录状态；「归为通过」是结论，不改变记录状态。</p>
+          <p class="knowledge-inspection-review-record-note" id="knowledge-inspection-review-record-note"></p>
+          <p class="knowledge-inspection-review-audit" id="knowledge-inspection-review-audit" hidden></p>
+          <p class="knowledge-inspection-review-invalidated" id="knowledge-inspection-review-invalidated" hidden></p>
+          <p class="knowledge-inspection-review-readonly-copy">本弹窗为只读：知识依据与题族归属只展示 AI 结论与证据，不能在这里勾选、编辑或提交（依据 DEC-100／产品手册 §4.6.12）。</p>
+        </section>
         <div class="knowledge-inspection-question" id="knowledge-inspection-question"></div>
         <section class="knowledge-inspection-agent-section">
           <div class="knowledge-inspection-section-head"><span class="knowledge-inspection-agent-number">1</span><div><h3>Agent 1 · 题目特征</h3><p>题干核心、选项知识点、主次关系与解题依赖</p></div></div>
@@ -1486,40 +1670,32 @@
           <h3>分歧与不确定项</h3>
           <div id="knowledge-inspection-disagreements"></div>
         </section>
-        <section class="knowledge-inspection-choice-section">
-          <div><h3>1. 确认知识依据</h3><p>确认题目知识焦点与作答的最小充分知识集；前置背景知识不要勾选</p></div>
-          <div class="blind-gold-core-knowledge-role" id="knowledge-inspection-primary-node-role" role="radiogroup" aria-label="题目知识焦点角色"></div>
-          <div class="knowledge-inspection-choices" id="knowledge-inspection-choices"></div>
-          <div class="knowledge-inspection-family-choice-head"><h3>2. 确认题族归属</h3><p>主题族固定为作答必需；每个关联族需明确用途，并标注它在本题中实际承担的知识</p></div>
-          <div class="knowledge-inspection-family-choices" id="knowledge-inspection-family-choices"></div>
-          <div class="blind-gold-family-coverage-summary knowledge-inspection-family-coverage-summary" id="knowledge-inspection-family-coverage-summary" aria-live="polite"><strong>联合覆盖 0/0</strong><span class="is-reference">普通关联不计入联合覆盖</span></div>
-          <div class="knowledge-inspection-family-draft" id="knowledge-inspection-family-draft" hidden>
-            <label class="knowledge-inspection-family-draft-decision"><input id="knowledge-inspection-create-candidate-family" type="checkbox" /><span><strong>人工确认创建并归入</strong><small>确认后才正式建立题族；新题族将作为本题主题族，已选现有题族仅作为关联题族</small></span></label>
-            <div class="knowledge-inspection-family-draft-form" id="knowledge-inspection-family-draft-form">
-              <label class="wide"><span>候选题族名称</span><input id="knowledge-inspection-family-draft-name" maxlength="200" /></label>
-              <label class="wide"><span>题族判别焦点</span><input id="knowledge-inspection-family-draft-focus-key" maxlength="240" placeholder="描述该题族稳定区分的对象" /><small>独立字段，不能用名称或考查动作代替</small></label>
-              <label><span>后台目录锚点</span><select id="knowledge-inspection-family-draft-core"></select><small>用于组织和检索，不会自动写入题目知识</small></label>
-              <label><span>题族覆盖知识</span><select id="knowledge-inspection-family-draft-required" multiple size="4"></select><small>这个题族稳定判别任务能够覆盖的知识</small></label>
-              <div class="wide knowledge-inspection-candidate-contribution" id="knowledge-inspection-candidate-contribution"></div>
-              <label class="wide"><span>教材位置（教材锚点）</span><select id="knowledge-inspection-family-draft-anchors" multiple size="5"></select></label>
-              <label class="wide"><span>考查动作</span><input id="knowledge-inspection-family-draft-action" maxlength="240" /></label>
-              <label><span>纳入边界</span><textarea id="knowledge-inspection-family-draft-inclusion" maxlength="2000"></textarea></label>
-              <label><span>排除边界</span><textarea id="knowledge-inspection-family-draft-exclusion" maxlength="2000"></textarea></label>
-              <fieldset class="wide knowledge-inspection-family-draft-evidence"><legend>教材证据</legend><div id="knowledge-inspection-family-draft-evidence-chunks"></div><label><span>证据摘要</span><textarea id="knowledge-inspection-family-draft-evidence-summary" maxlength="1600"></textarea></label></fieldset>
-              <label class="wide"><span>新建理由</span><textarea id="knowledge-inspection-family-draft-reason" maxlength="1600"></textarea></label>
-            </div>
-          </div>
-          <label class="knowledge-inspection-family-deferred"><input id="knowledge-inspection-family-deferred" type="checkbox" /><span><strong>暂无准确题族，进入待归组</strong><small>只保存知识判断，不依据自由命名的考查焦点自动新建题族</small></span></label>
-          <label class="knowledge-inspection-adjustment-reason" id="knowledge-inspection-adjustment-reason" hidden><span>调整依据</span><textarea id="knowledge-inspection-adjustment-reason-input" maxlength="2000" placeholder="说明为什么不采用 Agent 3 的原建议；这句话会作为高权重修正案例保存"></textarea></label>
+        <section class="knowledge-inspection-rule-findings" id="knowledge-inspection-rule-findings-section" data-inspection-readonly="true" aria-readonly="true" hidden>
+          <h3>体检项（确定性规则）</h3>
+          <p class="knowledge-inspection-rule-findings-copy">确定性规则项由服务端逐题算出（免费、可全量、可重复跑），与上方 Agent 的 AI 结论<b>分开列出</b>：每条都标来源——「规则」＝确定性规则，「AI」＝归类产线结论。通过项也会留档（显示「已留档 · 无问题」），不只在有问题时才显示。本清单只读，改库请用「送去完善题目」。</p>
+          <div class="knowledge-inspection-rule-findings-list" id="knowledge-inspection-rule-findings"></div>
+        </section>
+        <section class="knowledge-inspection-choice-section" id="knowledge-inspection-readonly-section" data-inspection-readonly="true" aria-readonly="true">
+          <div><h3>1. 知识依据（只读展示）</h3><p>题目知识焦点与作答的最小充分知识集只作展示，不能勾选或提交；知识归属（教材／章节／知识点／知识焦点／最小充分知识集）的修改在「完善题目」里完成</p></div>
+          <div class="knowledge-inspection-primary-node-role" id="knowledge-inspection-primary-node-role" data-inspection-readonly="true" aria-label="题目知识焦点角色（只读展示）"></div>
+          <div class="knowledge-inspection-choices" id="knowledge-inspection-choices" data-inspection-readonly="true"></div>
+          <div class="knowledge-inspection-family-choice-head"><h3>2. 题族归属（只读展示）</h3><p>主题族与关联题族只是核验结论，不在巡检里勾选；题族归属（主题族／关联族／新建候选题族）的修改在「完善题目」里完成</p></div>
+          <div class="knowledge-inspection-family-choices" id="knowledge-inspection-family-choices" data-inspection-readonly="true"></div>
+          <div class="blind-gold-family-coverage-summary knowledge-inspection-family-coverage-summary" id="knowledge-inspection-family-coverage-summary" aria-live="polite" data-inspection-readonly="true"><strong>联合覆盖 0/0</strong><span class="is-reference">普通关联不计入联合覆盖</span></div>
+          <div class="knowledge-inspection-family-draft" id="knowledge-inspection-family-draft" data-inspection-readonly="true" hidden></div>
+          <p class="knowledge-inspection-family-deferred" id="knowledge-inspection-family-deferred" data-inspection-readonly="true" hidden><strong>暂无准确题族，进入待归组</strong><small>只保存知识判断，不依据自由命名的考查焦点自动新建题族；题族归属（含新建候选题族）只在「完善题目」里确认。</small></p>
         </section>
       </div>
       <div class="form-actions provider-dialog-actions knowledge-inspection-dialog-actions">
-        <button class="question-delete-action" id="reject-knowledge-inspection" type="button">拒绝建议</button>
         <button class="secondary-action" id="rerun-knowledge-inspection" type="button">重新巡检</button>
         <button class="secondary-action" id="edit-knowledge-inspection-question" type="button">编辑题目</button>
         <span class="dialog-action-spacer"></span>
-        <button class="secondary-action" id="cancel-knowledge-inspection" type="button">取消</button>
-        <button class="primary-action" id="apply-knowledge-inspection" type="button">采纳所选</button>
+        <span class="knowledge-inspection-record-actions-label">记录状态（不改库）</span>
+        <button class="secondary-action" id="mark-knowledge-inspection-reviewed" data-knowledge-inspection-audit-state="reviewed" type="button">标为已复核</button>
+        <button class="secondary-action" id="mark-knowledge-inspection-repaired" data-knowledge-inspection-audit-state="repaired" type="button">标为已修复</button>
+        <button class="secondary-action" id="mark-knowledge-inspection-ignored" data-knowledge-inspection-audit-state="ignored" type="button">标为已忽略</button>
+        <button class="primary-action" id="send-knowledge-inspection-to-enrichment" type="button">送去完善题目</button>
+        <button class="secondary-action" id="cancel-knowledge-inspection" type="button">关闭</button>
       </div>
     </dialog>
 
@@ -1603,177 +1779,282 @@
 
     <dialog class="question-editor-dialog" id="question-editor-dialog" aria-labelledby="question-editor-title">
       <div class="provider-dialog-head">
-        <div><h2 id="question-editor-title">录入平台题目</h2><p>考试范围固定为“汉语言文学题库 · 广东普通专升本”</p></div>
+        <div><h2 id="question-editor-title">录入平台题目</h2><p id="question-editor-scope-help" data-question-help-for="#question-editor-title" data-question-help-label="考试范围">考试范围固定为“汉语言文学题库 · 广东普通专升本”</p></div>
+        <span id="question-editor-version-status" class="question-editor-status">新题 · 待保存</span>
         <button class="dialog-close" id="close-question-editor" type="button" aria-label="关闭题目编辑" title="关闭">×</button>
       </div>
+      <nav class="question-review-tabs" id="question-review-tabs" role="tablist" aria-label="题目裁决" hidden>
+        <button type="button" role="tab" id="question-review-tab-suggestions" data-question-review-tab="suggestions" aria-controls="question-review-suggestions" aria-selected="false">审核建议</button>
+        <button type="button" role="tab" id="question-review-tab-classification" data-question-review-tab="classification" aria-controls="question-review-classification" aria-selected="false" tabindex="-1">归属确认</button>
+        <button type="button" role="tab" id="question-review-tab-details" data-question-review-tab="details" aria-controls="question-review-details" aria-selected="false" tabindex="-1">题目详情</button>
+      </nav>
+      <div class="provider-form-status" id="question-review-status" role="status" hidden></div>
+      <section class="question-review-pane" id="question-review-suggestions" role="tabpanel" aria-labelledby="question-review-tab-suggestions" hidden>
+        <div id="question-review-suggestion-empty" hidden>
+          <p id="question-review-suggestion-message"></p>
+          <button class="secondary-action" id="question-review-generate" type="button">为本题生成建取消</button>
+          <button class="secondary-action" id="question-review-revert" type="button" hidden>撤回上次采纳</button>
+        </div>
+        <div class="question-review-embedded" id="question-review-suggestion-content"></div>
+      </section>
+      <section class="question-review-pane" id="question-review-classification" role="tabpanel" aria-labelledby="question-review-tab-classification" hidden></section>
+      <section class="question-review-pane" id="question-review-details">
       <div class="provider-form-status" id="question-form-status" role="status" hidden></div>
       <form class="config-form question-editor-form" id="question-form">
         <input type="hidden" id="question-id" />
-        <div class="question-form-grid four-columns">
-          <label class="field"><span>科目</span><select id="question-subject" required></select></label>
-          <label class="field"><span>书籍</span><select id="question-book" required></select></label>
-          <label class="field"><span>题型</span><select id="question-type" required></select></label>
-          <label class="field"><span>总分</span><input id="question-max-score" type="number" min="1" max="100" step="0.5" value="2" required /></label>
-        </div>
-        <div class="question-preview-settings question-exam-tags" id="question-exam-tags">
-          <span>考试标签</span>
-          <label><input id="question-exam-tag-insert" data-question-exam-tag type="checkbox" value="insert" /> 插本</label>
-          <label><input id="question-exam-tag-graduate" data-question-exam-tag type="checkbox" value="graduate" /> 考研</label>
-          <small>可同时选择，用于检索与题目来源说明</small>
-        </div>
-        <section class="question-knowledge-fingerprint" id="question-knowledge-fingerprint">
-          <div class="question-knowledge-fingerprint-head">
-            <div><strong>题目知识指纹</strong><span>这里是正式指纹的唯一题目编辑入口；题族页只做一致性比对</span></div>
-            <em id="question-fingerprint-status">待建立</em>
+        <section class="question-editor-section question-editor-basics" aria-labelledby="question-basics-heading">
+          <div class="question-editor-section-head"><div><span class="question-editor-kicker">编辑范围</span><h3 id="question-basics-heading">基础属性</h3></div><span class="question-editor-section-note">题目、答案与归属分层编辑</span></div>
+          <div class="question-form-grid four-columns">
+            <label class="field"><span>科目</span><select id="question-subject" required></select></label>
+            <label class="field"><span id="question-book-label">教材（可暂缺）</span><select id="question-book"></select></label>
+            <label class="field"><span>题型</span><select id="question-type" required></select></label>
+            <label class="field"><span>总分</span><input id="question-max-score" type="number" min="1" max="100" step="0.5" value="2" required /></label>
           </div>
-          <div class="question-fingerprint-facts" id="question-fingerprint-facts"></div>
-          <div class="question-fingerprint-candidate" id="question-fingerprint-candidate" hidden>
-            <div><span>AI 候选</span><strong id="question-fingerprint-candidate-summary"></strong><small>仅供参考，载入后仍需人工保存才会成为正式指纹</small></div>
-            <button class="secondary-action" id="load-question-fingerprint-candidate" type="button">载入候选</button>
+          <small id="question-classification-hint" data-question-help-for="#question-book-label" data-question-help-label="教材与归属">章节与知识点可暂缺；留空即「待归类」。</small>
+          <div class="question-preview-settings question-exam-tags" id="question-exam-tags">
+            <span id="question-exam-tags-label">考试标签</span>
+            <label><input id="question-exam-tag-insert" data-question-exam-tag type="checkbox" value="insert" /> 插本</label>
+            <label><input id="question-exam-tag-graduate" data-question-exam-tag type="checkbox" value="graduate" /> 考研</label>
+            <div class="question-preview-settings question-inline-preview-settings" id="question-preview-settings-panel">
+              <span>用户端展示设置</span>
+              <span class="question-preview-settings-mode">免费试看</span>
+              <label><input id="preview-question" type="checkbox" /> 开放题目</label>
+              <label><input id="preview-answer" type="checkbox" /> 开放答案</label>
+              <label><input id="preview-analysis" type="checkbox" /> 开放解析</label>
+            </div>
+            <small id="question-exam-tags-help" data-question-help-for="#question-exam-tags-label" data-question-help-label="考试标签">可同时选择，用于检索与题目来源说明</small>
           </div>
-          <div class="question-fingerprint-editor" id="question-fingerprint-editor">
-            <div class="question-fingerprint-editor-grid">
-              <div class="field question-fingerprint-core-field">
-                <div class="question-fingerprint-field-head"><span>作答核心</span></div>
-                <div class="question-family-multiselect" data-question-fingerprint-picker="core">
-                <button class="question-family-multiselect-trigger" id="question-fingerprint-core-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="question-fingerprint-core-panel"><span data-question-fingerprint-summary>请选择题目知识焦点</span><i aria-hidden="true"></i></button>
-                <div class="question-family-multiselect-panel" id="question-fingerprint-core-panel" popover="auto" role="dialog" aria-label="选择题目知识焦点">
-                  <input class="question-family-multiselect-search" data-question-fingerprint-search type="search" placeholder="搜索知识焦点" aria-label="搜索题目知识焦点" autocomplete="off" />
-                  <div class="question-family-multiselect-options" data-question-fingerprint-options role="radiogroup" aria-label="题目知识焦点选项"></div>
-                </div>
-                <select id="question-fingerprint-core" hidden aria-hidden="true" tabindex="-1"></select>
-                </div>
-                <small id="question-fingerprint-core-help">解题所必要、直接决定答案的核心知识。</small>
+        </section>
+
+        <section class="question-editor-fixed-context" id="question-editor-fixed-context" aria-labelledby="question-editor-fixed-context-heading" hidden>
+          <div class="question-editor-fixed-context-head">
+            <div>
+              <span class="question-editor-kicker">指纹选择参考</span>
+              <strong id="question-editor-fixed-context-heading">当前题目内容</strong>
+            </div>
+            <span id="question-editor-fixed-context-type"></span>
+          </div>
+          <div id="question-editor-fixed-context-body" class="question-editor-fixed-context-body"></div>
+        </section>
+
+        <section class="question-editor-section question-content-section" aria-labelledby="question-content-heading">
+          <div class="question-editor-section-head"><div><span class="question-editor-kicker">先看题目</span><h3 id="question-content-heading">题目内容</h3></div><span class="question-editor-section-note">按题型显示对应作答结果</span></div>
+          <div class="question-content-stack">
+            <div class="question-material-editor">
+              <label class="field"><span>材料正文</span><textarea id="question-material" rows="5" placeholder="没有材料时留空"></textarea></label>
+              <div class="question-material-meta">
+                <label class="field"><span>共享材料组</span><input id="question-material-group" placeholder="同组小题使用相同编号" /></label>
+                <label class="question-preview-settings"><input id="question-uses-shared-material" type="checkbox" /> 本题沿用共享材料</label>
+                <button class="secondary-action question-clear-material" id="clear-question-material" type="button">移除本题材料</button>
               </div>
-              <div class="field"><span>最小充分知识集</span><div class="question-family-multiselect" data-question-fingerprint-picker="required">
-                <button class="question-family-multiselect-trigger" id="question-fingerprint-required-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="question-fingerprint-required-panel"><span data-question-fingerprint-summary>请选择作答必需知识</span><i aria-hidden="true"></i></button>
-                <div class="question-family-multiselect-panel" id="question-fingerprint-required-panel" popover="auto" role="dialog" aria-label="选择题目作答必需知识">
-                  <input class="question-family-multiselect-search" data-question-fingerprint-search type="search" placeholder="搜索作答必需知识" aria-label="搜索题目作答必需知识" autocomplete="off" />
-                  <div class="question-family-multiselect-options" data-question-fingerprint-options role="group" aria-label="题目作答必需知识选项"></div>
-                </div>
-                <select id="question-fingerprint-required" multiple hidden aria-hidden="true" tabindex="-1"></select>
-              </div><small id="question-fingerprint-required-help">只保留完成作答不可缺少的知识；作答核心会自动包含并显示为已选。若要更换，请先修改作答核心。</small></div>
-              <div class="field question-fingerprint-range-field"><span>问题知识范围</span><div class="question-family-multiselect" data-question-fingerprint-picker="range">
-                <button class="question-family-multiselect-trigger" id="question-fingerprint-range-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="question-fingerprint-range-panel"><span data-question-fingerprint-summary>可不选择问题知识范围</span><i aria-hidden="true"></i></button>
-                <div class="question-family-multiselect-panel" id="question-fingerprint-range-panel" popover="auto" role="dialog" aria-label="选择问题知识范围">
-                  <input class="question-family-multiselect-search" data-question-fingerprint-search type="search" placeholder="搜索问题知识范围" aria-label="搜索问题知识范围" autocomplete="off" />
-                  <div class="question-family-multiselect-options" data-question-fingerprint-options role="group" aria-label="问题知识范围选项"></div>
-                </div>
-                <select id="question-fingerprint-range" multiple hidden aria-hidden="true" tabindex="-1"></select>
-              </div><small id="question-fingerprint-range-help">题干和选项实际涉及的相关知识，不等于作答必需知识。</small></div>
-              <div class="field question-fingerprint-theme-anchor-field"><span>知识主题范围锚点</span><div class="question-family-multiselect" data-question-fingerprint-picker="theme-anchor">
-                <button class="question-family-multiselect-trigger" id="question-fingerprint-theme-anchor-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="question-fingerprint-theme-anchor-panel"><span data-question-fingerprint-summary>可不设置知识主题范围锚点</span><i aria-hidden="true"></i></button>
-                <div class="question-family-multiselect-panel" id="question-fingerprint-theme-anchor-panel" popover="auto" role="dialog" aria-label="选择知识主题范围锚点">
-                  <input class="question-family-multiselect-search" data-question-fingerprint-search type="search" placeholder="搜索知识主题范围锚点" aria-label="搜索知识主题范围锚点" autocomplete="off" />
-                  <div class="question-family-multiselect-options" data-question-fingerprint-options role="radiogroup" aria-label="知识主题范围锚点选项"></div>
-                </div>
-                <select id="question-fingerprint-theme-anchor" hidden aria-hidden="true" tabindex="-1"></select>
-              </div><small id="question-fingerprint-theme-anchor-help">由有效知识范围归纳的共同上位主题，用于目录投影和范围组织。</small></div>
-              <label class="field question-fingerprint-action"><span>考查动作（选填）</span><input id="question-fingerprint-action" maxlength="240" placeholder="例如：辨析造字法并判断正误" /></label>
+              <label class="field" id="question-annotation-text-field" hidden><span>加点字词</span><textarea id="question-annotation-text" rows="3" placeholder="例如：客；保存后会显示在题干下一行“客：”"></textarea></label>
             </div>
-            <div class="question-fingerprint-editor-actions">
-              <small id="question-fingerprint-editor-status">新题请先保存，再建立正式指纹</small>
-              <button class="secondary-action" id="reset-question-fingerprint-draft" type="button">恢复当前正式值</button>
-              <button class="primary-action" id="save-question-fingerprint" type="button">保存正式指纹</button>
+            <label class="field question-stem-field"><span>题干</span><textarea id="question-stem" rows="5" placeholder="录入完整题干；材料题可在此包含材料正文" required></textarea></label>
+            <div id="choice-answer-fields" class="question-choice-fields">
+              <label class="field"><span>选项</span><textarea id="question-options" rows="6" placeholder="每行一个，例如：A. 北京语音"></textarea></label>
+              <label class="field question-correct-answer-field"><span>正确答案</span><input id="question-correct-answer" placeholder="单选填 A，多选填 A,B" /></label>
             </div>
           </div>
         </section>
-        <input id="question-chapter" type="hidden" />
-        <input id="question-knowledge-points" type="hidden" />
-        <input id="question-primary-knowledge-point" type="hidden" />
-        <input id="question-sub-knowledge-points" type="hidden" />
-        <section class="question-family-memberships" id="question-family-memberships">
-          <div class="question-family-membership-head">
-            <div><strong>题目归属</strong><span id="question-family-membership-count"></span></div>
-            <button class="secondary-action" id="add-question-membership" type="button">＋ 增加题族</button>
-          </div>
-          <div id="question-family-membership-list"></div>
-          <div class="question-family-membership-add" id="question-family-membership-add" hidden>
-            <div class="question-family-membership-choice">
-              <label class="field"><span>搜索题族</span><input id="question-family-membership-search" type="search" placeholder="搜索题族名、知识路径或 ID" autocomplete="off" /></label>
-              <label class="field"><span>选择题族</span><select id="question-family-membership-select"></select><small id="question-family-membership-match-count"></small></label>
+
+        <section class="question-editor-section question-answer-section" aria-labelledby="question-answer-heading">
+          <div class="question-editor-section-head"><div><span class="question-editor-kicker">核对依据</span><h3 id="question-answer-heading">答案与解析</h3></div><div class="question-preview-settings answer-visibility-settings answer-visibility-inline" id="answer-visibility-settings"><span>前端隐藏</span><label><input id="hide-official-answer" type="checkbox" /> 来源/平台核验答案</label><label><input id="hide-ai-answer" type="checkbox" /> AI 答案</label><label><input id="hide-community-answer" type="checkbox" /> 社区精选答案</label></div><span id="question-answer-state" class="question-editor-status">待核对</span></div>
+          <div class="answer-ai-supplement-status" id="question-ai-supplement-status" role="status" hidden></div>
+          <div class="question-answer-variants">
+            <div class="field answer-markdown-editor question-answer-primary">
+              <span class="answer-markdown-head"><label for="question-reference-answer-editor">平台/来源答案</label><button id="question-reference-bold" type="button" title="加粗所选重点（Ctrl+B）" aria-label="加粗平台或来源答案重点" aria-keyshortcuts="Control+B Meta+B"><strong>B</strong></button></span>
+              <textarea id="question-reference-answer" hidden></textarea>
+              <div id="question-reference-answer-editor" class="answer-rich-input" contenteditable="true" role="textbox" aria-multiline="true" data-answer-placeholder="录入原始材料附带的答案，或平台人工核验答案"></div>
             </div>
-            <button class="primary-action" id="confirm-question-membership" type="button">加入</button>
-            <button class="dialog-close" id="cancel-question-membership" type="button" aria-label="取消增加题族" title="取消">×</button>
+            <details class="question-optional-answer" id="question-ai-answer-panel">
+              <summary>AI 答案 <span>没有内容时保持紧凑</span><button class="secondary-action answer-ai-supplement-button" id="question-ai-supplement" type="button" title="由 AI 生成候选答案与结构化得分点：只填空缺、不写库，核对后点「保存新版本」才入库">AI 补充答案 / 得分点</button></summary>
+              <div class="field answer-markdown-editor">
+                <span class="answer-markdown-head"><label for="question-ai-answer-editor">AI 答案</label><button id="question-ai-answer-bold" type="button" title="加粗所选重点（Ctrl+B）" aria-label="加粗 AI 答案重点" aria-keyshortcuts="Control+B Meta+B"><strong>B</strong></button></span>
+                <textarea id="question-ai-answer" hidden></textarea>
+                <div id="question-ai-answer-editor" class="answer-rich-input" contenteditable="true" role="textbox" aria-multiline="true" data-answer-placeholder="可录入或保留 AI 生成答案"></div>
+              </div>
+            </details>
+            <details class="question-optional-answer" id="question-community-answer-panel">
+              <summary>社区精选答案 <span>没有内容时保持紧凑</span></summary>
+              <div class="field answer-markdown-editor">
+                <span class="answer-markdown-head"><label for="question-community-answer-editor">社区精选答案</label><button id="question-community-answer-bold" type="button" title="加粗所选重点" aria-label="加粗社区精选答案重点" aria-keyshortcuts="Control+B Meta+B"><strong>B</strong></button></span>
+                <textarea id="question-community-answer" hidden></textarea>
+                <div id="question-community-answer-editor" class="answer-rich-input" contenteditable="true" role="textbox" aria-multiline="true" data-answer-placeholder="录入通过审核的社区精选答案"></div>
+              </div>
+            </details>
           </div>
-          <p class="question-family-membership-hint">题族归属不改写题目知识指纹或教材字段；主题族固定为作答必需，关联族需选择“作答必需”或“普通关联”。贡献知识只有人工勾选后才会保存。</p>
+          <div id="scoring-point-fields" class="question-scoring-fields" hidden>
+            <div class="field answer-markdown-editor scoring-points-markdown-editor">
+              <span class="answer-markdown-head"><label for="question-scoring-points-editor">结构化得分点</label><button id="question-scoring-bold" type="button" title="加粗所选重点" aria-label="加粗得分点重点" aria-keyshortcuts="Control+B Meta+B"><strong>B</strong></button></span>
+              <textarea id="question-scoring-points" hidden></textarea>
+              <div id="question-scoring-points-editor" class="answer-rich-input" contenteditable="true" role="textbox" aria-multiline="true" data-answer-placeholder="每行：分值 | 内容 | 教材页码，例如：2 | 准确定义概念 | 36-37。得分点不影响保存或发布；完成配分后才能使用结构化 AI 评分。" aria-description="每行填写分值、内容和教材页码，用竖线分隔。得分点不影响保存或发布；完成配分后才能使用结构化 AI 评分。"></div>
+            </div>
+            <div class="scoring-structure-notice" id="question-scoring-structure" hidden></div>
+          </div>
+          <section class="question-source-block" aria-labelledby="question-source-heading">
+            <div class="question-subsection-head"><h4 id="question-source-heading">依据来源</h4><button class="inline-action" id="use-question-catalog-anchor-source" type="button" title="将当前教材目录位置填入来源文本">引用当前教材目录</button></div>
+            <div class="question-form-grid question-source-grid">
+              <label class="field"><span>来源文本</span><input id="question-source-label" placeholder="例如：《现代汉语（增订七版）》上册，绪论" /></label>
+              <label class="field"><span>教材页码</span><input id="question-source-page" placeholder="例如：第 8 页" /></label>
+            </div>
+          </section>
+          <label class="field question-answer-review-field"><span>答案核对状态</span><select id="question-answer-review-status"><option value="unreviewed">未核对</option><option value="doubtful">存疑待复核</option><option value="verified">已核对</option></select></label>
         </section>
-        <div class="question-form-grid three-columns">
-          <label class="field"><span>知识深度</span><input id="question-knowledge-depth-score" type="number" min="1" max="100" step="1" placeholder="待评" /></label>
-          <label class="field"><span>内容偏僻度</span><input id="question-content-obscurity-score" type="number" min="1" max="100" step="1" placeholder="待评" /></label>
-          <label class="field"><span>组内相对难度分</span><input id="question-difficulty-score" type="number" min="1" max="100" step="1" value="50" readonly required /></label>
-        </div>
-        <div class="question-preview-settings question-difficulty-settings">
-          <span>难度方式</span>
-          <label><input id="question-difficulty-manual" type="checkbox" /> 人工固定相对难度分</label>
-        </div>
-        <label class="field"><span>题干</span><textarea id="question-stem" rows="5" placeholder="录入完整题干；材料题可在此包含材料正文" required></textarea></label>
-        <div class="question-material-editor">
-          <label class="field"><span>材料正文</span><textarea id="question-material" rows="5" placeholder="没有材料时留空"></textarea></label>
-          <div class="question-form-grid">
-            <label class="field"><span>共享材料组</span><input id="question-material-group" placeholder="同组小题使用相同编号" /></label>
-            <label class="field"><span>作答方式</span><select id="question-response-mode"><option value="text">文字作答</option><option value="annotation">原文标记</option></select></label>
+
+        <nav class="question-editor-subtabs" id="question-editor-subtabs" role="tablist" aria-label="训练与知识归属">
+          <button type="button" role="tab" id="question-editor-section-tab-training" data-question-editor-section-tab="training" aria-controls="question-editor-training-panel" aria-selected="true">训练归属</button>
+          <button type="button" role="tab" id="question-editor-section-tab-knowledge" data-question-editor-section-tab="knowledge" aria-controls="question-editor-knowledge-panel" aria-selected="false" tabindex="-1">知识与教材</button>
+        </nav>
+        <section class="question-editor-section question-editor-tab-panel" id="question-editor-training-panel" role="tabpanel" aria-labelledby="question-editor-section-tab-training">
+          <div class="question-editor-section-head"><div><span class="question-editor-kicker">训练组织</span><h3>训练归属</h3></div><span class="question-editor-section-note">题族关系由人工确认，题族集为派生信息</span></div>
+          <section class="question-family-memberships" id="question-family-memberships">
+            <div class="question-family-membership-head">
+              <div><strong id="question-family-membership-heading">题目归属</strong><span id="question-family-membership-count"></span></div>
+              <button class="secondary-action" id="add-question-membership" type="button">＋ 增加题族</button>
+            </div>
+            <div id="question-family-membership-list"></div>
+            <div class="question-family-set-attribution">
+              <div class="question-family-set-attribution-head"><strong>所属题族集</strong><button class="secondary-action" id="view-question-family-sets" type="button">查看/调整归集</button></div>
+              <div id="question-family-set-attribution-list" role="status">未关联题族集</div>
+            </div>
+            <div class="question-family-membership-add" id="question-family-membership-add" hidden>
+              <div class="question-family-membership-choice">
+                <label class="field"><span>搜索题族</span><input id="question-family-membership-search" type="search" placeholder="搜索题族名、知识路径或 ID" autocomplete="off" /></label>
+                <label class="field"><span>选择题族</span><select id="question-family-membership-select"></select><small id="question-family-membership-match-count"></small></label>
+              </div>
+              <button class="primary-action" id="confirm-question-membership" type="button">加入</button>
+              <button class="dialog-close" id="cancel-question-membership" type="button" aria-label="取消增加题族" title="取消">×</button>
+            </div>
+            <p class="question-family-membership-hint" id="question-family-membership-help" data-question-help-for="#question-family-membership-heading" data-question-help-label="题目归属">题族归属不改写题目知识指纹或教材字段；主题族固定为作答必需，关联族需选择“作答必需”或“普通关联”。贡献知识只有人工勾选后才会保存。</p>
+          </section>
+        </section>
+        <section class="question-editor-section question-editor-tab-panel" id="question-editor-knowledge-panel" role="tabpanel" aria-labelledby="question-editor-section-tab-knowledge" hidden>
+          <div class="question-editor-section-head"><div><span class="question-editor-kicker">正式知识</span><h3>知识与教材</h3></div><span class="question-editor-section-note">知识档案正文仍在独立模块维护</span></div>
+          <div class="question-knowledge-navigation">
+            <label class="field question-catalog-anchor-field">
+              <span id="question-catalog-anchor-label">教材目录位置</span>
+              <select id="question-catalog-anchor" aria-describedby="question-catalog-anchor-hint"><option value="">（暂不指定目录）</option></select>
+              <small id="question-catalog-anchor-hint" data-question-help-for="#question-catalog-anchor-label" role="status">选择教材已确认的目录；随本题保存，不自动改动知识点、指纹或题族。</small>
+            </label>
+            <button class="secondary-action" id="retry-question-catalog-anchor" type="button" hidden>重新读取教材目录</button>
+            <button class="secondary-action" id="view-question-knowledge-dossiers" type="button">查看知识档案</button>
           </div>
-          <label class="question-preview-settings"><input id="question-uses-shared-material" type="checkbox" /> 本题沿用共享材料</label>
-          <label class="field"><span>标记原文</span><textarea id="question-annotation-text" rows="3" placeholder="仅原文标记题需要填写"></textarea></label>
-          <button class="secondary-action question-clear-material" id="clear-question-material" type="button">移除本题材料</button>
-        </div>
-        <div id="choice-answer-fields">
-          <div class="question-form-grid answer-grid">
-            <label class="field"><span>选项</span><textarea id="question-options" rows="6" placeholder="每行一个，例如：A. 北京语音"></textarea></label>
-            <label class="field"><span>正确答案</span><input id="question-correct-answer" placeholder="单选填 A，多选填 A,B" /></label>
+          <input id="question-chapter" type="hidden" />
+          <input id="question-knowledge-points" type="hidden" />
+          <input id="question-primary-knowledge-point" type="hidden" />
+          <input id="question-sub-knowledge-points" type="hidden" />
+          <section class="question-knowledge-fingerprint" id="question-knowledge-fingerprint">
+            <div class="question-knowledge-fingerprint-head">
+              <div><strong id="question-fingerprint-heading">题目知识指纹</strong><span id="question-fingerprint-heading-help" data-question-help-for="#question-fingerprint-heading" data-question-help-label="题目知识指纹">这里是正式指纹的唯一题目编辑入口；题族页只做一致性比较。</span></div>
+              <em id="question-fingerprint-status">待建立</em>
+            </div>
+            <div class="question-fingerprint-facts" id="question-fingerprint-facts"></div>
+            <div class="question-fingerprint-candidate" id="question-fingerprint-candidate" hidden>
+              <div><span id="question-fingerprint-candidate-label">AI 候选</span><strong id="question-fingerprint-candidate-summary"></strong><small id="question-fingerprint-candidate-help" data-question-help-for="#question-fingerprint-candidate-label" data-question-help-label="AI 候选">仅供参考，载入后仍需人工保存才会成为正式指纹。</small></div>
+              <button class="secondary-action" id="load-question-fingerprint-candidate" type="button">载入候选</button>
+            </div>
+            <div class="question-fingerprint-editor" id="question-fingerprint-editor">
+              <div class="question-fingerprint-editor-grid">
+                <div class="field question-fingerprint-core-field">
+                  <div class="question-fingerprint-field-head"><span id="question-fingerprint-core-label">作答核心</span></div>
+                  <div class="question-family-multiselect" data-question-fingerprint-picker="core">
+                    <button class="question-family-multiselect-trigger" id="question-fingerprint-core-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="question-fingerprint-core-panel"><span data-question-fingerprint-summary>请选择题目知识焦点</span><i aria-hidden="true"></i></button>
+                    <div class="question-family-multiselect-panel" id="question-fingerprint-core-panel" popover="auto" role="dialog" aria-label="选择题目知识焦点">
+                      <input class="question-family-multiselect-search" data-question-fingerprint-search type="search" placeholder="搜索知识焦点" aria-label="搜索题目知识焦点" autocomplete="off" />
+                      <div class="question-family-multiselect-options" data-question-fingerprint-options role="radiogroup" aria-label="题目知识焦点选项"></div>
+                    </div>
+                    <select id="question-fingerprint-core" hidden aria-hidden="true" tabindex="-1"></select>
+                  </div>
+                  <small id="question-fingerprint-core-help" data-question-help-for="#question-fingerprint-core-label" data-question-help-label="作答核心">解题所必要、直接决定答案的核心知识。</small>
+                </div>
+                <div class="field"><span id="question-fingerprint-required-label">最小充分知识集</span><div class="question-family-multiselect" data-question-fingerprint-picker="required">
+                  <button class="question-family-multiselect-trigger" id="question-fingerprint-required-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="question-fingerprint-required-panel"><span data-question-fingerprint-summary>请选择作答必需知识</span><i aria-hidden="true"></i></button>
+                  <div class="question-family-multiselect-panel" id="question-fingerprint-required-panel" popover="auto" role="dialog" aria-label="选择题目作答必需知识">
+                    <input class="question-family-multiselect-search" data-question-fingerprint-search type="search" placeholder="搜索作答必需知识" aria-label="搜索题目作答必需知识" autocomplete="off" />
+                    <div class="question-family-multiselect-options" data-question-fingerprint-options role="group" aria-label="题目作答必需知识选项"></div>
+                  </div>
+                  <select id="question-fingerprint-required" multiple hidden aria-hidden="true" tabindex="-1"></select>
+                </div><small id="question-fingerprint-required-help" data-question-help-for="#question-fingerprint-required-label" data-question-help-label="最小充分知识集">只保留完成作答不可缺少的知识；作答核心会自动包含并显示为已选。若要更换，请先修改作答核心。</small></div>
+                <div class="field question-fingerprint-range-field"><span id="question-fingerprint-range-label">问题知识范围</span><div class="question-family-multiselect" data-question-fingerprint-picker="range">
+                  <button class="question-family-multiselect-trigger" id="question-fingerprint-range-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="question-fingerprint-range-panel"><span data-question-fingerprint-summary>可不选择问题知识范围</span><i aria-hidden="true"></i></button>
+                  <div class="question-family-multiselect-panel" id="question-fingerprint-range-panel" popover="auto" role="dialog" aria-label="选择问题知识范围">
+                    <input class="question-family-multiselect-search" data-question-fingerprint-search type="search" placeholder="搜索问题知识范围" aria-label="搜索问题知识范围" autocomplete="off" />
+                    <div class="question-family-multiselect-options" data-question-fingerprint-options role="group" aria-label="问题知识范围选项"></div>
+                  </div>
+                  <select id="question-fingerprint-range" multiple hidden aria-hidden="true" tabindex="-1"></select>
+                </div><small id="question-fingerprint-range-help" data-question-help-for="#question-fingerprint-range-label" data-question-help-label="问题知识范围" role="status">题干和选项实际涉及的相关知识，不等于作答必需知识。</small></div>
+                <input id="question-fingerprint-action" type="hidden" />
+                <div id="question-assessment-modes" class="field question-fingerprint-action" data-assessment-modes></div>
+              </div>
+              <div class="question-fingerprint-editor-actions">
+                <small id="question-fingerprint-editor-status" data-question-help-for="#question-fingerprint-save-label" data-question-help-label="保存正式指纹" data-question-help-inline="true" role="status">新题请先保存，再建立正式指纹</small>
+                <button class="secondary-action" id="reset-question-fingerprint-draft" type="button">恢复当前正式值</button>
+                <span id="question-fingerprint-save-label" class="question-detail-help-action"><button class="primary-action" id="save-question-fingerprint" type="button">保存正式指纹</button></span>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <details class="question-editor-section question-difficulty-section" id="question-difficulty-details">
+          <summary><span><span class="question-editor-kicker">次要评估</span><strong>难度评估</strong></span><small>知识深度、内容偏僻度、组内相对难度分</small></summary>
+          <div class="question-form-grid three-columns">
+            <label class="field"><span>知识深度</span><input id="question-knowledge-depth-score" type="number" min="1" max="100" step="1" placeholder="待评" /></label>
+            <label class="field"><span>内容偏僻度</span><input id="question-content-obscurity-score" type="number" min="1" max="100" step="1" placeholder="待评" /></label>
+            <label class="field"><span>组内相对难度分</span><input id="question-difficulty-score" type="number" min="1" max="100" step="1" value="50" readonly required /></label>
           </div>
-        </div>
-        <div class="question-answer-variants">
-          <div class="field answer-markdown-editor">
-            <span class="answer-markdown-head"><label for="question-reference-answer-editor">来源/平台核验答案</label><button id="question-reference-bold" type="button" title="加粗所选重点（Ctrl+B）" aria-label="加粗来源或平台核验答案重点" aria-keyshortcuts="Control+B Meta+B"><strong>B</strong></button></span>
-            <textarea id="question-reference-answer" hidden></textarea>
-            <div id="question-reference-answer-editor" class="answer-rich-input" contenteditable="true" role="textbox" aria-multiline="true" data-answer-placeholder="录入原始材料附带的答案，或平台人工核验答案"></div>
+          <div class="question-preview-settings question-difficulty-settings">
+            <span>难度方式</span>
+            <label><input id="question-difficulty-manual" type="checkbox" /> 人工固定相对难度分</label>
           </div>
-          <div class="field answer-markdown-editor">
-            <span class="answer-markdown-head"><label for="question-ai-answer-editor">AI 答案</label><button id="question-ai-answer-bold" type="button" title="加粗所选重点（Ctrl+B）" aria-label="加粗 AI 答案重点" aria-keyshortcuts="Control+B Meta+B"><strong>B</strong></button></span>
-            <textarea id="question-ai-answer" hidden></textarea>
-            <div id="question-ai-answer-editor" class="answer-rich-input" contenteditable="true" role="textbox" aria-multiline="true" data-answer-placeholder="可录入或保留 AI 生成答案"></div>
-          </div>
-          <div class="field answer-markdown-editor">
-            <span class="answer-markdown-head"><label for="question-community-answer-editor">社区精选答案</label><button id="question-community-answer-bold" type="button" title="加粗所选重点（Ctrl+B）" aria-label="加粗社区精选答案重点" aria-keyshortcuts="Control+B Meta+B"><strong>B</strong></button></span>
-            <textarea id="question-community-answer" hidden></textarea>
-            <div id="question-community-answer-editor" class="answer-rich-input" contenteditable="true" role="textbox" aria-multiline="true" data-answer-placeholder="录入通过审核的社区精选答案"></div>
-          </div>
-        </div>
-        <div class="question-preview-settings answer-visibility-settings">
-          <span>前端隐藏</span>
-          <label><input id="hide-official-answer" type="checkbox" /> 来源/平台核验答案</label>
-          <label><input id="hide-ai-answer" type="checkbox" /> AI 答案</label>
-          <label><input id="hide-community-answer" type="checkbox" /> 社区精选答案</label>
-        </div>
-        <div id="scoring-point-fields" hidden>
-          <div class="field answer-markdown-editor scoring-points-markdown-editor">
-            <span class="answer-markdown-head"><label for="question-scoring-points-editor">结构化得分点（每行：分值 | 内容 | 教材页码）</label><button id="question-scoring-bold" type="button" title="加粗所选重点（Ctrl+B）" aria-label="加粗得分点重点" aria-keyshortcuts="Control+B Meta+B"><strong>B</strong></button></span>
-            <textarea id="question-scoring-points" hidden></textarea>
-            <div id="question-scoring-points-editor" class="answer-rich-input" contenteditable="true" role="textbox" aria-multiline="true" data-answer-placeholder="例如：2 | 准确定义概念 | 36-37"></div>
-          </div>
-          <div class="scoring-structure-notice" id="question-scoring-structure" hidden></div>
-          <p class="field-hint">得分点不影响题目保存或发布；完成配分后才能使用结构化 AI 评分。</p>
-        </div>
-        <div class="question-form-grid">
-          <label class="field"><span>答案依据</span><input id="question-source-label" placeholder="例如：《现代汉语（增订七版）》上册，绪论" /></label>
-          <label class="field"><span>教材页码</span><input id="question-source-page" placeholder="例如：第 8 页" /></label>
-          <label class="field"><span>答案核对</span><select id="question-answer-review-status"><option value="unreviewed">未核对</option><option value="doubtful">存疑待复核</option><option value="verified">已核对</option></select></label>
-        </div>
-        <div class="question-preview-settings">
-          <span>免费试看</span>
-          <label><input id="preview-question" type="checkbox" /> 开放题目</label>
-          <label><input id="preview-answer" type="checkbox" /> 开放答案</label>
-          <label><input id="preview-analysis" type="checkbox" /> 开放解析</label>
-        </div>
-        <label class="field"><span>版本说明</span><input id="question-change-note" placeholder="例如：首次录入、修正答案表述" /></label>
+        </details>
+        <label class="field question-change-note-field"><span>版本说明</span><input id="question-change-note" placeholder="例如：首次录入、修正答案表述" /></label>
       </form>
+      <div class="question-editor-footer">
+        <div class="form-actions provider-dialog-actions">
+          <button class="secondary-action" id="cancel-question-editor" type="button">取消</button>
+          <button class="primary-action" id="save-question" type="submit" form="question-form">保存新版本</button>
+        </div>
+      </div>
+      </section>
+    </dialog>
+
+    <dialog class="config-dialog directory-mapping-dialog" id="directory-mapping-dialog" aria-labelledby="directory-mapping-title">
+      <div class="provider-dialog-head">
+        <h2 id="directory-mapping-title">目录映射</h2>
+        <button class="dialog-close" id="close-directory-mapping" type="button" aria-label="关闭目录映射" title="关闭">×</button>
+      </div>
+      <input id="directory-mapping-search" type="search" placeholder="搜索目录节点" aria-label="搜索目录节点" />
+      <div class="directory-mapping-columns">
+        <section><h3>题库目录</h3><div id="directory-mapping-question" class="directory-mapping-tree"></div></section>
+        <section><h3>知识档案目录</h3><div id="directory-mapping-source" class="directory-mapping-tree"></div></section>
+      </div>
+      <p id="directory-mapping-selection"></p>
+      <p id="directory-mapping-status" role="status" aria-live="polite"></p>
       <div class="form-actions provider-dialog-actions">
-        <button class="secondary-action" id="cancel-question-editor" type="button">取消</button>
-        <button class="primary-action" id="save-question" type="submit" form="question-form">保存题目</button>
+        <button class="secondary-action" id="reset-directory-mapping" type="button">撤销未保存改动</button>
+        <button class="primary-action" id="save-directory-mapping" type="button" disabled>保存映射</button>
       </div>
     </dialog>
+
+    <dialog class="config-dialog completion-dialog" id="completion-dialog" aria-labelledby="completion-title">
+      <div class="provider-dialog-head">
+        <h2 id="completion-title">补齐缺失指纹与题族</h2>
+        <button class="dialog-close" id="close-completion" type="button" aria-label="关闭补齐预览" title="关闭">×</button>
+      </div>
+      <div class="question-form-grid completion-scope-row" id="completion-scope-row">
+        <label class="field"><span>范围</span><select id="completion-scope"><option value="book">按教私人使用</option><option value="batch">按导入批申请公开</option></select></label>
+        <label class="field" id="completion-book-field"><span>教材</span><select id="completion-book"></select></label>
+        <label class="field" id="completion-batch-field" hidden><span>导入批次</span><select id="completion-batch"></select></label>
+      </div>
+      <p id="completion-status" role="status" aria-live="polite"></p>
+      <label class="completion-select"><input id="completion-select-all" type="checkbox" />选择全部明确建议</label>
+      <div class="completion-table-wrap"><table><thead><tr><th>题目</th><th>缺失指纹</th><th>缺失题族归属</th></tr></thead><tbody id="completion-rows"></tbody></table></div>
+      <div class="form-actions provider-dialog-actions">
+        <button class="secondary-action" id="preview-completion" type="button">预览缺失项</button>
+        <button class="primary-action" id="confirm-completion" type="button" disabled>确认补齐所备份并导入</button>
+      </div>
+    </dialog>
+
 
     <dialog class="config-dialog question-import-compare-dialog" id="question-import-compare-dialog" aria-labelledby="question-import-compare-title">
       <div class="provider-dialog-head">
@@ -1781,8 +2062,20 @@
         <button class="dialog-close" id="close-question-import-compare" type="button" aria-label="关闭题目对比" title="关闭">×</button>
       </div>
       <div class="question-import-compare-body" id="question-import-compare-body"></div>
+      <p class="question-import-compare-hint" id="question-import-compare-hint">择优补充只把既有题目<strong>空缺</strong>的字段补进同一道题（新增版本、保留原答案与审核记录、不覆盖任何非空字段）；归属（教材／章节／知识点）不在这里补，请用「批次补充归属」。</p>
       <div class="form-actions provider-dialog-actions">
-        <button class="secondary-action" id="locate-question-import-compare" type="button">定位本次原文</button>
+        <span class="question-import-compare-write-status" id="question-import-compare-write-status"></span>
+        <!-- 按钮文案（产品负责人 2026-09-22 第六次反馈「优化下页面的按钮，简洁文案」）：标签压缩至 4 个字，一行放得下；原来挂在标签上的限定条件挪到"title（悬停可见），信息不丢，只换位置、-->
+        <button class="secondary-action" id="locate-question-import-compare" type="button" title="在原文里定位这道题的位置">定位原文</button>
+        <!-- 人工裁决（产品负责人 2026-09-22 定稿）：疑似重复对比完必须给出落点——确认「就是同一道题」（该行按判重处理、不重复入库）或确认「不是重复」（照常导入）。两个动作在导入前都可撤销、-->
+        <button class="secondary-action" id="confirm-question-import-duplicate" type="button" hidden>确认是同一道题（不导入定位本次原文</button>
+        <button class="secondary-action" id="dismiss-question-import-duplicate" type="button" hidden>确认不是重复</button>
+        <button class="secondary-action" id="undo-question-import-verdict" type="button" hidden title="撤销本次裁决，回到「待定夺」状态（不动题库原文，">撤销标记</button>
+        <button class="secondary-action" id="merge-question-import-duplicate" type="button" hidden title="只把既有题空缺的字段补进去，不覆盖非空字段">择优补充</button>
+        <!-- 两版不一样时的处置（产品负责人"2026-09-22 第二次定稿）：选择留在表格里、操作放到底部按钮；
+             第六次再压缩文案）：表格里勾选要用导入稿那版的字段，再在这里决定「替换所选」还是「合并两版」。-->
+        <button class="secondary-action" id="absorb-question-import-replace" type="button" hidden title="把勾选的字段换成导入稿这版；版本 +1、答案状态降级「待核对」">替换所选字段</button>
+        <button class="secondary-action" id="absorb-question-import-merge" type="button" hidden title="参考答案：既有那版保留，后面追加导入稿那版">合并两版</button>
         <button class="primary-action" id="done-question-import-compare" type="button">完成对比</button>
       </div>
     </dialog>
@@ -1796,12 +2089,31 @@
       <form class="config-form" id="question-batch-edit-form">
         <input id="question-batch-edit-id" type="hidden" />
         <label class="field"><span>科目</span><select id="question-batch-edit-subject" required></select></label>
-        <label class="field"><span>教材</span><select id="question-batch-edit-book" required></select></label>
-        <p class="field-hint">只统一修改科目与教材；题干、答案、章节、知识点和题目状态保持不变，并为每道题新增版本记录。</p>
+        <label class="field"><span>教材（可留空＝待归类）</span><select id="question-batch-edit-book"></select></label>
+        <label class="field"><span>章节（选填题族集名称</span><input id="question-batch-edit-chapter" maxlength="200" placeholder="留空则跟随教材一起清例如：发音特征" /></label>
+        <label class="field"><span>知识点（选填，顿号或逗号分隔题族名称</span><input id="question-batch-edit-knowledge-points" maxlength="2000" placeholder="留空则跟随教材一起清例如：专名拼写规范" /></label>
+        <p class="field-hint">统一修改整批题的科目／教材／章节／知识点，并为每道题新增版本记录；题干、答案、来源和题目状态不受影响。换教材会清空原教材下的章节与知识点（除非在这里显式填写）——原教材的下级关联不会残留到新教材上。留空教材即把这批题标记为「待归类」，它们不会自动发布到用户端。</p>
       </form>
       <div class="form-actions provider-dialog-actions">
         <button class="secondary-action" id="cancel-question-batch-edit" type="button">取消</button>
         <button class="primary-action" id="save-question-batch-edit" type="submit" form="question-batch-edit-form">统一修改</button>
+      </div>
+    </dialog>
+
+    <dialog class="config-dialog question-batch-delete-dialog" id="question-batch-delete-dialog" aria-labelledby="question-batch-delete-title">
+      <div class="provider-dialog-head">
+        <div><h2 id="question-batch-delete-title">删除前确认导入批次</h2><p id="question-batch-delete-subtitle">先看清会删掉什么、会影响哪些数据。</p></div>
+        <button class="dialog-close" id="close-question-batch-delete" type="button" aria-label="关闭删除确认" title="关闭">×</button>
+      </div>
+      <div class="question-batch-delete-impact" id="question-batch-delete-impact" role="status"></div>
+      <p class="question-batch-delete-hint">删除<strong>永久</strong>：题目与版本记录一并移除，没有回收站；材料题组会整组连带删除；已经进入试卷／题包的题目会留下失效引用，用户的练习记录不会被一起清理。</p>
+      <label class="field" id="question-batch-delete-code-field">
+        <span id="question-batch-delete-code-label">请输入确认码，启用下方删除按钮</span>
+        <input id="question-batch-delete-code" autocomplete="off" spellcheck="false" placeholder="照抄上方确认筛选当前试卷题目" />
+      </label>
+      <div class="form-actions provider-dialog-actions">
+        <button class="secondary-action" id="cancel-question-batch-delete" type="button">取消</button>
+        <button class="primary-action" id="confirm-question-batch-delete" type="button" disabled>永久删除</button>
       </div>
     </dialog>
 
@@ -1908,7 +2220,7 @@
         <form class="knowledge-generate-form" id="knowledge-generate-form">
           <label class="field"><span>目录范围</span><select id="knowledge-generate-catalog"><option value="">自动匹配目录</option></select></label>
           <label class="field"><span>考查知识点</span><input id="knowledge-generate-query" placeholder="例如：萧红小说的艺术特色" required /></label>
-          <label class="field"><span>题型</span><select id="knowledge-generate-type"><option value="single_choice">单选题</option><option value="multiple_choice">多选题</option><option value="true_false">判断题</option><option value="fill_blank">填空题</option><option value="short_answer">简答题</option><option value="term_definition">名词解释</option><option value="material_analysis">材料分析题</option><option value="appreciation">作品赏析题</option><option value="essay">论述题</option></select></label>
+          <label class="field"><span>题型</span><select id="knowledge-generate-type"><option value="single_choice">单选题</option><option value="multiple_choice">多选题</option><option value="true_false">判断题</option><option value="fill_blank">填空题</option><option value="short_answer">简答题</option><option value="term_definition">名词解释</option><option value="material_analysis">材料分析题</option><option value="essay">论述题</option></select></label>
           <label class="field"><span>难度</span><select id="knowledge-generate-difficulty"><option value="medium">中等</option><option value="easy">基础</option><option value="hard">提高</option></select></label>
           <label class="field"><span>数量</span><input id="knowledge-generate-count" type="number" min="1" max="10" value="3" /></label>
           <button class="primary-action" id="submit-knowledge-generate" type="submit">依据教材生成</button>
@@ -2072,8 +2384,34 @@
       <div class="form-actions provider-dialog-actions"><button class="secondary-action" id="cancel-announcement-editor" type="button">取消</button><button class="primary-action" id="save-announcement" type="submit" form="announcement-editor-form">保存草稿</button></div>
     </dialog>
 
+    <dialog class="content-editor-dialog platform-content-editor-dialog" id="platform-content-editor-dialog" aria-labelledby="platform-content-editor-title">
+      <div class="provider-dialog-head"><div><h2 id="platform-content-editor-title">编辑平台文本</h2><p id="platform-content-editor-copy">保存只是新增一版草稿；发布后用户端才可见，且该版本正文不可再改写</p></div><button class="dialog-close" id="close-platform-content-editor" type="button" aria-label="关闭平台文本编辑" title="关闭">×</button></div>
+      <div class="provider-form-status" id="platform-content-editor-status" role="status" hidden></div>
+      <div class="platform-content-current" id="platform-content-current"></div>
+      <form class="config-form content-editor-form" id="platform-content-editor-form">
+        <input type="hidden" id="platform-content-key" />
+        <div class="question-form-grid">
+          <label class="field"><span>版本号</span><input id="platform-content-version" placeholder="例如：1.0" maxlength="40" required /><small>草稿可反复修改；发布后这一版正文与生效日期都不可再改写</small></label>
+          <label class="field"><span>生效日期</span><input id="platform-content-effective-date" type="date" /><small>发布时必填；点「发布此版」时会用这里的日期补填</small></label>
+        </div>
+        <label class="field"><span>版本备注</span><input id="platform-content-note" placeholder="可选，例如：新增账号注销流程说明" maxlength="200" /></label>
+        <label class="field"><span>正文</span><textarea class="platform-content-body-input" id="platform-content-body" rows="16" maxlength="200000" placeholder="按段落换行即可；当前版本只支持纯文本" required></textarea></label>
+        <div class="platform-content-history-block">
+          <h3>历史版本</h3>
+          <p class="platform-content-history-copy">历史版本只读、不会被覆盖。可把某一版正文载入上面的编辑框，改出新版本。</p>
+          <div class="table-wrap">
+            <table class="content-admin-table platform-content-history-table">
+              <thead><tr><th>版本</th><th>状态</th><th>生效日期</th><th>创建</th><th>备注</th><th>操作</th></tr></thead>
+              <tbody id="platform-content-history"></tbody>
+            </table>
+          </div>
+        </div>
+      </form>
+      <div class="form-actions provider-dialog-actions"><button class="secondary-action" id="cancel-platform-content-editor" type="button">取消</button><button class="primary-action" id="save-platform-version" type="submit" form="platform-content-editor-form">保存为新版本</button></div>
+    </dialog>
+
     <dialog class="content-editor-dialog question-enrichment-dialog" id="question-enrichment-dialog" aria-labelledby="question-enrichment-dialog-title">
-      <div class="provider-dialog-head"><div><h2 id="question-enrichment-dialog-title">审核完善建议</h2><p>勾选需要写入的字段，可在采纳前人工修正建议</p></div><button class="dialog-close" id="close-question-enrichment-dialog" type="button" aria-label="关闭审核" title="关闭">×</button></div>
+      <div class="provider-dialog-head"><div><h2 id="question-enrichment-dialog-title">审核完善建议</h2><p>归属从科目、教材到目录逐级收敛；勾选需要写入的字段，可在采纳前人工修正建议。</p></div><button class="dialog-close" id="close-question-enrichment-dialog" type="button" aria-label="关闭审核" title="关闭">×</button></div>
       <div class="provider-form-status" id="question-enrichment-dialog-status" role="status" hidden></div>
       <form class="config-form question-enrichment-form" id="question-enrichment-form">
         <input id="question-enrichment-question-id" type="hidden" />
@@ -2082,6 +2420,12 @@
         <div class="question-enrichment-compare">
           <section><h3>当前题目</h3><dl id="question-enrichment-current"></dl></section>
           <section><h3>建议稿</h3>
+            <label class="enrichment-field-toggle"><input id="question-enrichment-use-subject" type="checkbox" /><span>采纳科目归属</span></label>
+            <select id="question-enrichment-dialog-subject"></select>
+            <small class="enrichment-muted" id="question-enrichment-subject-hint"></small>
+            <label class="enrichment-field-toggle"><input id="question-enrichment-use-textbook" type="checkbox" /><span>采纳教材归属（含册次目录</span></label>
+            <select id="question-enrichment-textbook"></select>
+            <small class="enrichment-muted" id="question-enrichment-textbook-hint"></small>
             <label class="enrichment-field-toggle"><input id="question-enrichment-use-chapter" type="checkbox" /><span>采纳目录</span></label>
             <select id="question-enrichment-chapter"></select>
             <label class="enrichment-field-toggle"><input id="question-enrichment-use-knowledge" type="checkbox" /><span>采纳知识点</span></label>
@@ -2093,6 +2437,94 @@
         <div class="question-enrichment-review-meta"><strong>判断依据</strong><p id="question-enrichment-reason"></p><div id="question-enrichment-evidence"></div></div>
       </form>
       <div class="form-actions provider-dialog-actions question-enrichment-dialog-actions"><span id="question-enrichment-apply-copy">请选择需要写入的字段</span><button class="secondary-action" id="reject-question-enrichment" type="button">拒绝建议</button><button class="primary-action" id="apply-question-enrichment" type="submit" form="question-enrichment-form">确认采纳并创建新版本</button></div>
+    </dialog>
+
+    <!-- DEC-100（产品手册"§4.6.12）：AI 巡检只诊断、不改库；这里是唯一的知识归属／题族归属改库入口。提交"POST /api/admin/knowledge-classification/apply（app.js 里只有一处调用点）。-->
+    <dialog class="content-editor-dialog question-enrichment-classification-dialog" id="question-enrichment-classification-dialog" aria-labelledby="question-enrichment-classification-title">
+      <div class="provider-dialog-head">
+        <div><h2 id="question-enrichment-classification-title">确认知识依据与题族归属</h2><p>这里是知识归属与题族归属的<b>唯一</b>改库入口；AI 巡检只诊断。上半区只读展示巡检结论，下半区由你确认后提交。</p></div>
+        <button class="dialog-close" id="close-question-enrichment-classification" type="button" aria-label="关闭" title="关闭">×</button>
+      </div>
+      <div class="provider-form-status" id="question-enrichment-classification-status" role="status" hidden></div>
+      <div class="question-enrichment-classification-question" id="question-enrichment-classification-question"></div>
+
+      <section class="question-enrichment-classification-inspection" id="question-enrichment-classification-inspection">
+        <div class="question-enrichment-classification-head">
+          <h3>这道题的巡检结论</h3>
+          <button class="secondary-action" id="open-inspection-from-enrichment" type="button">去看这道题的巡检结论</button>
+        </div>
+        <p class="enrichment-muted" id="question-enrichment-inspection-empty" hidden>尚无巡检结论。<b>题族归属可以现在单独确认</b>，也可先预览补齐缺失指纹与题族；已有内容不会被覆盖。最小充分知识集和知识焦点角色仍需巡检依据。</p>
+        <!-- 产品负责人"2026-09-26 决定 1：「纯缺题组／知识指纹」的题只补指纹＋题族，不调用 AI、              指纹本来就是确定性文本相似度（knowledge-structure-store.js 的 buildFingerprints），
+             真正依赖 Agent 判断的只有「最小充分知识集／知识焦点角色」形成对话和待审核规则，不会直接修改题库</p-->
+        <div class="question-enrichment-classification-deterministic" id="question-enrichment-deterministic-rebuild-row" hidden>
+          <button class="secondary-action" id="question-enrichment-deterministic-rebuild" type="button">预览并补齐缺失指纹与题族</button>
+          <p class="enrichment-muted">依据本题现有信息先预览，再由你确认补齐；不调用 AI，不覆盖已有指纹和归属。</p>
+        </div>
+        <div class="question-enrichment-inspection-audit" id="question-enrichment-inspection-audit" hidden></div>
+        <div class="question-enrichment-inspection-rule-findings" id="question-enrichment-inspection-rule-findings" hidden></div>
+      </section>
+
+      <section class="question-enrichment-classification-section" id="question-enrichment-knowledge-basis">
+        <h3>1. 知识依据</h3>
+        <!-- 产品负责人"2026-09-26 决定 3：无巡检结论时本栏保留但必须标明「只是当前值回显」。-->
+        <p class="enrichment-muted" id="question-enrichment-knowledge-repeat-note" hidden>无巡检结论：下面是<b>题目当前知识点</b>的回勾，不是新建议，也不表示指纹已确认。下方提交仅新增题族关系；指纹请到「题目详情」人工核对并保存。</p>
+        <button id="question-enrichment-edit-fingerprint" class="secondary-action" type="button" hidden>核对／确认指解散题族集</button>
+        <div class="question-enrichment-classification-readonly" id="question-enrichment-knowledge-readonly"></div>
+        <div class="question-enrichment-classification-submit">
+          <h4>人工确认（提交后写入题目归属）</h4>
+          <fieldset class="question-enrichment-classification-fieldset" id="question-enrichment-knowledge-choices-fieldset">
+            <legend>最小充分知识集（作答必需知识，可多选）</legend>
+            <div class="question-enrichment-classification-choices" id="question-enrichment-knowledge-choices"></div>
+          </fieldset>
+          <fieldset class="question-enrichment-classification-fieldset" id="question-enrichment-knowledge-role-fieldset">
+            <legend>知识焦点角色</legend>
+            <label><input type="radio" name="question-enrichment-primary-node-role" value="core" data-enrichment-primary-role checked /> 作答核心（core）——必须计入最小充分知识集</label>
+            <label><input type="radio" name="question-enrichment-primary-node-role" value="scope_anchor" data-enrichment-primary-role /> 范围锚点（scope_anchor）——界定范围，不计入最小充分知识集</label>
+          </fieldset>
+          <p class="enrichment-muted" id="question-enrichment-knowledge-role-hint" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="question-enrichment-classification-section" id="question-enrichment-family-ownership">
+        <h3>2. 题族归属</h3>
+        <div class="question-enrichment-classification-family" id="question-enrichment-family-choices"></div>
+        <label class="enrichment-field-toggle" id="question-enrichment-create-candidate-family-toggle"><input id="question-enrichment-create-candidate-family" type="checkbox" /> 新建候选题<span>采纳目录</label>
+        <div class="question-enrichment-classification-draft" id="question-enrichment-family-draft" hidden>
+          <label>题族名称</span><input id="question-enrichment-candidate-family-name" type="text" placeholder="例如：辅音的发音方法（阻碍方式）" /></label>
+          <label>考查焦点<input id="question-enrichment-candidate-family-focus" type="text" placeholder="例如：辅音发音方法·阻碍方搜索题干、章节或题目 /></label>
+          <p class="enrichment-muted">新建的候选题族会自动成为本题的主题族；已有题族只能作为关联题族。</p>
+        </div>
+        <label class="enrichment-field-toggle" id="question-enrichment-family-deferred-toggle"><input id="question-enrichment-family-deferred" type="checkbox" /> 明确放入待归组（暂无准确题族，只保存知识判断点</label>
+        <p class="enrichment-muted" id="question-enrichment-family-coverage-summary" aria-live="polite"></p>
+        <label class="enrichment-field-toggle enrichment-classification-adjustment" id="question-enrichment-classification-adjustment" hidden>调整依据（与 AI 建议不同时必填）<input id="question-enrichment-classification-adjustment-reason" type="text" placeholder="一句话说明为什么调整，不采用 Agent 4 沉淀为修正案例保存" /></label>
+      </section>
+
+      <div class="form-actions provider-dialog-actions question-enrichment-classification-actions">
+        <span id="question-enrichment-classification-copy">提交后写入题目知识归属与题族归属</span>
+        <button class="secondary-action" id="cancel-question-enrichment-classification" type="button">取消</button>
+        <button class="primary-action" id="apply-question-enrichment-classification" type="button">确认并写AI 批量完善</button>
+      </div>
+    </dialog>
+
+    <dialog class="feedback-chat-dialog" id="feedback-chat-dialog" aria-labelledby="feedback-chat-title">
+      <header class="feedback-chat-head">
+        <div><h2 id="feedback-chat-title">反馈沟通</h2><p id="feedback-chat-meta"></p></div>
+        <div class="feedback-chat-tools">
+          <button class="secondary-action" id="refresh-feedback-chat" type="button" title="刷新沟通记录" aria-label="刷新沟通记录">↻</button>
+          <button class="secondary-action" id="close-feedback-chat" type="button" title="关闭" aria-label="关闭反馈沟通">×</button>
+        </div>
+      </header>
+      <div class="feedback-chat-scroll" id="feedback-chat-scroll">
+        <section class="feedback-chat-original" id="feedback-chat-original" aria-label="原始反馈"></section>
+        <section class="feedback-chat-history" id="feedback-chat-history" aria-label="沟通记录"></section>
+      </div>
+      <p class="feedback-chat-status" id="feedback-chat-status" role="status" aria-live="polite"></p>
+      <form class="feedback-chat-compose" id="feedback-chat-compose">
+        <label for="feedback-chat-input">平台回复</label>
+        <textarea id="feedback-chat-input" rows="3" maxlength="1000" placeholder="输入需要用户补充的信息或回复内容"></textarea>
+        <div class="feedback-chat-submit"><span id="feedback-chat-count">0 / 1000</span><button class="primary-action" id="send-feedback-chat" type="submit">发送</button></div>
+      </form>
+      <p class="feedback-chat-readonly" id="feedback-chat-readonly" hidden></p>
     </dialog>
 
     <dialog id="action-dialog">
@@ -2187,7 +2619,12 @@
       </form>
     </div>
 
-    <script src="knowledge-inspection-apply-guard.js"></script>
-    <script src="app.js?v=20260921.46"></script>
+    <script src="knowledge-inspection-apply-guard.js?v=20261016.115"></script>
+    <script src="library-workspace.js?v=20261016.115"></script>
+    <script src="question-enrichment-diff.js?v=20261016.115"></script>
+    <script src="question-review-model.js?v=20261016.115"></script>
+    <script src="question-editor-help.js?v=20261016.115"></script>
+    <script src="assessment-modes.js?v=20261016.115"></script>
+    <script src="app.js?v=20261016.115"></script>
   </body>
 </html>

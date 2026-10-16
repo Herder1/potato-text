@@ -6,12 +6,15 @@ const examProject = {
   year: 2026,
 };
 
+// materialGroupTotal＝**该科目每个材料题组各自的满分**（产品负责人 2026-09-25 确认：现代汉语 14 分，
+// 其余四科各 20 分）。只在"录入稿没写题组总分"时兜底，卷面写了就以卷面为准（口径见产品手册 §4.6.7）。
+// 唯一读取入口是 apps/api/src/exam-project-registry.js#materialGroupTotalForSubject()，调用方不要直接读本字段。
 const subjects = [
-  { id: "modern-chinese", name: "现代汉语", order: 1 },
-  { id: "classical-chinese", name: "古代汉语", order: 2 },
-  { id: "ancient-literature", name: "中国古代文学", order: 3 },
-  { id: "modern-literature", name: "中国现代文学", order: 4 },
-  { id: "contemporary-literature", name: "中国当代文学", order: 5 },
+  { id: "modern-chinese", name: "现代汉语", order: 1, materialGroupTotal: 14 },
+  { id: "classical-chinese", name: "古代汉语", order: 2, materialGroupTotal: 20 },
+  { id: "ancient-literature", name: "中国古代文学", order: 3, materialGroupTotal: 20 },
+  { id: "modern-literature", name: "中国现代文学", order: 4, materialGroupTotal: 20 },
+  { id: "contemporary-literature", name: "中国当代文学", order: 5, materialGroupTotal: 20 },
 ];
 
 const books = [

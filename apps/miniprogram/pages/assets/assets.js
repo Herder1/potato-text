@@ -27,7 +27,6 @@ Page({
     visibleAssets: [],
     stats: {},
     selectedAsset: null,
-    actionMenuOpen: false,
     packOptions: [],
   },
 
@@ -36,6 +35,7 @@ Page({
   },
 
   onShow() { this.refresh(); this.syncRemoteStatuses(); },
+  onPersonalAssetsSynced() { this.refresh(); },
 
   syncRemoteStatuses() {
     if (typeof wx.request !== "function" || typeof getApp !== "function") return;
@@ -59,20 +59,22 @@ Page({
 
   refresh() {
     const packs = loadPrivatePacks();
-    const assets = loadManagedAssets().map((asset) => ({
-      ...asset,
-      timeLabel: this.formatDate(asset.updatedAt),
-      catalogPath: asset.type === "question_pack"
-        ? `${asset.sourceLabel} · ${asset.questionCount} 道题`
-        : [asset.subjectName, asset.chapterTitle, asset.sectionTitle].filter(Boolean).join(" / "),
-      summary: asset.excerpt || asset.content || asset.stem || (asset.type === "question_pack" ? "暂无题包说明" : ""),
-      membershipNames: asset.type === "question"
+    const assets = loadManagedAssets().map((asset) => {
+      const membershipNames = asset.type === "question"
         ? packs.filter((pack) => pack.questionIds.includes(asset.id)).map((pack) => pack.name)
-        : [],
-      membershipLabel: asset.type === "question"
-        ? (packs.filter((pack) => pack.questionIds.includes(asset.id)).map((pack) => pack.name).join("、") || "暂未归入题包")
-        : "",
-    }));
+        : [];
+      return {
+        ...asset,
+        timeLabel: this.formatDate(asset.updatedAt),
+        catalogPath: asset.type === "question_pack"
+          ? `${asset.sourceLabel} · ${asset.questionCount} 道题`
+          : [asset.subjectName, asset.chapterTitle, asset.sectionTitle].filter(Boolean).join(" / "),
+        summary: asset.excerpt || asset.content || asset.stem || (asset.type === "question_pack" ? "暂无题包说明" : ""),
+        membershipNames,
+        membershipLabel: asset.type === "question" ? (membershipNames.join("、") || "暂未归入题包") : "",
+        metaPrimary: this.primaryMeta(asset, membershipNames),
+      };
+    });
     const selectedAsset = this.pendingAssetId ? assets.find((asset) => asset.id === this.pendingAssetId) : null;
     this.pendingAssetId = "";
     this.setData({ assets, packOptions: packs, stats: assetStats(assets), ...(selectedAsset ? { selectedAsset } : {}) }, () => this.applyFilter());
@@ -83,33 +85,69 @@ Page({
     return `${date.getMonth() + 1}月${date.getDate()}日`;
   },
 
+  // 卡片副信息行（2026-10-03 卡片化改版）：题包/卡片集给题量、题目给所属题包、笔记给「笔记」，
+  // 后面统一跟「更新于 M月D日」。归属（我的创作 / 复制资产）与目录路径不再上卡片，仍可在底部管理面板里看到。
+  primaryMeta(asset, membershipNames) {
+    if (asset.type === "question_pack" || asset.type === "card_pack") {
+      const count = Number(asset.questionCount);
+      return Number.isFinite(count) ? `${count} 道题` : "";
+    }
+    if (asset.type === "question") return membershipNames.length ? membershipNames.join("、") : "未归入题包";
+    if (asset.type === "note") return "笔记";
+    return "";
+  },
+
   selectFilter(event) { this.setData({ activeFilter: event.currentTarget.dataset.id }, () => this.applyFilter()); },
   applyFilter() {
     this.setData({ visibleAssets: this.data.assets.filter((asset) => this.data.activeFilter === "all" || asset.type === this.data.activeFilter) });
   },
+  // 整卡点击：直接进资产本身；没有独立页面的类型（卡片集等）回落到管理面板。
   openAsset(event) {
+    const asset = this.data.assets.find((item) => item.id === event.currentTarget.dataset.id);
+    if (!asset) return;
+    if (asset.type === "question_pack") { this.openPackCollection(asset); return; }
+    if (asset.type === "question") { this.openQuestionEditor(asset); return; }
+    if (asset.type === "note") { this.openNoteEditor(asset); return; }
+    this.setData({ selectedAsset: asset });
+  },
+  // 卡片右下「⋯」：打开底部管理面板（编辑 / 加入题包 / 公开 / 删除）。
+  // catchtap 已经阻断冒泡，点它不会同时触发整卡跳转。
+  openAssetMenu(event) {
     const asset = this.data.assets.find((item) => item.id === event.currentTarget.dataset.id);
     if (asset) this.setData({ selectedAsset: asset });
   },
   closeAsset() { this.setData({ selectedAsset: null }); },
 
+  openQuestionEditor(asset) {
+    wx.navigateTo({ url: `/pages/contribute/contribute?questionId=${encodeURIComponent(asset.id)}` });
+  },
+
+  openNoteEditor(asset) {
+    wx.navigateTo({ url: `/pages/note-editor/note-editor?noteId=${encodeURIComponent(asset.id)}` });
+  },
+
+  openPackCollection(asset) {
+    // 「我的资产」里的题包都是本人私有题包，必须显式声明来源（见 2026-09-28 题包入口修复）。
+    wx.navigateTo({ url: `/pages/pack-collection/pack-collection?id=${encodeURIComponent(asset.packId || asset.id)}&source=private` });
+  },
+
   editSelectedQuestion() {
     const asset = this.data.selectedAsset;
     if (!asset || asset.type !== "question") return;
-    wx.navigateTo({ url: `/pages/contribute/contribute?questionId=${encodeURIComponent(asset.id)}` });
+    this.openQuestionEditor(asset);
   },
 
   editSelectedNote() {
     const asset = this.data.selectedAsset;
     if (!asset || asset.type !== "note") return;
     this.setData({ selectedAsset: null });
-    wx.navigateTo({ url: `/pages/note-editor/note-editor?noteId=${encodeURIComponent(asset.id)}` });
+    this.openNoteEditor(asset);
   },
 
   openSelectedPack() {
     const asset = this.data.selectedAsset;
     if (!asset || asset.type !== "question_pack") return;
-    wx.navigateTo({ url: `/pages/pack-collection/pack-collection?id=${encodeURIComponent(asset.packId || asset.id)}` });
+    this.openPackCollection(asset);
   },
 
   createPackForSelectedQuestion() {
@@ -182,7 +220,4 @@ Page({
     });
   },
 
-  toggleActionMenu() { this.setData({ actionMenuOpen: !this.data.actionMenuOpen }); },
-  createQuestion() { this.setData({ actionMenuOpen: false }); wx.navigateTo({ url: "/pages/packs/packs?intent=addQuestion" }); },
-  createNote() { this.setData({ actionMenuOpen: false }); wx.navigateTo({ url: "/pages/note-editor/note-editor" }); },
 });

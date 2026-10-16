@@ -29,6 +29,8 @@ const TYPE_CAPABILITIES = {
 
 const TYPE_KEYS = new Set(Object.keys(TYPE_LABELS));
 const CAPABILITY_KEYS = ["speak", "submit", "publish", "write"];
+const RETENTION_DAYS = 180;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -157,6 +159,7 @@ function createUserRestrictionStore(adapter) {
       liftedById: "",
       createdAt: now,
       updatedAt: now,
+      retentionUntil: 0,
       history: [{ action: "apply", reason: payload.reason, expiresAt: payload.expiresAt, actor: payload.createdBy, createdAt: now }],
     };
     state.restrictions.unshift(item);
@@ -238,12 +241,33 @@ function createUserRestrictionStore(adapter) {
       return decorate(item, now);
     },
 
+    /** 注销时保留治理记录，但解除与原账号的直接关联。 */
+    anonymizeUser(userId, now = Date.now()) {
+      const target = String(userId || "").trim();
+      if (!target) return 0;
+      const state = read();
+      let changed = 0;
+      state.restrictions.forEach((item) => {
+        if (item.userId !== target) return;
+        item.userId = "anonymous";
+        item.anonymizedAt = now;
+        item.retentionUntil = Math.max(Number(item.retentionUntil) || 0, now + RETENTION_DAYS * DAY_MS);
+        item.updatedAt = now;
+        changed += 1;
+      });
+      if (changed) write(state);
+      return changed;
+    },
+
     /** 到期或已解除的记录不参与判定，这里只做一次惰性清理，避免文件无限增长。 */
     sweep(now = Date.now(), retentionDays = 90) {
       const state = read();
       const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
       const before = state.restrictions.length;
-      state.restrictions = state.restrictions.filter((item) => Number(item.expiresAt) > cutoff || item.liftedAt > cutoff);
+      state.restrictions = state.restrictions.filter((item) => (
+        Number(item.retentionUntil) > now
+        || (!item.retentionUntil && (Number(item.expiresAt) > cutoff || item.liftedAt > cutoff))
+      ));
       if (state.restrictions.length !== before) write(state);
       return before - state.restrictions.length;
     },

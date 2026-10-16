@@ -78,7 +78,12 @@ test("insertBlankCardInSet inserts before or after the reference card in the sam
     assert.equal(card.mnemonic, "");
     assert.deepEqual(card.associations, []);
     assert.equal(card.state, "new");
-    assert.deepEqual(savedCards.find((savedCard) => savedCard.id === card.id), card);
+    // C15（2026-09-23）：落盘时会给卡片补一个同步用的 updatedAt（服务端按它做 LWW），
+    // 其余字段必须与插入时逐字一致——契约没变，只是多了一个受管的同步戳。
+    const insertedSavedCard = savedCards.find((savedCard) => savedCard.id === card.id);
+    const { updatedAt: insertedStamp, ...insertedSavedBody } = insertedSavedCard;
+    assert.equal(typeof insertedStamp, "number");
+    assert.deepEqual(insertedSavedBody, card);
   });
   assert.equal(flow.savedSets()[0].customSetField, "keep-set");
   assert.deepEqual(flow.savedSets()[0].cards.find((card) => card.id === "card-1").futureField, { keep: true });
@@ -174,7 +179,10 @@ test("updateCardInSet merges onto the old card and preserves identity, state and
     answerDelta: { ops: [{ insert: "新答案\n" }] },
     futureField: { keep: true },
   });
-  assert.deepEqual(flow.savedSets()[0].cards[0], updated);
+  // C15：返回值仍是调用方给的那份（无同步戳），落盘的那份才带 updatedAt。
+  const { updatedAt: savedStamp, ...savedCardBody } = flow.savedSets()[0].cards[0];
+  assert.equal(typeof savedStamp, "number");
+  assert.deepEqual(savedCardBody, updated);
   assert.equal(flow.savedSets()[0].customSetField, "keep-set");
 });
 

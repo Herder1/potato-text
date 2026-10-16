@@ -1,6 +1,12 @@
 const STORAGE_KEY = "shukao_card_box_sets";
 const FOLDER_STORAGE_KEY = "shukao_card_box_folders";
 const ACTIVE_FOLDER_STORAGE_KEY = "shukao_card_box_active_folder";
+// 服务端同步（产品负责人 2026-09-23 定：卡集与知识卡搬到服务端，见 docs/OPEN_DECISIONS.md C15）：
+// 本地仍是"随时可用的工作副本"，登录后与 `POST /api/card-library/sync` 双向合并；
+// 删除不能只靠"对方没有"来表达，必须留墓碑，否则另一台设备上的旧副本会把删掉的东西带回来。
+const REMOVED_SETS_KEY = "shukao_card_box_removed_sets";
+const REMOVED_FOLDERS_KEY = "shukao_card_box_removed_folders";
+const LIBRARY_UPDATED_KEY = "shukao_card_box_library_updated";
 const DEFAULT_FOLDERS = ["我的卡集", "期末复习"];
 const ALL_FOLDERS = "全部卡集";
 const FALLBACK_SECTION = "未分类";
@@ -340,10 +346,257 @@ function loadCardSets() {
   const stored = wx.getStorageSync(STORAGE_KEY);
   return normalizeCardSets(Array.isArray(stored) ? stored : clone(seedSets));
 }
-function saveCardSets(sets) {
+function saveCardSets(sets, options = {}) {
+  const stored = wx.getStorageSync(STORAGE_KEY);
+  const previous = Array.isArray(stored) ? normalizeCardSets(stored) : [];
   const normalized = normalizeCardSets(sets);
-  wx.setStorageSync(STORAGE_KEY, normalized);
-  return normalized;
+  const stamped = options.fromServer ? normalized : stampSets(normalized, previous, options.touchIds || []);
+  writeCardSets(stamped);
+  wx.setStorageSync(LIBRARY_UPDATED_KEY, Math.max(
+    Number(wx.getStorageSync(LIBRARY_UPDATED_KEY) || 0),
+    ...stamped.map((set) => Number(set.updatedAt) || 0),
+    0,
+  ));
+  if (!options.fromServer) scheduleCardLibrarySync();
+  return stamped;
+}
+
+// ── 服务端同步（C15）：本地改一次 → 打 updatedAt → 防抖上行；服务端合并结果回写本地 ──────────
+
+let cardLibrarySyncContext = null;
+let cardLibrarySyncGeneration = 0;
+let cardLibrarySyncTimer = null;
+
+function writeCardSets(sets) {
+  wx.setStorageSync(STORAGE_KEY, normalizeCardSets(sets));
+}
+
+function loadTombstones(key) {
+  const stored = wx.getStorageSync(key);
+  if (!Array.isArray(stored)) return [];
+  return stored
+    .map((entry) => ({
+      name: String((entry && (entry.id || entry.name)) || "").trim(),
+      at: Number(entry && (entry.at || entry.deletedAt)) || 0,
+    }))
+    .filter((entry) => entry.name && entry.at > 0);
+}
+
+function addTombstones(key, entries) {
+  const merged = new Map(loadTombstones(key).map((entry) => [entry.name, entry.at]));
+  (entries || []).forEach((entry) => {
+    const name = String((entry && (entry.id || entry.name)) || "").trim();
+    const at = Number(entry && (entry.at || entry.deletedAt)) || 0;
+    if (!name || !at) return;
+    merged.set(name, Math.max(Number(merged.get(name) || 0), at));
+  });
+  const list = [...merged.entries()].map(([name, at]) => (key === REMOVED_SETS_KEY ? { id: name, at } : { name, at }));
+  wx.setStorageSync(key, list);
+  return list;
+}
+
+function clearTombstones(key) {
+  wx.setStorageSync(key, []);
+}
+
+function withoutManagedFields(set) {
+  const copy = { ...set };
+  delete copy.updatedAt;
+  delete copy.deletedCards;
+  return copy;
+}
+
+/**
+ * 给"真的变了"的卡集与卡片打上 `updatedAt`，并给这一轮消失的卡集/卡片写墓碑。
+ * 墓碑是同步语义的地基：没有它，另一台设备上的旧副本会把删掉的卡集/卡片带回来（C15 方案 A）。
+ */
+function stampSets(nextSets, previousSets, touchIds = []) {
+  const now = Date.now();
+  const previousById = new Map((previousSets || []).map((set) => [set.id, set]));
+  const removedSets = [];
+  const stamped = nextSets.map((set) => {
+    const before = previousById.get(set.id);
+    const result = { ...set };
+    const cards = (Array.isArray(set.cards) ? set.cards : []).map((card) => {
+      const beforeCard = before && Array.isArray(before.cards)
+        ? before.cards.find((item) => item.id === card.id)
+        : null;
+      const changed = !beforeCard || JSON.stringify({ ...beforeCard, updatedAt: 0 }) !== JSON.stringify({ ...card, updatedAt: 0 });
+      return changed ? { ...card, updatedAt: now } : card;
+    });
+    const previousCardIds = before && Array.isArray(before.cards) ? before.cards.map((card) => card.id) : [];
+    const deletedCards = Array.isArray(set.deletedCards) ? [...set.deletedCards] : [];
+    previousCardIds
+      .filter((id) => !cards.some((card) => card.id === id))
+      .forEach((id) => {
+        if (!deletedCards.some((entry) => entry.id === id)) deletedCards.push({ id, deletedAt: now });
+      });
+    result.cards = cards;
+    if (deletedCards.length) result.deletedCards = deletedCards;
+    const touched = touchIds.includes(set.id) || !before;
+    if (touched || JSON.stringify(withoutManagedFields(before)) !== JSON.stringify(withoutManagedFields(result))) {
+      result.updatedAt = now;
+    }
+    return result;
+  });
+  (previousSets || []).forEach((set) => {
+    if (!nextSets.some((item) => item.id === set.id)) removedSets.push({ id: set.id, at: now });
+  });
+  if (removedSets.length) addTombstones(REMOVED_SETS_KEY, removedSets);
+  return stamped;
+}
+
+/** 删卡集：走 store 而不是页面直接写 Storage——墓碑由 `stampSets` 自动补。 */
+function deleteCardSets(ids) {
+  const targets = (Array.isArray(ids) ? ids : [ids]).map((id) => String(id || "").trim()).filter(Boolean);
+  if (!targets.length) return loadCardSets();
+  return saveCardSets(loadCardSets().filter((set) => !targets.includes(set.id)));
+}
+
+/** 置顶＝把选中的卡集移到最前（数组顺序即置顶顺序）；被移动的卡集要打时间戳，否则纯排序传不到服务端。 */
+function pinCardSets(ids) {
+  const targets = (Array.isArray(ids) ? ids : [ids]).map((id) => String(id || "").trim()).filter(Boolean);
+  const sets = loadCardSets();
+  if (!targets.length) return sets;
+  const ordered = [
+    ...sets.filter((set) => targets.includes(set.id)),
+    ...sets.filter((set) => !targets.includes(set.id)),
+  ];
+  return saveCardSets(ordered, { touchIds: targets });
+}
+
+/**
+ * 把一份（别人的）分享快照导入成自己的卡集：**换新 id**，避免和对方的 id 撞车；
+ * 作者标记成"来自分享"，卡片原样收下（快照里不含对方的删除墓碑）。
+ */
+function importCardSet(source, folder = DEFAULT_FOLDERS[0]) {
+  if (!source || typeof source !== "object" || !Array.isArray(source.cards)) return null;
+  const imported = { ...source, id: setId(), folder: folder || DEFAULT_FOLDERS[0], author: "来自分享" };
+  delete imported.deletedCards;
+  saveCardSets([imported, ...loadCardSets()]);
+  return imported;
+}
+
+/** 上行给服务端的一份快照（含墓碑；`libraryUpdatedAt` 用于服务端判断谁的顺序更新）。 */
+function cardLibraryPayload() {
+  const sets = loadCardSets();
+  return {
+    libraryUpdatedAt: Number(wx.getStorageSync(LIBRARY_UPDATED_KEY) || 0)
+      || sets.reduce((newest, set) => Math.max(newest, Number(set.updatedAt) || 0), 0),
+    folders: loadCardFolders(),
+    removedFolders: loadTombstones(REMOVED_FOLDERS_KEY),
+    removedSets: loadTombstones(REMOVED_SETS_KEY),
+    sets,
+  };
+}
+
+/** 服务端合并结果回写本地（服务端已按并集 + LWW + 墓碑算完，本地直接采纳）。 */
+function applyServerLibrary(library) {
+  if (!library || typeof library !== "object") return null;
+  const removed = new Set(Array.isArray(library.deletedSetIds) ? library.deletedSetIds.map(String) : []);
+  const sets = normalizeCardSets(Array.isArray(library.sets) ? library.sets : []).filter((set) => !removed.has(set.id));
+  writeCardSets(sets);
+  if (Array.isArray(library.folders) && library.folders.length) saveCardFolders(library.folders);
+  // 墓碑已交到服务端手上（服务端只增不删），本地清空，避免同一批墓碑反复上行。
+  clearTombstones(REMOVED_SETS_KEY);
+  clearTombstones(REMOVED_FOLDERS_KEY);
+  wx.setStorageSync(LIBRARY_UPDATED_KEY, Math.max(
+    Number(library.libraryUpdatedAt) || 0,
+    ...sets.map((set) => Number(set.updatedAt) || 0),
+    0,
+  ));
+  return sets;
+}
+
+function configureCardLibrarySync(context) {
+  const next = context && context.baseUrl && context.token
+    ? { baseUrl: String(context.baseUrl), token: String(context.token) }
+    : null;
+  const previous = cardLibrarySyncContext;
+  const changed = Boolean(previous) !== Boolean(next)
+    || (previous && next && (previous.baseUrl !== next.baseUrl || previous.token !== next.token));
+  if (changed) cardLibrarySyncGeneration += 1;
+  cardLibrarySyncContext = next;
+  return cardLibrarySyncContext;
+}
+
+/** 本地改动后防抖上行（1.5s）：页面不必知道同步细节，改完就走。 */
+function scheduleCardLibrarySync() {
+  if (!cardLibrarySyncContext || typeof setTimeout !== "function") return;
+  if (cardLibrarySyncTimer) clearTimeout(cardLibrarySyncTimer);
+  cardLibrarySyncTimer = setTimeout(() => {
+    cardLibrarySyncTimer = null;
+    syncCardLibrary();
+  }, 1500);
+}
+
+/** 上行本地库并取回合并结果；未登录/无网络时静默跳过（本地照常可用）。 */
+function syncCardLibrary(context) {
+  const active = context && context.baseUrl && context.token ? context : cardLibrarySyncContext;
+  if (!active || !active.baseUrl || !active.token || typeof wx.request !== "function") return Promise.resolve(null);
+  const epoch = cardLibrarySyncGeneration;
+  const sameConfiguredContext = !cardLibrarySyncContext
+    || (String(cardLibrarySyncContext.baseUrl) === String(active.baseUrl)
+      && String(cardLibrarySyncContext.token) === String(active.token));
+  const payload = cardLibraryPayload();
+  return new Promise((resolve) => {
+    wx.request({
+      url: `${active.baseUrl}/api/card-library/sync`,
+      method: "POST",
+      header: { "Content-Type": "application/json", Authorization: `Bearer ${active.token}` },
+      data: payload,
+      success: (response) => {
+        const body = (response && response.data) || {};
+        if (!response || response.statusCode !== 200 || !body.success) {
+          resolve(null);
+          return;
+        }
+        if (epoch !== cardLibrarySyncGeneration || !sameConfiguredContext) {
+          resolve(null);
+          return;
+        }
+        applyServerLibrary(body.library);
+        resolve(body.library);
+      },
+      fail: () => resolve(null),
+    });
+  });
+}
+
+/** 创建分享快照（服务端冻结副本），成功返回 shareId；未登录/失败返回 null。 */
+function createCardSetShare(setId, context) {
+  const active = context && context.baseUrl && context.token ? context : cardLibrarySyncContext;
+  if (!active || !active.baseUrl || !active.token || typeof wx.request !== "function") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    wx.request({
+      url: `${active.baseUrl}/api/card-library/share`,
+      method: "POST",
+      header: { "Content-Type": "application/json", Authorization: `Bearer ${active.token}` },
+      data: { setId },
+      success: (response) => {
+        const body = (response && response.data) || {};
+        resolve(response && response.statusCode === 200 && body.success ? body.shareId : null);
+      },
+      fail: () => resolve(null),
+    });
+  });
+}
+
+/** 读取分享快照（匿名可读）：好友没登录也能看。 */
+function loadCardSetShare(shareId, context) {
+  const active = context && context.baseUrl ? context : cardLibrarySyncContext;
+  if (!active || !active.baseUrl || !shareId || typeof wx.request !== "function") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    wx.request({
+      url: `${active.baseUrl}/api/card-library/share/${encodeURIComponent(shareId)}`,
+      method: "GET",
+      success: (response) => {
+        const body = (response && response.data) || {};
+        resolve(response && response.statusCode === 200 && body.success ? body.share : null);
+      },
+      fail: () => resolve(null),
+    });
+  });
 }
 function ensureCardSetMetadata(id) {
   const stored = wx.getStorageSync(STORAGE_KEY);
@@ -367,8 +620,19 @@ function loadCardFolders() {
 }
 function saveCardFolders(folders) {
   const normalized = uniqueNames(folders);
-  wx.setStorageSync(FOLDER_STORAGE_KEY, normalized.length ? normalized : [DEFAULT_FOLDERS[0]]);
-  return normalized.length ? normalized : [DEFAULT_FOLDERS[0]];
+  const next = normalized.length ? normalized : [DEFAULT_FOLDERS[0]];
+  wx.setStorageSync(FOLDER_STORAGE_KEY, next);
+  // 文件夹的增删也是一次内容改动：服务端要靠这个时间戳判断"删除的文件夹不会被旧列表带回来"。
+  wx.setStorageSync(LIBRARY_UPDATED_KEY, Math.max(Number(wx.getStorageSync(LIBRARY_UPDATED_KEY) || 0), Date.now()));
+  return next;
+}
+
+/** 重新创建/改名后的文件夹名要撤销早先的删除墓碑，否则新文件夹会被自己的旧墓碑压掉。 */
+function clearFolderTombstone(name) {
+  const target = String(name || "").trim();
+  if (!target) return;
+  const remaining = loadTombstones(REMOVED_FOLDERS_KEY).filter((entry) => entry.name !== target);
+  wx.setStorageSync(REMOVED_FOLDERS_KEY, remaining.map((entry) => ({ name: entry.name, at: entry.at })));
 }
 function loadActiveCardFolder() {
   const folders = loadCardFolders();
@@ -395,6 +659,7 @@ function createCardFolder(name) {
   const folders = loadCardFolders();
   if (!folder || folder === ALL_FOLDERS || folders.includes(folder)) return null;
   saveCardFolders([...folders, folder]);
+  clearFolderTombstone(folder);
   return folder;
 }
 function renameCardFolder(previousName, nextName) {
@@ -406,6 +671,7 @@ function renameCardFolder(previousName, nextName) {
   const sets = loadCardSets().map((set) => ((set.folder || DEFAULT_FOLDERS[0]) === previous ? { ...set, folder: next } : set));
   saveCardSets(sets);
   saveCardFolders(folders.map((folder) => folder === previous ? next : folder));
+  clearFolderTombstone(next);
   if (remembered === previous) saveActiveCardFolder(next);
   return next;
 }
@@ -419,6 +685,7 @@ function deleteCardFolder(name) {
   const sets = loadCardSets().map((set) => ((set.folder || DEFAULT_FOLDERS[0]) === folder ? { ...set, folder: fallback } : set));
   saveCardSets(sets);
   saveCardFolders(remaining);
+  addTombstones(REMOVED_FOLDERS_KEY, [{ name: folder, at: Date.now() }]);
   if (remembered === folder) saveActiveCardFolder(fallback);
   return { folders: remaining, fallback };
 }
@@ -662,4 +929,17 @@ module.exports = {
   moveCardSet,
   adoptCardsIntoDirectory,
   createCardSet,
+  deleteCardSets,
+  pinCardSets,
+  importCardSet,
+  cardLibraryPayload,
+  applyServerLibrary,
+  configureCardLibrarySync,
+  scheduleCardLibrarySync,
+  syncCardLibrary,
+  createCardSetShare,
+  loadCardSetShare,
+  REMOVED_SETS_KEY,
+  REMOVED_FOLDERS_KEY,
+  LIBRARY_UPDATED_KEY,
 };

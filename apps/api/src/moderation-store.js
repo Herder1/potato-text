@@ -1,6 +1,11 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { canContactReporter, conversationState } = require("./feedback-conversation");
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const FEEDBACK_RETENTION_DAYS = 30;
+const MODERATION_RETENTION_DAYS = 180;
 
 const actionDefinitions = {
   take: { status: "processing", resolution: "已领取处理" },
@@ -24,6 +29,12 @@ function normalizeAttachments(values) {
     if (!match) return false;
     return Buffer.byteLength(match[2], "base64") <= 200 * 1024;
   });
+}
+
+function retentionDaysForReport(report) {
+  return report && (report.targetType === "app_feedback" || report.type === "product_feedback")
+    ? FEEDBACK_RETENTION_DAYS
+    : MODERATION_RETENTION_DAYS;
 }
 
 function seedReports() {
@@ -80,6 +91,13 @@ function normalizeReport(payload, now = Date.now()) {
     reason: reason.slice(0, 500),
     detail: String(payload.detail || "").trim().slice(0, 2000),
     feedbackCategory: String(payload.feedbackCategory || "").trim().slice(0, 60),
+    questionStemPreview: String(payload.questionStemPreview || "").trim().slice(0, 120),
+    clientStemPreview: String(payload.clientStemPreview || "").trim().slice(0, 120),
+    questionId: String(payload.questionId || "").trim().slice(0, 100),
+    questionType: String(payload.questionType || "").trim().slice(0, 40),
+    feedbackType: ["correction", "issue"].includes(String(payload.feedbackType || "")) ? String(payload.feedbackType) : "",
+    scoreRequestId: String(payload.scoreRequestId || "").trim().slice(0, 100),
+    clientFeedbackId: String(payload.clientFeedbackId || "").trim().slice(0, 100),
     contact: String(payload.contact || "").trim().slice(0, 120),
     attachments: normalizeAttachments(payload.attachments),
     clientContext: {
@@ -90,9 +108,12 @@ function normalizeReport(payload, now = Date.now()) {
     },
     createdAt: now,
     updatedAt: now,
+    retentionUntil: 0,
+    anonymizedAt: 0,
     handler: "",
     resolution: "",
     history: [],
+    messages: [],
   };
 }
 
@@ -118,9 +139,17 @@ function createModerationStore(adapter) {
       const query = String(filters.query || "").trim().toLowerCase();
       const all = read();
       const reports = all.filter((item) => {
-        if (status !== "all" && item.status !== status) return false;
+        if (status === "awaiting_reply") {
+          if (!conversationState(item).waitingForUser) return false;
+        } else if (status === "user_replied") {
+          if (!conversationState(item).userReplied) return false;
+        } else if (status !== "all" && item.status !== status) return false;
         if (risk !== "all" && item.risk !== risk) return false;
-        if (type !== "all" && item.type !== type) return false;
+        // 题目反馈＝虚拟筛选（2026-10-01 产品负责人定的口径）：不新增 type，避免影响既有
+        // product_feedback 的统计；判据是"type 是产品反馈 且 带了 questionId"。
+        if (type === "question_feedback") {
+          if (!(item.type === "product_feedback" && String(item.questionId || "").trim())) return false;
+        } else if (type !== "all" && item.type !== type) return false;
         if (query && ![item.targetTitle, item.targetId, item.reason, item.reporter && item.reporter.nickname, item.reportedUser && item.reportedUser.nickname]
           .join(" ").toLowerCase().includes(query)) return false;
         return true;
@@ -131,7 +160,7 @@ function createModerationStore(adapter) {
         return (riskOrder[right.risk] - riskOrder[left.risk]) || (right.updatedAt - left.updatedAt);
       });
       return {
-        reports,
+        reports: reports.map((report) => ({ ...report, ...conversationState(report) })),
         counts: {
           total: all.length,
           pending: all.filter((item) => item.status === "pending").length,
@@ -140,6 +169,38 @@ function createModerationStore(adapter) {
           resolved: all.filter((item) => ["resolved", "rejected"].includes(item.status)).length,
         },
       };
+    },
+    addMessage(id, { role, userId, actor = "", content, clientMessageId }) {
+      const reports = read();
+      const index = reports.findIndex((item) => item.id === id);
+      const item = reports[index];
+      if (!item || (role === "user" && item.reporter?.id !== userId)) throw new Error("moderation_not_found");
+      if (!["staff", "user"].includes(role)) throw new Error("feedback_message_role_invalid");
+      if (!canContactReporter(item)) throw new Error("feedback_recipient_unavailable");
+      const text = String(content || "").trim();
+      const requestId = String(clientMessageId || "").trim();
+      if (!text || text.length > 1000) throw new Error("feedback_message_content_invalid");
+      if (!requestId || requestId.length > 100) throw new Error("feedback_message_id_required");
+      const messages = item.messages || [];
+      const existing = messages.find((message) => message.role === role && message.clientMessageId === requestId);
+      if (existing) {
+        if (existing.content !== text) throw new Error("feedback_message_conflict");
+        return { report: clone(item), duplicate: true };
+      }
+      if (["resolved", "rejected"].includes(item.status)) throw new Error("moderation_already_closed");
+      if (role === "user" && !messages.some((message) => message.role === "staff")) throw new Error("feedback_reply_not_requested");
+      if (messages.length >= 100) throw new Error("feedback_message_limit");
+      const now = Date.now();
+      const message = {
+        id: `message-${crypto.randomUUID()}`, role, content: text, clientMessageId: requestId, createdAt: now,
+        ...(role === "staff" ? { actor: String(actor).slice(0, 100) } : {}),
+      };
+      reports[index] = {
+        ...item, messages: [...messages, message], status: "processing", updatedAt: now,
+        ...(role === "staff" ? { handler: actor } : {}),
+      };
+      write(reports);
+      return { report: clone(reports[index]), duplicate: false };
     },
     action(id, action, actor = "超级管理员", note = "") {
       const reports = read();
@@ -159,10 +220,50 @@ function createModerationStore(adapter) {
         handler: actor,
         resolution: definition.status === "processing" ? item.resolution : (feedbackResolution || definition.resolution),
         updatedAt: now,
-        history: [{ action, actor, note: String(note || definition.resolution).trim().slice(0, 500), createdAt: now }, ...(item.history || [])].slice(0, 50),
+        retentionUntil: ["resolved", "rejected"].includes(definition.status)
+          ? now + retentionDaysForReport(item) * DAY_MS
+          : item.retentionUntil || 0,
+        history: [{ action, actor, note: (String(note || "").trim() || feedbackResolution || definition.resolution).slice(0, 500), createdAt: now }, ...(item.history || [])].slice(0, 50),
       };
       write(reports);
       return clone(reports[index]);
+    },
+    /** 注销时解除用户身份，但保留必要的反馈/治理证据直到其保留期结束。 */
+    anonymizeUser(userId, now = Date.now()) {
+      const target = String(userId || "").trim();
+      if (!target) return 0;
+      const reports = read();
+      let changed = 0;
+      reports.forEach((item) => {
+        const reporterMatches = item.reporter && item.reporter.id === target;
+        const reportedMatches = item.reportedUser && item.reportedUser.id === target;
+        if (!reporterMatches && !reportedMatches) return;
+        if (reporterMatches) item.reporter = { id: "anonymous", nickname: "匿名用户" };
+        if (reportedMatches) item.reportedUser = { id: "anonymous", nickname: "匿名用户" };
+        item.contact = "";
+        item.anonymizedAt = now;
+        item.retentionUntil = Math.max(
+          Number(item.retentionUntil) || 0,
+          now + retentionDaysForReport(item) * DAY_MS,
+        );
+        item.updatedAt = now;
+        changed += 1;
+      });
+      if (changed) write(reports);
+      return changed;
+    },
+    /** 仅清理已结案且已到期的记录；未结案或法务保全记录不得误删。 */
+    sweepExpired(now = Date.now()) {
+      const reports = read();
+      const remaining = reports.filter((item) => !(
+        ["resolved", "rejected"].includes(item.status)
+        && Number(item.retentionUntil) > 0
+        && Number(item.retentionUntil) <= now
+        && item.legalHold !== true
+      ));
+      const removed = reports.length - remaining.length;
+      if (removed) write(remaining);
+      return removed;
     },
   };
 }

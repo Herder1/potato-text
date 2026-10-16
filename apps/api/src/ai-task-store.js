@@ -19,6 +19,9 @@ function classifyError(value) {
   const error = String(value || "").toLowerCase();
   if (error.includes("timeout")) return "timeout";
   if (error.includes("aborted") || error.includes("disconnect") || error.includes("interrupted")) return "interrupted";
+  // 451 = 上游按地区/法务原因拒绝当前出口（2026-10-09 实例：服务端没走本机代理）。这是出口/网络问题，
+  // 不是模型或密钥问题，归到 network 才能被失败分析正确分组、并进入可自动重跑的类别。
+  if (error.includes("region_blocked")) return "network";
   if (error.includes("http_error") || /http\s+[45]\d\d/.test(error)) return "upstream_http";
   if (error.includes("invalid_json")
     || error.includes("json_invalid")
@@ -34,11 +37,22 @@ function classifyError(value) {
   return "unknown";
 }
 
+/**
+ * 归一化 token 用量。**必须幂等**：本函数既处理上游原始形状（snake_case：
+ * `prompt_tokens` / `input_tokens`），也必须能再处理自己产出的形状（camelCase：
+ * `inputTokens` / `outputTokens` / `totalTokens`）。
+ *
+ * 2026-10-10 实例（静默丢账，已修）：原实现只读 snake_case，而 `createTaskStore.write()`
+ * 每次落盘都会把整份任务数组再过一遍 `normalizeTask` —— 于是 `finish()` 刚写进去的
+ * `{inputTokens, outputTokens, totalTokens}` 在下一次归一化时被读成 0 并判定为 null。
+ * 结果是 `.runtime/ai-tasks.json` 里 2000/2000 条任务用量全为 null，跨所有场景，
+ * 且不报错：成本核算因此长期没有任何基线（根因与验证见变更日志 2026-10-10 条目）。
+ */
 function normalizeUsage(usage) {
   if (!usage || typeof usage !== "object") return null;
-  const inputTokens = Number(usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokenCount ?? 0);
-  const outputTokens = Number(usage.completion_tokens ?? usage.output_tokens ?? usage.candidatesTokenCount ?? 0);
-  const reportedTotal = Number(usage.total_tokens ?? usage.totalTokenCount ?? 0);
+  const inputTokens = Number(usage.prompt_tokens ?? usage.input_tokens ?? usage.inputTokens ?? usage.promptTokenCount ?? 0);
+  const outputTokens = Number(usage.completion_tokens ?? usage.output_tokens ?? usage.outputTokens ?? usage.candidatesTokenCount ?? 0);
+  const reportedTotal = Number(usage.total_tokens ?? usage.totalTokenCount ?? usage.totalTokens ?? 0);
   const totalTokens = reportedTotal || inputTokens + outputTokens;
   if (!inputTokens && !outputTokens && !totalTokens) return null;
   return { inputTokens, outputTokens, totalTokens };
@@ -58,6 +72,7 @@ function normalizeTask(input) {
   const startedAt = Number(input.startedAt) || Date.now();
   return {
     id: String(input.id || crypto.randomUUID()),
+    userId: String(input.userId || ""),
     requestId: String(input.requestId || ""),
     sceneId: String(input.sceneId || "unknown"),
     sceneLabel: String(input.sceneLabel || input.sceneId || "未知场景"),
@@ -143,6 +158,15 @@ function createTaskStore(adapter) {
     get(id) {
       const task = read().find((item) => item.id === id);
       return task ? clone(task) : null;
+    },
+    deleteUser(userId) {
+      const target = String(userId || "").trim();
+      if (!target) return 0;
+      const tasks = read();
+      const remaining = tasks.filter((task) => task.userId !== target);
+      const removed = tasks.length - remaining.length;
+      if (removed) write(remaining);
+      return removed;
     },
     update(id, patch = {}) {
       const tasks = read();

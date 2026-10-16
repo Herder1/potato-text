@@ -1,0 +1,58 @@
+/* 设置页（2026-10-02 新建）：结构按产品负责人给的图，配色沿用仓库现有的青绿主色 #0b9588。 */
+.settings-page { padding-bottom: calc(60rpx + env(safe-area-inset-bottom)); }
+
+.sync-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20rpx; }
+.sync-button {
+  display: flex;
+  min-height: 96rpx;
+  margin: 0;
+  padding: 0 20rpx;
+  align-items: center;
+  justify-content: center;
+  color: #0b9588;
+  background: #ffffff;
+  border: 1rpx solid #e6ece9;
+  border-radius: 18rpx;
+  font-size: 25rpx;
+  /* 2026-10-03 产品负责人逐处指定：两个按钮文字降到 500 档（字号/颜色不动）。 */
+  font-weight: 500;
+  line-height: 1.2;
+  gap: 10rpx;
+}
+.sync-button[disabled] { color: #9aa5a0; background: #f4f5f4; }
+.sync-icon { font-size: 28rpx; }
+
+.sync-status { margin: 18rpx 4rpx 0; color: #8b938d; font-size: 21rpx; line-height: 1.5; }
+.cloud-warning { margin-top: 14rpx; padding: 18rpx 22rpx; color: #8a6a1f; background: #fdf6e6; border-radius: 14rpx; font-size: 22rpx; line-height: 1.6; }
+.cloud-conflict { margin-top: 18rpx; padding: 22rpx; background: #ffffff; border: 1rpx solid #e6ece9; border-radius: 16rpx; }
+.conflict-title { font-size: 26rpx; font-weight: 650; }
+.conflict-label { margin-top: 14rpx; color: #8b938d; font-size: 21rpx; }
+.cloud-version { max-height: 240rpx; margin-top: 8rpx; padding: 14rpx; background: #f6f8f7; border-radius: 10rpx; font-size: 20rpx; }
+.conflict-actions { display: grid; margin-top: 16rpx; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16rpx; }
+
+.settings-list { margin-top: 26rpx; overflow: hidden; }
+.settings-row { display: flex; padding: 26rpx 24rpx; align-items: center; border-bottom: 1rpx solid #f1f3f1; gap: 16rpx; }
+.settings-row:last-child { border-bottom: 0; }
+.settings-row-press { background: #f6f8f7; }
+.settings-copy { min-width: 0; flex: 1; }
+/* 2026-10-03 产品负责人逐处指定：行标题（练习设置/关于我们/个人信息收集清单/设备信息/注销账号）降到 500 档；
+   行说明与「退出登录」未在框内，保持原样（说明用默认字重、退出登录仍 600）。 */
+.settings-title { display: block; color: #232824; font-size: 27rpx; font-weight: 500; line-height: 1.35; }
+.settings-note { display: block; margin-top: 6rpx; color: #8b938d; font-size: 21rpx; line-height: 1.45; }
+.settings-arrow { flex: 0 0 auto; color: #b3bab6; font-size: 30rpx; line-height: 1; }
+.settings-row-danger .settings-title { color: #b63636; }
+
+.logout-button {
+  margin-top: 44rpx;
+  min-height: 76rpx;
+  color: #b63636;
+  background: #ffffff;
+  border: 1rpx solid #efdede;
+  border-radius: 18rpx;
+  font-size: 27rpx;
+  font-weight: 600;
+  line-height: 76rpx;
+}
+.logout-button[disabled] { color: #9aa5a0; border-color: #e6ece9; }
+
+.version-line { margin-top: 30rpx; color: #a3aaa6; font-size: 21rpx; text-align: center; }

@@ -35,17 +35,31 @@ test("wechat login creates a restorable session and synchronizes learning state"
   const loginResponse = await fetch(`${baseUrl}/api/auth/wechat/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code: "test-code", deviceId: "stable-test-device", profile: { nickname: "测试同学" } }),
+    body: JSON.stringify({ code: "test-code", deviceId: "stable-test-device" }),
   });
   const login = await loginResponse.json();
   assert.equal(loginResponse.status, 200);
   assert.equal(login.authMode, "development");
-  assert.equal(login.user.nickname, "测试同学");
-  assert.equal(login.account.creditBalance, 5);
+  // 登录不再接受客户端上送的头像昵称（getUserProfile 已回收），新用户一律用默认昵称。
+  assert.equal(login.user.nickname, "薯考同学");
+  assert.equal(login.user.avatarUrl, "");
+  // 注册奖励原 5 点 AI 额度 → 0.5 豆币（DEC-107）
+  assert.equal(login.account.beanBalance, 0.5);
 
   const meResponse = await fetch(`${baseUrl}/api/auth/me`, { headers: { Authorization: `Bearer ${login.token}` } });
   const me = await meResponse.json();
   assert.equal(me.user.id, login.user.id);
+
+  const profileResponse = await fetch(`${baseUrl}/api/auth/profile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${login.token}` },
+    body: JSON.stringify({ nickname: "测试同学", avatarUrl: `data:image/png;base64,${Buffer.from("avatar-bytes").toString("base64")}` }),
+  });
+  const profile = await profileResponse.json();
+  assert.equal(profileResponse.status, 200);
+  assert.equal(profile.user.nickname, "测试同学");
+  assert.equal(profile.user.communityNickname, "测试同学");
+  assert.match(profile.user.avatarUrl, /^data:image\/png;base64,/);
 
   const now = Date.now();
   const syncResponse = await fetch(`${baseUrl}/api/learning/state/sync`, {
@@ -96,10 +110,13 @@ test("wechat login creates a restorable session and synchronizes learning state"
   const secondLogin = await fetch(`${baseUrl}/api/auth/wechat/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code: "new-code", deviceId: "stable-test-device", profile: { nickname: "测试同学" } }),
+    body: JSON.stringify({ code: "new-code", deviceId: "stable-test-device" }),
   }).then((response) => response.json());
   assert.equal(secondLogin.user.id, login.user.id);
-  assert.equal(secondLogin.account.creditBalance, 5);
+  // 再次登录不得用默认昵称覆盖用户自设的昵称与头像。
+  assert.equal(secondLogin.user.nickname, "测试同学");
+  assert.match(secondLogin.user.avatarUrl, /^data:image\/png;base64,/);
+  assert.equal(secondLogin.account.beanBalance, 0.5);
 });
 
 test("learning state resolves newer bookmark and review changes", () => {

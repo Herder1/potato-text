@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0b9588" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- 未登录头像圆里的引导标志（产品负责人 2026-09-23 01:1x 参考图：人形轮廓，青绿细线）。
+       用 lucide 的 user 几何：头部圆 + 头肩开环。stroke-width 之所以是 1.5（而不是其它图标的 2）：
+       本图标只在这处以 48rpx（24px）渲染，24 视口 → 实际线宽 = 1.5 × 24/24 = 1.5px，
+       与参考图量到的细线一致；沿用 2 会粗成 2px，跟他给的参考图不一样。 -->
+  <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+  <circle cx="12" cy="7" r="4"/>
+</svg>

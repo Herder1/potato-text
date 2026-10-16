@@ -52,6 +52,16 @@ npm.cmd run db:verify
 
 The import summary must show every expected store. Keep `.runtime` as a read-only backup until the PostgreSQL-backed application has passed production smoke tests.
 
+## Runtime documents that must not be re-imported
+
+Since 2026-09-22 three AI stores are persisted in PostgreSQL as well: `classification-gold-reviews`, `knowledge-classification-experience` and `question-merge-commits` (they are listed in `apps/api/src/postgres-persistence.js` → `STORE_SPECS`). **The server is the authoritative source for these three**, confirmed by the product owner on 2026-09-22: import the local copies **once** to bootstrap the server, then stop publishing them from local machines (local machines only ship code and prompts).
+
+Why this is a hard rule: each write stores the **whole document** (`insert … on conflict (store_key) do update`). Running `db:import` again with an older local `classification-gold-reviews.json` / `knowledge-classification-experience.json` silently replaces everything the server accumulated (gold batches, inspection cases, corrections, rules) with that local snapshot.
+
+- Bootstrap import: put only those two files into a separate directory (for example `/app/.runtime/release`) and point `--runtime-root` at it; then restart the API so it hydrates the new rows. **Never** run `--runtime-root /app/.runtime` against a live server — that manifest also contains `users.json`, `billing.json`, `learning-state.json` and `admin-actions.json`.
+- `question-merge-commits.json` is intentionally **absent** from `PRIMARY_RUNTIME_FILES`: that journal is bound to concrete question states, so the server starts it empty.
+- There is no PostgreSQL → JSON export yet. Getting server-accumulated experience back onto a developer machine (as training material) requires a new export command.
+
 ## Cutover rule
 
 Stop admin and user writes before the final import. Run `db:import`, verify the result, deploy the PostgreSQL-backed API, and only then reopen writes. Do not let JSON and PostgreSQL accept independent writes during the cutover window.

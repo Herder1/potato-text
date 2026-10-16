@@ -1,35 +1,68 @@
-.contributions-page { padding-top: 32rpx; }
-.page-head { display: flex; align-items: center; justify-content: space-between; }
-.page-title { color: #222622; font-size: 42rpx; font-weight: 900; }
-.page-subtitle { margin-top: 5rpx; color: #7f8782; font-size: 21rpx; }
-.identity-entry { display: flex; min-height: 62rpx; padding: 0 18rpx; align-items: center; justify-content: center; color: #45524b; background: #e8ebe8; border-radius: 6rpx; font-size: 20rpx; }
-.contribution-summary { display: grid; min-height: 126rpx; margin-top: 26rpx; padding: 14rpx 0; background: #303633; border-radius: 8rpx; grid-template-columns: repeat(4,1fr); box-sizing: border-box; }
-.contribution-summary > view { display: flex; align-items: center; justify-content: center; flex-direction: column; border-right: 1rpx solid rgba(255,255,255,.13); }
-.contribution-summary > view:last-child { border-right: 0; }
-.contribution-summary text,.contribution-summary label { display: block; }
-.contribution-summary text { color: #fff; font-size: 32rpx; font-weight: 900; }
-.contribution-summary label { margin-top: 5rpx; color: rgba(255,255,255,.65); font-size: 18rpx; }
-.filter-scroll { margin-top: 22rpx; white-space: nowrap; }
-.filter-row { display: inline-flex; gap: 10rpx; }
-.filter { display: flex; min-width: 118rpx; height: 62rpx; padding: 0 19rpx; align-items: center; justify-content: center; color: #69726c; background: #e7eae7; border-radius: 31rpx; font-size: 20rpx; box-sizing: border-box; }
-.filter-active { color: #fff; background: #3b403c; font-weight: 800; }
-.sync-note { padding: 20rpx 0 2rpx; color: #8a918c; font-size: 18rpx; text-align: center; }
-.contribution-list { margin-top: 18rpx; overflow: hidden; background: #fff; border: 1rpx solid #e5e9e5; border-radius: 8rpx; }
-.contribution-row { display: grid; min-height: 138rpx; padding: 21rpx; align-items: center; border-bottom: 1rpx solid #e8ebe8; grid-template-columns: 58rpx minmax(0,1fr) 28rpx; gap: 15rpx; box-sizing: border-box; }
-.contribution-row:last-child { border-bottom: 0; }
-.type-mark { display: flex; width: 58rpx; height: 58rpx; align-items: center; justify-content: center; color: #2e7188; background: #e1f0f5; border-radius: 50%; font-size: 19rpx; font-weight: 850; }
-.type-note { color: #337052; background: #e5f1e8; }
-.type-question_pack,.type-card_pack { color: #80611e; background: #f5edcf; }
-.contribution-main { min-width: 0; }
-.contribution-title { overflow: hidden; color: #2d332f; font-size: 24rpx; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
-.contribution-path { margin-top: 6rpx; overflow: hidden; color: #858c87; font-size: 18rpx; text-overflow: ellipsis; white-space: nowrap; }
-.contribution-meta { display: flex; margin-top: 9rpx; align-items: center; color: #939a95; font-size: 17rpx; gap: 11rpx; }
-.status { padding: 4rpx 7rpx; border-radius: 3rpx; }
-.status-published { color: #28704b; background: #e2f2e7; }
+/* 2026-10-02 改版（第二轮，按产品负责人参考图重做）：
+   白卡 + 圆角 + 青绿点缀，页名「社区与贡献」。
+   卡片 1 = 当前头衔 + 下一等级 + 经验值进度条（显示分值，不是百分比）；卡片 2 = 公开 / 帖子 两类切换 + 内容卡片列表。
+   配色沿用仓库品牌青绿 #0b9588（与「我的」页头像图标同色）。 */
+.contributions-page { padding-top: 24rpx; }
+
+/* ── 卡片 1：当前头衔 + 经验值进度条 ───────────────────────────────────────── */
+.tier-card { padding: 28rpx 28rpx 30rpx; background: #fff; border-radius: 20rpx; box-shadow: 0 8rpx 24rpx rgba(31,36,33,.05); }
+.tier-card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 18rpx; }
+.tier-card-label { color: #8b938d; font-size: 20rpx; }
+.tier-card-next { flex: none; color: #0b9588; font-size: 20rpx; }
+/* 粗体改细（产品负责人逐处指定，对齐「我的」页昵称那档 500）——原 font-weight: 900；纯样式调整，不新增 DEC。 */
+.tier-card-name { margin-top: 12rpx; overflow: hidden; color: #1f2421; font-size: 38rpx; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.tier-progress-head { display: flex; margin-top: 28rpx; align-items: baseline; justify-content: space-between; }
+.tier-progress-hint { color: #8b938d; font-size: 20rpx; }
+.tier-progress-score { color: #0b9588; font-size: 21rpx; font-weight: 850; }
+.tier-progress-track { height: 14rpx; margin-top: 14rpx; overflow: hidden; background: #e2eeeb; border-radius: 7rpx; }
+.tier-progress-value { height: 100%; max-width: 100%; background: #3fb59d; border-radius: 7rpx; }
+
+/* ── 卡片 2：公开 / 帖子 两类切换 + 内容卡片列表 ─────────────────────────────── */
+.feed-card { margin-top: 22rpx; padding-bottom: 10rpx; background: #fff; border-radius: 20rpx; box-shadow: 0 8rpx 24rpx rgba(31,36,33,.05); }
+.mode-tabs { display: flex; padding: 0 26rpx; border-bottom: 1rpx solid #eef1ee; }
+.mode-tab { position: relative; margin-right: 52rpx; padding: 28rpx 0 22rpx; color: #8b938d; font-size: 27rpx; }
+.mode-tab-active { color: #1f2421; font-weight: 900; }
+.mode-tab-active::after { position: absolute; left: 0; bottom: 0; width: 52rpx; height: 6rpx; background: #0b9588; border-radius: 3rpx; content: ""; }
+.filter-scroll { margin-top: 20rpx; white-space: nowrap; }
+.feed-card .filter-scroll { padding: 0 26rpx; }
+.filter-row { display: inline-flex; gap: 12rpx; }
+/* 状态筛选弱化（2026-10-02 反馈「按钮抢了上方帖子/公开的视觉」）：更小、更淡，激活态不再用深色实心块，
+   让「公开 / 帖子」两个 tab 成为这一屏的主视觉。 */
+.filter { display: flex; min-width: 96rpx; height: 52rpx; padding: 0 18rpx; align-items: center; justify-content: center; color: #9aa19b; background: #f5f7f5; border-radius: 26rpx; font-size: 19rpx; box-sizing: border-box; }
+.filter-active { color: #0b7a6f; background: #e2f4ef; font-weight: 700; }
+.sync-note { padding: 20rpx 0 2rpx; color: #8a918c; font-size: 19rpx; text-align: center; }
+.feed-list { padding: 6rpx 26rpx 0; }
+.feed-item { margin-top: 20rpx; padding: 26rpx 24rpx; border: 1rpx solid #eaeeea; border-radius: 16rpx; }
+.feed-item-head { display: flex; align-items: baseline; justify-content: space-between; gap: 18rpx; }
+.feed-item-title { min-width: 0; overflow: hidden; color: #232824; font-size: 30rpx; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
+.feed-item-tag { flex: none; color: #0b9588; font-size: 20rpx; }
+.feed-item-excerpt { display: -webkit-box; margin-top: 14rpx; overflow: hidden; color: #7c847e; font-size: 22rpx; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.feed-item-foot { display: flex; margin-top: 18rpx; align-items: center; color: #9aa19b; font-size: 20rpx; gap: 22rpx; }
+.status { padding: 4rpx 10rpx; border-radius: 4rpx; }
+.status-published { color: #1d7f68; background: #e2f4ef; }
 .status-pending_review { color: #8b610b; background: #faefcc; }
 .status-rejected,.status-offline { color: #9b4942; background: #f5e5e3; }
-.row-arrow { color: #a2a8a3; font-size: 30rpx; }
-.empty-state { margin-top: 18rpx; padding: 86rpx 24rpx; color: #303631; background: #fff; border: 1rpx solid #e7eae7; border-radius: 8rpx; text-align: center; }
-.empty-state view { font-size: 25rpx; font-weight: 850; }
-.empty-state text { display: block; margin: 9rpx auto 0; max-width: 520rpx; color: #8b928d; font-size: 19rpx; line-height: 1.6; }
-.empty-state button { width: 240rpx; height: 68rpx; margin: 25rpx auto 0; padding: 0; color: #fff; background: #373c38; border-radius: 6rpx; font-size: 21rpx; line-height: 68rpx; }
+.empty-state { margin: 20rpx 26rpx 0; padding: 76rpx 24rpx; background: #fbfcfb; border-radius: 16rpx; text-align: center; }
+.empty-state view { color: #303631; font-size: 27rpx; font-weight: 850; }
+.empty-state text { display: block; margin: 12rpx auto 0; max-width: 520rpx; color: #8b928d; font-size: 20rpx; line-height: 1.6; }
+.empty-state button { width: 260rpx; height: 72rpx; margin: 30rpx auto 0; padding: 0; color: #fff; background: #2f3531; border-radius: 8rpx; font-size: 22rpx; line-height: 72rpx; }
+
+/* ── 升级门槛弹层（复用身份阶梯的 level-* 样式）──────────────────────────────── */
+.sheet-mask { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 20; background: rgba(20,24,21,.45); }
+.tier-sheet { position: fixed; right: 0; bottom: 0; left: 0; z-index: 21; max-height: 76vh; padding: 6rpx 26rpx 34rpx; overflow-y: auto; background: #fff; border-radius: 24rpx 24rpx 0 0; box-sizing: border-box; }
+.sheet-head { display: flex; padding: 26rpx 2rpx 16rpx; align-items: baseline; justify-content: space-between; }
+.sheet-head text { color: #1f2421; font-size: 30rpx; font-weight: 900; }
+.sheet-head label { color: #909691; font-size: 19rpx; }
+.sheet-note { margin-top: 20rpx; color: #858d87; font-size: 19rpx; line-height: 1.65; }
+.sheet-close { width: 100%; height: 80rpx; margin-top: 24rpx; padding: 0; color: #fff; background: #2f3531; border-radius: 8rpx; font-size: 23rpx; font-weight: 750; line-height: 80rpx; }
+.level-list { overflow: hidden; background: #fff; border: 1rpx solid #eaece9; border-radius: 16rpx; }
+.level-row { display: grid; min-height: 108rpx; padding: 18rpx 22rpx; align-items: center; border-bottom: 1rpx solid #eef1ee; grid-template-columns: 42rpx minmax(0,1fr) auto; gap: 14rpx; box-sizing: border-box; }
+.level-row:last-child { border-bottom: 0; }
+.level-current { background: #f2f9f6; }
+.level-state { width: 30rpx; height: 30rpx; border: 2rpx solid #cdd4cf; border-radius: 50%; box-sizing: border-box; }
+.level-state-achieved { display: flex; align-items: center; justify-content: center; color: #fff; background: #0b9588; border-color: #0b9588; font-size: 18rpx; font-weight: 900; }
+.level-main { min-width: 0; }
+.level-main text,.level-main label { display: block; }
+.level-main text { color: #303631; font-size: 24rpx; font-weight: 820; }
+.level-main label { margin-top: 6rpx; color: #858d87; font-size: 19rpx; }
+.current-label { padding: 5rpx 10rpx; color: #0b7a6f; background: #dff2ee; border-radius: 4rpx; font-size: 18rpx; }

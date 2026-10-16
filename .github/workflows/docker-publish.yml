@@ -13,6 +13,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # 同一分支/标签上并发构建时，取消旧的那次，避免两个构建抢推同一个 tag。
 concurrency:
   group: docker-publish-${{ github.ref }}
@@ -33,9 +36,15 @@ jobs:
   # 想把它变成发布门禁：删掉 continue-on-error 并给 docker 加 needs: test。
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     continue-on-error: true
+    env:
+      NODE_ENV: development
+      SHUKAO_PDF_PYTHON: /usr/bin/python3
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -71,12 +80,15 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -104,6 +116,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -115,3 +128,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
+
+      - name: Summarize published image
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            printf '## Published Docker image\n\n'
+            printf 'Commit: `%s`\n\n' "$GITHUB_SHA"
+            printf 'Digest: `%s`\n\n' "$IMAGE_DIGEST"
+            printf '```text\n%s\n```\n\n' "$IMAGE_TAGS"
+            printf 'The image is published to GHCR. Pull it and recreate the container in 1Panel to deploy.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

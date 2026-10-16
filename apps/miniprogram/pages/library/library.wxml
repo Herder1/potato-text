@@ -155,19 +155,15 @@
   </block>
 </view>
 
-  <view class="library-fab-menu {{actionMenuOpen ? 'library-fab-menu-open' : ''}}" wx:if="{{activeContentTab === 'packs' || activeContentTab === 'materials'}}">
-    <block wx:if="{{activeContentTab === 'packs'}}">
-      <view class="library-fab-action" bindtap="contributeQuestionFromLibrary"><text>录入题目</text><view class="library-fab-small">题</view></view>
-      <view class="library-fab-action" bindtap="createLibraryPack"><text>新建题包</text><view class="library-fab-small">包</view></view>
-    </block>
-    <view wx:else class="library-fab-action" bindtap="createNoteFromLibrary"><text>新建笔记</text><view class="library-fab-small">记</view></view>
-  </view>
-  <view class="library-fab" wx:if="{{activeContentTab === 'packs' || activeContentTab === 'materials'}}" bindtap="toggleActionMenu" role="button" aria-label="创建我的内容">
-    <view class="library-fab-glyph {{actionMenuOpen ? 'library-fab-glyph-close' : ''}}">
+  <!-- 2026-09-23 04:Cx 产品负责人真机反馈「去掉绿框内容，现在这个按钮只有一个功能就是新建题包」：
+       原来这颗悬浮入口是「＋ → 展开两项菜单（录入题目 / 新建题包）」，绿框框的就是那两行。
+       菜单整个撤掉，＋ 直接执行本 tab 的唯一动作：题包 tab＝新建题包、资料 tab＝新建笔记
+       （资料 tab 的菜单原本也只有「新建笔记」这一项，撤掉菜单后动作不丢）。 -->
+  <view class="library-fab" wx:if="{{activeContentTab === 'packs' || activeContentTab === 'materials'}}" bindtap="createFromLibraryFab" role="button" aria-label="{{activeContentTab === 'packs' ? '新建题包' : '新建笔记'}}">
+    <view class="library-fab-glyph">
       <view class="library-fab-stroke library-fab-stroke-horizontal"></view>
       <view class="library-fab-stroke library-fab-stroke-vertical"></view>
     </view>
-    <text class="library-fab-label">{{actionMenuOpen ? '收起' : '新建'}}</text>
   </view>
 
   <view class="resource-detail-layer" wx:if="{{selectedPublicPack}}" bindtap="closePublicPack">

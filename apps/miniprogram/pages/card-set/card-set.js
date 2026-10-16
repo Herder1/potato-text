@@ -20,6 +20,8 @@ const {
   setSetsColor,
   updateSet,
 } = require("../../utils/card-box-store");
+// 分享与服务端同步走命名空间引入（C15）：分享快照、导入、同步都在 store 里。
+const cardBoxStore = require("../../utils/card-box-store");
 
 const FALLBACK_SECTION = "未分类";
 // DEC-087：目录块「先子目录、后自己的卡片」（文件夹在前、文件在后），与题包合集页同一套。
@@ -255,6 +257,8 @@ Page({
 
   onLoad(options) {
     this.setId = options.id;
+    // 分享链接走服务端快照（C15）：`?share=<shareId>` 是只读副本，好友点开按 id 从服务端取。
+    this.sharedShareId = options.share ? String(options.share) : "";
     this.measureNavigation();
   },
 
@@ -450,12 +454,62 @@ Page({
 
   onShow() {
     if (typeof wx.showShareMenu === "function") wx.showShareMenu({ menus: ["shareAppMessage"] });
+    if (this.sharedShareId) {
+      this.refreshFromShare();
+      return;
+    }
     this.refresh();
+    this.prepareShareSnapshot();
+  },
+
+  /**
+   * 好友点开分享链接：读服务端快照渲染成**只读**卡集（不落本地库），底部给「导入到我的卡集」。
+   * 快照与分享者的卡集解耦——分享者之后怎么改，这条链接看到的内容都不变。
+   */
+  refreshFromShare() {
+    const application = typeof getApp === "function" ? getApp() : null;
+    const baseUrl = application && application.globalData ? application.globalData.apiBaseUrl : "";
+    cardBoxStore.loadCardSetShare(this.sharedShareId, { baseUrl }).then((share) => {
+      if (!share || !share.set) {
+        this.setData({ sharedView: true, shareMissing: true });
+        return;
+      }
+      this.sharedSnapshot = share.set;
+      this.renderSet(share.set, { shared: true });
+    });
+  },
+
+  /** 分享者这一侧：进页面就备好快照，保证 `onShareAppMessage`（同步返回）能带 shareId。 */
+  prepareShareSnapshot() {
+    const application = typeof getApp === "function" ? getApp() : null;
+    const token = application && application.globalData ? application.globalData.authToken : "";
+    const baseUrl = application && application.globalData ? application.globalData.apiBaseUrl : "";
+    if (!token || !this.setId || typeof wx.request !== "function") return;
+    cardBoxStore.createCardSetShare(this.setId, { baseUrl, token }).then((shareId) => {
+      if (shareId) this.setData({ shareId });
+    });
+  },
+
+  /** 导入分享快照：复制成自己的卡集（新 id、落当前文件夹），随后跳到自己那份继续编辑。 */
+  importSharedSet() {
+    if (!this.sharedSnapshot) return;
+    const folders = cardBoxStore.loadCardFolders();
+    const imported = cardBoxStore.importCardSet(this.sharedSnapshot, folders[0]);
+    if (!imported) {
+      wx.showToast({ title: "导入失败，请重试", icon: "none" });
+      return;
+    }
+    wx.showToast({ title: "已导入到我的卡集", icon: "success" });
+    wx.redirectTo({ url: `/pages/card-set/card-set?id=${encodeURIComponent(imported.id)}` });
   },
 
   refresh() {
     const set = ensureCardSetMetadata(this.setId) || findSet(this.setId);
     if (!set) return;
+    this.renderSet(set, { shared: false });
+  },
+
+  renderSet(set, options = {}) {
     const titles = orderedSectionTitles(set);
     const levels = set.sectionLevels || {};
     const displayDescription = Object.prototype.hasOwnProperty.call(set, "description")
@@ -487,7 +541,19 @@ Page({
       catalogRows,
       catalogDirectoryCount: sections.length,
       catalogExpandedAll: isDirectoryFullyExpanded(catalogRows),
+      // 分享链接进来的这一页是只读的：底部编辑栏换成「导入到我的卡集」。
+      sharedView: options.shared === true,
+      shareMissing: false,
     });
+    if (options.shared === true) {
+      // 只读快照的兜底：把会编辑/跳转的入口在原位换成空操作（本页只允许「导入到我的卡集」这一个写动作）。
+      // 快照里的卡片 id 不属于本地库，`this.setId` 为空，即使漏掉某个入口也只会 no-op、不会写坏本地数据。
+      [
+        "openCard", "startSelect", "openAddMenu", "openMoreDrawer", "drawerAction",
+        "editDirectory", "openDirectoryActions", "selectionAction", "deleteSelected",
+        "selectCatalogCard", "practice", "handleCardTouchStart", "handleTitleTouchStart",
+      ].forEach((name) => { this[name] = () => {}; });
+    }
   },
 
   openCard(e) {
@@ -1522,9 +1588,11 @@ Page({
   },
 
   onShareAppMessage() {
-    return {
-      title: this.data.set ? this.data.set.title : "知识卡集",
-      path: `/pages/card-set/card-set?id=${encodeURIComponent(this.setId)}`,
-    };
+    const title = this.data.set ? this.data.set.title : "知识卡集";
+    // C15：分享的是**服务端快照**（好友没登录、也没有我这份本地数据，只有按 id 取回的冻结副本）。
+    const shareId = this.sharedShareId || this.data.shareId;
+    if (shareId) return { title, path: `/pages/card-set/card-set?share=${encodeURIComponent(shareId)}` };
+    // 未登录/快照还没就绪时退回旧行为（本机 id），避免分享按钮直接失败。
+    return { title, path: `/pages/card-set/card-set?id=${encodeURIComponent(this.setId)}` };
   },
 });

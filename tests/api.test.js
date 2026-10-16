@@ -9,6 +9,7 @@ const { createMemoryTextbookCatalogStore } = require("../apps/api/src/textbook-c
 const { createMemoryExamStore } = require("../apps/api/src/exam-store");
 const { createMemoryPackStore } = require("../apps/api/src/pack-store");
 const { createMemoryBillingStore } = require("../apps/api/src/billing-store");
+const { createMemoryUserAuthStore } = require("../apps/api/src/user-auth-store");
 const { createMemoryQuestionStore } = require("../apps/api/src/question-store");
 const { createMemoryAnnouncementStore } = require("../apps/api/src/announcement-store");
 
@@ -323,7 +324,7 @@ test("admin textbook drafts stay private until manual confirmation", async (cont
   assert.equal(operationLogStore.list({ category: "catalog" }).items.length, 3);
 });
 
-test("billing APIs expose products and preserve auditable credit settlement", async (context) => {
+test("billing APIs expose products and preserve auditable bean settlement", async (context) => {
   const billingStore = createMemoryBillingStore();
   const operationLogStore = createMemoryAdminOperationStore();
   const server = createServer({ aiConfigStore: createMemoryAiConfigStore(), billingStore, operationLogStore });
@@ -341,21 +342,166 @@ test("billing APIs expose products and preserve auditable credit settlement", as
   });
   const grant = await grantResponse.json();
   assert.equal(grant.account.subscriptions.length, 1);
-  assert.equal(grant.account.creditBalance, 50);
+  // 初始 2 豆币 + 单科订阅赠送 3 豆币（原 30 点额度 ÷10）
+  assert.equal(grant.account.beanBalance, 5);
+  assert.equal(grant.order.priceCents, 6900);
+  assert.equal(grant.beanGrant.lot.source, "subscription_bonus");
 
-  const consumeResponse = await fetch(`http://127.0.0.1:${port}/api/billing/credits/consume`, {
+  const consumeResponse = await fetch(`http://127.0.0.1:${port}/api/billing/beans/consume`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userId: "test-user", amount: 1, referenceId: "score-request-1", description: "主观题评分" }),
+    body: JSON.stringify({ userId: "test-user", amount: 0.1, referenceId: "score-request-1", description: "主观题评分" }),
   });
   const consumed = await consumeResponse.json();
-  assert.equal(consumed.account.creditBalance, 49);
+  assert.equal(consumed.account.beanBalance, 4.9);
   assert.equal(consumed.account.transactions[0].transactionType, "consume");
+
+  // 旧额度接口语义不变：1 点额度 = 0.1 豆币，扣的是同一份豆币余额
+  const legacyResponse = await fetch(`http://127.0.0.1:${port}/api/billing/credits/consume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: "test-user", amount: 1, referenceId: "score-request-legacy", description: "主观题评分（旧客户端）" }),
+  });
+  const legacy = await legacyResponse.json();
+  assert.equal(legacyResponse.status, 200);
+  assert.equal(legacy.consumedAmount, 0.1);
+  assert.equal(legacy.account.beanBalance, 4.8);
 
   const dashboard = await fetch(`http://127.0.0.1:${port}/api/admin/billing`).then((response) => response.json());
   assert.equal(dashboard.counts.activeSubscriptions, 1);
-  assert.equal(dashboard.counts.creditBalance, 49);
+  assert.equal(dashboard.counts.beanBalance, 4.8);
   assert.equal(operationLogStore.list({ category: "billing" }).items.length, 1);
+
+  const groupResponse = await fetch(`http://127.0.0.1:${port}/api/admin/billing/packages/subject-modern-chinese`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ packageName: "现代汉语精选题库", scopeLabel: "现代汉语 · 两册" }),
+  });
+  assert.equal(groupResponse.status, 200);
+  const group = await groupResponse.json();
+  assert.equal(group.products.length, 1);
+  assert.equal(group.products[0].packageName, "现代汉语精选题库");
+  assert.equal(group.products[0].priceCents, 6900);
+  assert.equal(operationLogStore.list({ category: "billing" }).items.length, 2);
+});
+
+test("admin refund keeps the two effects separate: full refund revokes, refund_only does not", async (context) => {
+  const billingStore = createMemoryBillingStore();
+  const operationLogStore = createMemoryAdminOperationStore();
+  const server = createServer({ aiConfigStore: createMemoryAiConfigStore(), billingStore, operationLogStore });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+  const purchase = async (productId) => fetch(`${base}/api/admin/billing/users/test-user/grant-product`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ productId }),
+  }).then((response) => response.json());
+  const refund = async (orderId, body) => fetch(`${base}/api/admin/billing/orders/${encodeURIComponent(orderId)}/refund`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then((response) => response.json());
+
+  // 仅退款：钱退了，订阅权与赠币都不收回
+  const onlyRefundOrder = await purchase("product-modern-chinese-2026");
+  const onlyRefund = await refund(onlyRefundOrder.order.id, { mode: "refund_only", reason: "客服补偿" });
+  assert.equal(onlyRefund.mode, "refund_only");
+  assert.equal(onlyRefund.order.refundMode, "refund_only");
+  assert.equal(onlyRefund.clawedBackBeans, 0);
+  assert.equal(onlyRefund.account.subscriptions.length, 1, "仅退款保留订阅权");
+  assert.equal(onlyRefund.account.beanBalance, 5, "仅退款保留赠币");
+  assert.equal(onlyRefund.account.transactions.some((item) => item.transactionType === "revoke"), false);
+
+  // 默认退款：收回订阅权 + 扣回未消费赠币
+  const fullRefundOrder = await purchase("product-chinese-literature-2026");
+  const fullRefund = await refund(fullRefundOrder.order.id, { reason: "用户申请退款" });
+  assert.equal(fullRefund.mode, "revoke");
+  assert.equal(fullRefund.revokedEntitlement.id, fullRefundOrder.entitlement.id);
+  assert.equal(fullRefund.clawedBackBeans, 10);
+  assert.equal(fullRefund.account.beanBalance, 5, "只扣回该订单的赠币，不动其它批次");
+  assert.equal(fullRefund.account.subscriptions.length, 1, "该订单的订阅权已收回，仅剩未退款的那笔");
+
+  // 非法模式必须拒绝，且不产生任何副作用
+  const invalid = await fetch(`${base}/api/admin/billing/orders/${encodeURIComponent(fullRefundOrder.order.id)}/refund`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode: "乱写的模式" }),
+  });
+  assert.equal(invalid.status, 422);
+  assert.equal((await invalid.json()).error, "billing_refund_mode_invalid");
+
+  // 两件独立操作各有自己的入口
+  const secondOrder = await purchase("product-modern-chinese-2026");
+  const revokeOnly = await fetch(`${base}/api/admin/billing/orders/${encodeURIComponent(secondOrder.order.id)}/revoke-entitlement`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason: "只收回权益" }),
+  }).then((response) => response.json());
+  assert.equal(revokeOnly.revokedEntitlement.id, secondOrder.entitlement.id);
+  assert.equal(revokeOnly.account.beanBalance, 8, "只收回权益不动豆币（5 + 3）");
+  const clawBackOnly = await fetch(`${base}/api/admin/billing/orders/${encodeURIComponent(secondOrder.order.id)}/claw-back-beans`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason: "只扣回赠币" }),
+  }).then((response) => response.json());
+  assert.equal(clawBackOnly.clawedBackBeans, 3);
+  assert.equal(clawBackOnly.account.beanBalance, 5);
+  assert.equal(operationLogStore.list({ category: "billing" }).items.length, 7);
+});
+
+test("development test purchase creates an authenticated order that admin can refund", async (context) => {
+  const billingStore = createMemoryBillingStore();
+  const userAuthStore = createMemoryUserAuthStore();
+  const operationLogStore = createMemoryAdminOperationStore();
+  const server = createServer({ aiConfigStore: createMemoryAiConfigStore(), userAuthStore, billingStore, operationLogStore });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  const loginResponse = await fetch(`${base}/api/auth/wechat/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: "billing-test-code", deviceId: "billing-test-device" }),
+  });
+  const login = await loginResponse.json();
+  assert.equal(loginResponse.status, 200);
+
+  const purchase = async (requestId) => fetch(`${base}/api/billing/test-purchase`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${login.token}` },
+    body: JSON.stringify({ productId: "product-modern-chinese-2026", requestId }),
+  });
+  const first = await purchase("same-test-request");
+  const firstPayload = await first.json();
+  assert.equal(first.status, 200);
+  assert.equal(firstPayload.order.channel, "user_test_simulation");
+  assert.equal(firstPayload.account.subscriptions.length, 1);
+
+  const duplicate = await purchase("same-test-request");
+  const duplicatePayload = await duplicate.json();
+  assert.equal(duplicate.status, 200);
+  assert.equal(duplicatePayload.duplicated, true);
+  assert.equal(duplicatePayload.order.id, firstPayload.order.id);
+
+  const refund = await fetch(`${base}/api/admin/billing/orders/${encodeURIComponent(firstPayload.order.id)}/refund`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode: "revoke", reason: "测试链路退款" }),
+  });
+  const refundPayload = await refund.json();
+  assert.equal(refund.status, 200);
+  assert.equal(refundPayload.order.status, "refunded");
+  assert.equal(refundPayload.revokedEntitlement.id, firstPayload.entitlement.id);
+
+  const account = await fetch(`${base}/api/billing/account`, {
+    headers: { Authorization: `Bearer ${login.token}` },
+  }).then((response) => response.json());
+  assert.equal(account.account.subscriptions.length, 0);
+  assert.equal(account.account.orders[0].status, "refunded");
+  assert.ok(operationLogStore.list({ category: "billing" }).items.some((item) => item.action === "billing.test_purchase"));
 });
 
 test("admin exams and public packs use real questions and audited publishing", async (context) => {
@@ -632,6 +778,11 @@ test("admin question APIs create searchable official questions with versions", a
   assert.equal(importedBatch.count, 1);
   assert.equal(importedBatch.subjectId, "modern-chinese");
 
+  // 归类完整（教材 + 章节 + 知识点）且答案已核对的导入题，正常进入用户端题目列表。
+  const publishedBeforeMove = await fetch(`http://127.0.0.1:${port}/api/questions?library=official&bookId=modern-chinese-7-1`).then((response) => response.json());
+  assert.equal(publishedBeforeMove.questions.some((question) => question.id === committed.createdIds[0]), true);
+  assert.equal(publishedBeforeMove.counts.byBook["modern-chinese-7-1"], publishedBeforeMove.total);
+
   const batchUpdateResponse = await fetch(`http://127.0.0.1:${port}/api/admin/questions/import-batches/${encodeURIComponent(committed.batchId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -645,12 +796,20 @@ test("admin question APIs create searchable official questions with versions", a
   assert.equal(filteredBatch.questions.length, 1);
   assert.equal(filteredBatch.questions[0].bookId, "contemporary-literature-history-3");
   assert.equal(filteredBatch.questions[0].version, 2);
-  assert.equal(filteredBatch.questions[0].versions[0].changeNote, "批次统一修改科目与教材");
+  assert.equal(filteredBatch.questions[0].versions[0].changeNote, "批次补充归属（科目／教材／章节／知识点）");
+  // 换教材后，原教材的下级关联（章节/知识点）不得残留；题目因此退回「待归类」，
+  // 不再自动发布到用户端，但仍留在平台题目管理里可查、可补归属。
+  assert.equal(filteredBatch.questions[0].chapter, "");
+  assert.deepEqual(filteredBatch.questions[0].knowledgePoints, []);
+  assert.equal(filteredBatch.questions[0].status, "pending_review");
+  assert.equal(filteredBatch.pendingClassificationCount, 1);
+
+  const pendingClassification = await fetch(`http://127.0.0.1:${port}/api/admin/questions?library=official&classification=pending&importBatchId=${encodeURIComponent(committed.batchId)}`).then((response) => response.json());
+  assert.equal(pendingClassification.questions.length, 1);
+  assert.deepEqual(pendingClassification.questions[0].classification.missing, ["chapter", "knowledge_points"]);
 
   const clientQuestions = await fetch(`http://127.0.0.1:${port}/api/questions?library=official&bookId=contemporary-literature-history-3`).then((response) => response.json());
-  assert.equal(clientQuestions.questions.some((question) => question.id === committed.createdIds[0]), true);
-  assert.equal(clientQuestions.questions.find((question) => question.id === committed.createdIds[0]).score, 2);
-  assert.equal(clientQuestions.counts.byBook["contemporary-literature-history-3"], clientQuestions.total);
+  assert.equal(clientQuestions.questions.some((question) => question.id === committed.createdIds[0]), false);
 
   const duplicatePreview = await fetch(`http://127.0.0.1:${port}/api/admin/questions/import-text`, {
     method: "POST",

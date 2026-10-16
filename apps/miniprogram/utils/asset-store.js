@@ -1,3 +1,4 @@
+const { notifyPersonalAssetChanged, kindForAsset } = require("./personal-cloud-sync");
 const STORAGE_KEY = "shukao_user_assets";
 const MIGRATION_KEY = "shukao_assets_migrated_v1";
 
@@ -98,7 +99,8 @@ function saveAsset(asset, storage = wx) {
   const index = assets.findIndex((item) => item.id === normalized.id);
   if (index >= 0) assets[index] = normalized;
   else assets.unshift(normalized);
-  storage.setStorageSync(STORAGE_KEY, assets.slice(0, 500));
+  storage.setStorageSync(STORAGE_KEY, assets);
+  notifyPersonalAssetChanged({ kind: kindForAsset(normalized), record: normalized }, storage);
   return normalized;
 }
 
@@ -109,16 +111,22 @@ function updateAsset(id, patch, storage = wx) {
 }
 
 function deleteAsset(id, storage = wx) {
-  const assets = loadAssets(storage).filter((item) => item.id !== id);
+  const existing = loadAssets(storage);
+  const removed = existing.find((item) => item.id === id);
+  const assets = existing.filter((item) => item.id !== id);
   storage.setStorageSync(STORAGE_KEY, assets);
+  if (removed) notifyPersonalAssetChanged({ kind: kindForAsset(removed), id, deleted: true }, storage);
   return assets;
 }
 
 function releaseAssetsFromPack(packId, storage = wx) {
-  const assets = loadAssets(storage).map((asset) => asset.packId === packId
+  const existing = loadAssets(storage);
+  const changedIds = new Set(existing.filter((asset) => asset.packId === packId).map((asset) => asset.id));
+  const assets = existing.map((asset) => asset.packId === packId
     ? normalizeAsset({ ...asset, packId: "", updatedAt: Date.now() })
     : asset);
   storage.setStorageSync(STORAGE_KEY, assets);
+  assets.filter((asset) => changedIds.has(asset.id)).forEach((record) => notifyPersonalAssetChanged({ kind: kindForAsset(record), record }, storage));
   return assets;
 }
 

@@ -57,14 +57,14 @@ function createFlow(options = {}) {
   const app = {
     globalData: {
       userId: "user-card-ai",
-      aiCredits: 5,
+      beans: 0.5,
       apiBaseUrl: "http://127.0.0.1:3212",
       authToken: "token-1",
     },
     apiBaseUrlCandidates: () => ["http://127.0.0.1:3212"],
-    spendAiCredit(amount, context) {
+    spendBeans(amount, context) {
       spendCalls.push({ amount, context });
-      this.globalData.aiCredits -= amount;
+      this.globalData.beans = Math.round((this.globalData.beans - amount) * 10) / 10;
       return true;
     },
   };
@@ -353,7 +353,7 @@ test("a successful response from an old schema is rejected before caching or cha
   assert.equal(flow.setContentsCalls.length, 0);
   assert.equal(flow.spendCalls.length, 0);
   assert.equal(flow.storage.has(CACHE_KEY), false);
-  assert.equal(flow.toasts.at(-1), "生成失败，未扣额度");
+  assert.equal(flow.toasts.at(-1), "生成失败，未扣豆币");
 });
 
 test.afterEach(() => {

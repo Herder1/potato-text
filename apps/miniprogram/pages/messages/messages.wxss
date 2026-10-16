@@ -1,0 +1,39 @@
+/* 消息中心（效果图 ref-04-Ax-messages.png：按天分组的卡片流）
+   规格来源＝对效果图逐行/逐列扫颜色游程（tmp/probe-ref-04-9x.js → tmp/verify-out/probe-04-Ax-messages*.log）：
+   页面底 #f5f5f5、卡片纯白圆角、分组标题是居中的浅灰小字、未读橙点 #fe6900 在卡片左侧留白处。 */
+.message-page { padding-bottom: 40rpx; }
+
+.message-group-label { margin: 30rpx 0 14rpx; color: #8f948f; font-size: 22rpx; line-height: 1.4; text-align: center; }
+
+.message-item { display: flex; align-items: flex-start; margin-bottom: 16rpx; }
+/* 左侧留白列：未读时在标题那一行的左外侧点一颗橙点（效果图里橙点在卡片之外） */
+.message-dot-col { flex: 0 0 26rpx; width: 26rpx; padding-top: 30rpx; }
+.message-dot { width: 12rpx; height: 12rpx; border-radius: 50%; background: #f25c00; }
+/* 未读点颜色：效果图是 #fe6900，但它压在页面底色 #f5f6f5 上只有 2.68:1（非文本要 ≥3，见收藏页/错题本同口径），
+   取同色系深一档的 #f25c00＝3.07:1；要严格照效果图就改回 #fe6900（已记 OPEN_DECISIONS 等他拍板）。 */
+
+.message-card { flex: 1; min-width: 0; padding: 26rpx 28rpx; background: #fff; border-radius: 20rpx; }
+.message-title { color: #202522; font-size: 30rpx; font-weight: 700; line-height: 1.45; }
+.message-body { margin-top: 12rpx; color: #4c534e; font-size: 26rpx; line-height: 1.7; }
+/* 全文：公告正文里的空行靠 white-space 保住（小程序里 text 不换行要靠这个） */
+.message-content { margin-top: 12rpx; color: #4c534e; font-size: 26rpx; line-height: 1.7; white-space: pre-wrap; }
+
+.message-foot { display: flex; margin-top: 18rpx; align-items: center; justify-content: flex-end; gap: 20rpx; }
+.message-tag { color: #6b7780; font-size: 22rpx; }
+.message-action { color: #2f74d0; font-size: 24rpx; }
+
+.message-empty { margin-top: 20rpx; padding: 76rpx 30rpx; color: #8f948f; background: #fff; border-radius: 20rpx; text-align: center; }
+.message-empty view { color: #3f4541; font-size: 26rpx; font-weight: 700; }
+.message-empty text { display: block; margin-top: 12rpx; font-size: 22rpx; line-height: 1.6; }
+.message-error {
+  color: #a13e20;
+  padding: 16rpx 0;
+  font-size: 26rpx;
+}
+
+.message-feedback-link {
+  color: #27644c;
+  padding: 20rpx 0;
+  font-size: 26rpx;
+}
+

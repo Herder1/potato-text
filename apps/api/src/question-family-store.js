@@ -201,7 +201,7 @@ function buildFamilyCandidates(questions = [], bookId = "modern-chinese-7-1", op
   const now = Date.now();
   const families = [];
   groups.forEach((group) => {
-    if (group.questions.length < 2) {
+    if (group.questions.length < (options.allowSingleton === true ? 1 : 2)) {
       unresolvedQuestionIds.push(...group.questions.map((question) => question.id));
       return;
     }
@@ -503,9 +503,11 @@ function normalizeFamily(family = {}) {
       ? family.requiredKnowledgeNodeIds
       : [coreKnowledgeNodeId],
   );
+  // An explicitly stored blank is still a definition value. Adding a member
+  // must not fill it implicitly; infer only for legacy records without it.
   const assessmentAction = cleanText(family.assessmentAction
-    || members.find((member) => member.role === "prototype")?.action
-    || members[0]?.action).slice(0, 200);
+    ?? (members.find((member) => member.role === "prototype")?.action
+      || members[0]?.action)).slice(0, 200);
   return {
     id: String(family.id || `question-family-${crypto.randomUUID()}`),
     version: Math.max(1, Number(family.version) || FAMILY_VERSION),
@@ -1439,7 +1441,7 @@ function createQuestionFamilyStore(adapter) {
       if (!additions.length) throw new Error("question_family_members_unchanged");
       state.families[index] = normalizeFamily({
         ...current,
-        source: "manual_family",
+        source: options.preserveDefinition ? current.source : "manual_family",
         members: [...current.members, ...additions],
         updatedAt: Date.now(),
       });

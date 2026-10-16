@@ -10,10 +10,12 @@ const {
   createCardFolder,
   createCardSet,
   deleteCardFolder,
+  deleteCardSets,
   loadActiveCardFolder,
   loadCardFolders,
   loadCardSets,
   moveCardSet,
+  pinCardSets,
   renameCardFolder,
   saveActiveCardFolder,
   setSetsColor,
@@ -733,7 +735,8 @@ Page({
         confirmColor: "#b6534c",
         success: (result) => {
           if (!result.confirm) return;
-          wx.setStorageSync("shukao_card_box_sets", this.data.sets.filter((set) => !ids.includes(set.id)));
+          // 走 store 而不是页面直接写 Storage：删除要留墓碑，否则另一台设备上的旧副本会把它带回来（C15）。
+          deleteCardSets(ids);
           this.setData({ selecting: false, selectedIds: [] }, () => this.onShow());
         },
       });
@@ -817,11 +820,7 @@ Page({
 
   pinSelectedSets() {
     const ids = [...this.data.selectedIds];
-    const sets = loadCardSets();
-    wx.setStorageSync("shukao_card_box_sets", [
-      ...sets.filter((set) => ids.includes(set.id)),
-      ...sets.filter((set) => !ids.includes(set.id)),
-    ]);
+    pinCardSets(ids);
     this.applySelection([]);
     this.onShow();
     wx.showToast({ title: `已置顶 ${ids.length} 个卡集`, icon: "none" });

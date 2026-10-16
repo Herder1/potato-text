@@ -37,10 +37,18 @@ function buildCommunityFavoriteItems(assets = []) {
       title: asset.title || "未命名内容",
       excerpt: asset.excerpt || "",
       typeLabel: communityTypeLabels[asset.type] || "社区内容",
+      // 点收藏要能跳到对应的详情页，所以原始 type 也带出来（卡片集/题包进卡片集页，其余进知识库）。
+      type: asset.type || "",
       contributor: asset.contributor || "薯考同学",
       favoriteCount: Math.max(0, Number(asset.favoriteCount) || 0),
       available: asset.moderationStatus === "published",
       statusLabel: asset.moderationStatus === "published" ? "" : "已下架",
+      // 新版收藏页的卡片底部要写「知识卡 · 教育学 · 教育学基础」这一行出处（DEC-096），
+      // 目录名在内容里本来就是现成的，照原样带出来，不在客户端拼猜。
+      subjectName: asset.subjectName || "",
+      chapterTitle: asset.chapterTitle || "",
+      sectionTitle: asset.sectionTitle || "",
+      tags: Array.isArray(asset.tags) ? asset.tags : [],
     }));
 }
 

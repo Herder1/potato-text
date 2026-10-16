@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#474d49" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <!-- 「排序」标：产品负责人 2026-09-23 04:6x 给的参考图（两根竖杆，左杆顶端一道向左下的斜头＝上箭头，
+       右杆底端一道向右上的斜头＝下箭头）。替代原来画三条竖杆 + 横短线的「滑块」标（sliders.svg）——
+       排序语义用「上/下箭头」，滑块语义留给别处。深色描边（#474d49）落在浅底上，对比度 ≥ 3（WCAG 非文本）。 -->
+  <path d="M9 20.5V4.5"/>
+  <path d="M9 4.5 4.5 9"/>
+  <path d="M15 3.5v16"/>
+  <path d="M15 19.5 19.5 15"/>
+</svg>

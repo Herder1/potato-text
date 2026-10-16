@@ -1,3 +1,5 @@
+const { notifyPersonalAssetChanged } = require("./personal-cloud-sync");
+const { normalizeQuestionType, normalizeQuestionTypeLabel } = require("./question-type");
 const STORAGE_KEY = "shukao_private_packs";
 const CATEGORY_STORAGE_KEY = "shukao_private_pack_categories";
 const LEGACY_STORAGE_KEY = "shukao_packs";
@@ -16,7 +18,6 @@ const QUESTION_TYPE_MAP = {
   简答题: "short_answer",
   名词解释: "term_definition",
   材料分析题: "material_analysis",
-  作品赏析题: "appreciation",
   论述题: "essay",
 };
 
@@ -158,6 +159,7 @@ function createPrivatePackCategory(name, parentId = "", storage) {
     parentId: resolvedParentId,
   });
   storage.setStorageSync(CATEGORY_STORAGE_KEY, [...categories, category]);
+  notifyPersonalAssetChanged({ kind: "packCategories", record: category }, storage);
   return category;
 }
 
@@ -171,6 +173,7 @@ function renamePrivatePackCategory(categoryId, name, storage = wx) {
   if (duplicate) return duplicate;
   const updated = categories.map((category) => category.id === categoryId ? { ...category, name: categoryName } : category);
   storage.setStorageSync(CATEGORY_STORAGE_KEY, updated);
+  notifyPersonalAssetChanged({ kind: "packCategories", record: updated.find((category) => category.id === categoryId) }, storage);
   return updated.find((category) => category.id === categoryId);
 }
 
@@ -196,6 +199,8 @@ function deletePrivatePackCategory(categoryId, storage = wx) {
     : pack);
   storage.setStorageSync(CATEGORY_STORAGE_KEY, remainingCategories);
   storage.setStorageSync(STORAGE_KEY, packs);
+  deletedIds.forEach((id) => notifyPersonalAssetChanged({ kind: "packCategories", id, deleted: true }, storage));
+  packs.filter((pack) => pack.updatedAt === now).forEach((record) => notifyPersonalAssetChanged({ kind: "packs", record }, storage));
   return { categories: remainingCategories, packs };
 }
 
@@ -205,7 +210,8 @@ function savePrivatePack(pack, storage = wx) {
   const index = packs.findIndex((item) => item.id === normalized.id);
   if (index >= 0) packs[index] = normalized;
   else packs.unshift(normalized);
-  storage.setStorageSync(STORAGE_KEY, packs.slice(0, 200));
+  storage.setStorageSync(STORAGE_KEY, packs);
+  notifyPersonalAssetChanged({ kind: "packs", record: normalized }, storage);
   return normalized;
 }
 
@@ -649,6 +655,7 @@ function movePackNodeToPack(sourcePackId, nodeId, targetPackId, storage = wx) {
 function deletePrivatePack(id, storage = wx) {
   const packs = loadPrivatePacks(storage).filter((pack) => pack.id !== id);
   storage.setStorageSync(STORAGE_KEY, packs);
+  notifyPersonalAssetChanged({ kind: "packs", id, deleted: true }, storage);
   return packs;
 }
 
@@ -689,7 +696,9 @@ function parseOptions(optionsText) {
 }
 
 function normalizeQuestionForPractice(asset, index = 0) {
-  const type = QUESTION_TYPE_MAP[asset.questionType] || asset.typeCode || "short_answer";
+  const type = normalizeQuestionType(QUESTION_TYPE_MAP[asset.questionType] || asset.typeCode
+    || (normalizeQuestionType(asset.questionType) === "material_analysis" ? "material_analysis" : "short_answer"));
+  const typeLabel = normalizeQuestionTypeLabel(asset.questionType || "简答题", type);
   const isChoice = type === "single_choice" || type === "multiple_choice" || type === "true_false";
   const answerMatches = Array.isArray(asset.correctAnswer) && asset.correctAnswer.length
     ? asset.correctAnswer.map((answer) => String(answer).toUpperCase())
@@ -705,10 +714,10 @@ function normalizeQuestionForPractice(asset, index = 0) {
     chapterId: `private-pack-${asset.packId || "questions"}`,
     sectionId: `private-pack-${asset.packId || "questions"}`,
     type,
-    typeLabel: asset.questionType || "简答题",
+    typeLabel,
     answerMode: isChoice ? "choice" : "text",
     score: Math.max(1, Number(asset.score) || (scoringPoints.length || 10)),
-    breadcrumb: [asset.subjectName, asset.questionType].filter(Boolean).join(" · ") || "私人题库",
+    breadcrumb: [asset.subjectName, typeLabel].filter(Boolean).join(" · ") || "私人题库",
     knowledgePoint: (asset.knowledgePoints || [])[0] || (asset.tags || [])[0] || "自建题目",
     stem: asset.stem || asset.title || `题目 ${index + 1}`,
     options: type === "true_false"

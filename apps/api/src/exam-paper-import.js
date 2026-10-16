@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { detectScoringPointCandidates } = require("./scoring-point-structure");
 const { inferMaterialMarks } = require("./material-mark");
+const { normalizeQuestionType } = require("../../miniprogram/utils/question-type");
 
 const typeAliases = {
   single_choice: "single_choice", 单选: "single_choice", 单选题: "single_choice",
@@ -14,7 +15,6 @@ const typeAliases = {
   short_answer: "short_answer", 简答: "short_answer", 简答题: "short_answer",
   term_definition: "term_definition", 名词解释: "term_definition",
   material_analysis: "material_analysis", 材料分析: "material_analysis", 材料分析题: "material_analysis",
-  appreciation: "appreciation", 作品赏析: "appreciation", 赏析题: "appreciation",
   essay: "essay", 论述: "essay", 论述题: "essay",
 };
 
@@ -347,7 +347,7 @@ function mergeQuestion(left, right) {
     usesSharedMaterial: left.usesSharedMaterial !== false && right.usesSharedMaterial !== false,
     groupNumber: left.groupNumber || right.groupNumber,
     subNumber: left.subNumber || right.subNumber,
-    responseMode: left.responseMode === "annotation" || right.responseMode === "annotation" ? "annotation" : "text",
+    responseMode: "text",
     annotationText: preferLonger(left.annotationText, right.annotationText),
     maxScore: Math.max(Number(left.maxScore) || 0, Number(right.maxScore) || 0) || 1,
     chapter: preferLonger(left.chapter, right.chapter),
@@ -620,7 +620,7 @@ function normalizeExamModelOutput(raw, defaults = {}) {
   const metadata = raw.exam || raw.metadata || raw.paper || {};
   const questions = collectQuestions(raw).map((question, index) => {
     const typeValue = String(question.type || question.questionType || "").trim();
-    const type = typeAliases[typeValue] || typeAliases[typeValue.replace(/\s/g, "")] || typeValue;
+    const type = normalizeQuestionType(typeAliases[typeValue] || typeAliases[typeValue.replace(/\s/g, "")] || typeValue);
     const maxScore = Number(question.maxScore ?? question.score ?? question.points) || 1;
     const correctAnswer = question.correctAnswer ?? question.answer ?? [];
     const referenceAnswer = String(question.referenceAnswer || question.standardAnswer || question.answerAnalysis || (Array.isArray(correctAnswer) ? correctAnswer.join("、") : correctAnswer) || "").trim();
@@ -628,11 +628,7 @@ function normalizeExamModelOutput(raw, defaults = {}) {
     const answerSource = ["pdf_answer", "team_verified", "ai_supplement", "community_consensus", "missing"].includes(declaredAnswerSource)
       ? declaredAnswerSource
       : (referenceAnswer || (Array.isArray(correctAnswer) && correctAnswer.length) ? "ai_supplement" : "missing");
-    const subjectIdentity = String(question.subjectId || question.subject || "");
     const stem = String(question.stem || question.question || question.content || "");
-    const needsAnnotation = (subjectIdentity.includes("modern-chinese") || subjectIdentity.includes("现代汉语"))
-      && type === "material_analysis"
-      && /(?:标出|标记|画出|划出|添加|加上|补写).{0,20}(?:下划线|波浪线|着重号|下标|标点)|(?:下划线|波浪线|着重号|下标|标点).{0,20}(?:标出|标记|画出|划出|添加|加上|补写)/.test(stem);
     const scoringPoints = Array.isArray(question.scoringPoints) ? question.scoringPoints : (Array.isArray(question.scorePoints) ? question.scorePoints : []);
     const scoringPointCandidates = !scoringPoints.length ? detectScoringPointCandidates(referenceAnswer) : [];
     return {
@@ -668,7 +664,7 @@ function normalizeExamModelOutput(raw, defaults = {}) {
       usesSharedMaterial: question.usesSharedMaterial !== false,
       groupNumber: question.groupNumber || "",
       subNumber: normalizedQuestionMarker(question.subNumber),
-      responseMode: question.responseMode === "annotation" || needsAnnotation ? "annotation" : "text",
+      responseMode: "text",
       annotationText: question.annotationText || question.markingText || "",
       chapter: question.chapter || defaults.chapter || "",
       knowledgePoints: question.knowledgePoints || question.knowledgePoint || [],

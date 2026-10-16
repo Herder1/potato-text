@@ -208,7 +208,6 @@ Page({
     selectedCategory: null,
     categoryManageOpen: false,
     categoryManageTop: 220,
-    actionMenuOpen: false,
   },
 
   onLoad() {
@@ -236,12 +235,16 @@ Page({
     if (tabBar) tabBar.setData({ selected: 0 });
   },
 
+  onPersonalAssetsSynced() {
+    this.refreshPrivateLibrary();
+  },
+
   onHide() {
     this.resetTransientOverlays();
   },
 
   resetTransientOverlays() {
-    closeTransientLayers(this, ["packActionsOpen", "categoryActionsOpen", "categoryManageOpen", "sourceMenuOpen", "actionMenuOpen", "drawerOpen"], {
+    closeTransientLayers(this, ["packActionsOpen", "categoryActionsOpen", "categoryManageOpen", "sourceMenuOpen", "drawerOpen"], {
       selectedPack: null,
       selectedCategory: null,
     });
@@ -460,7 +463,7 @@ Page({
   },
 
   openProjectDrawer() {
-    this.setData({ drawerOpen: true, actionMenuOpen: false, sourceMenuOpen: false });
+    this.setData({ drawerOpen: true, sourceMenuOpen: false });
   },
 
   closeProjectDrawer() {
@@ -507,7 +510,7 @@ Page({
   },
 
   contentTabPatch(activeContentTab) {
-    const patch = { activeContentTab, actionMenuOpen: false, sourceMenuOpen: false };
+    const patch = { activeContentTab, sourceMenuOpen: false };
     const sourceId = this.data.sourceByTab[activeContentTab];
     if (!sourceId) return patch;
     const source = this.data.sourceOptions.find((item) => item.id === sourceId) || this.data.sourceOptions[0];
@@ -546,7 +549,6 @@ Page({
     this.setData({
       sourceMenuOpen: !this.data.sourceMenuOpen,
       drawerOpen: false,
-      actionMenuOpen: false,
     });
   },
 
@@ -570,12 +572,13 @@ Page({
     this.setData(this.contentTabPatch(activeContentTab), () => this.applyFilters());
   },
 
-  toggleActionMenu() {
-    this.setData({ actionMenuOpen: !this.data.actionMenuOpen });
+  // 2026-09-23 04:Cx：悬浮「＋」不再展开菜单，直接执行本 tab 的唯一动作。
+  createFromLibraryFab() {
+    if (this.data.activeContentTab === "materials") return this.createNoteFromLibrary();
+    return this.createLibraryPack();
   },
 
   createLibraryPack() {
-    this.setData({ actionMenuOpen: false });
     wx.showModal({
       title: "新建题包",
       editable: true,
@@ -585,18 +588,14 @@ Page({
         if (!result.confirm || !name) return;
         const pack = createPrivatePack({ name });
         this.refreshPrivateLibrary();
-        wx.navigateTo({ url: `/pages/pack-collection/pack-collection?id=${encodeURIComponent(pack.id)}` });
+        // 必须带 source=private：题包合集页的编辑能力（添加卡片 / 更多抽屉）以它为判据，
+        // 漏传就会出现「刚建好题包却加不了卡片，退出重进才行」。
+        wx.navigateTo({ url: `/pages/pack-collection/pack-collection?id=${encodeURIComponent(pack.id)}&source=private` });
       },
     });
   },
 
-  contributeQuestionFromLibrary() {
-    this.setData({ actionMenuOpen: false });
-    wx.navigateTo({ url: "/pages/packs/packs?intent=addQuestion" });
-  },
-
   createNoteFromLibrary() {
-    this.setData({ actionMenuOpen: false });
     wx.navigateTo({ url: "/pages/note-editor/note-editor" });
   },
 

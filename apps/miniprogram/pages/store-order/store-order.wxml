@@ -1,0 +1,74 @@
+<view class="store-order-page">
+  <view class="subscription-segment" role="tablist" aria-label="订阅类别">
+    <view class="subscription-tab {{activeCategory === 'membership' ? 'subscription-tab-active' : ''}}" data-category="membership" bindtap="selectCategory" role="tab" aria-selected="{{activeCategory === 'membership'}}">会员</view>
+    <view class="subscription-tab {{activeCategory === 'library' ? 'subscription-tab-active' : ''}}" data-category="library" bindtap="selectCategory" role="tab" aria-selected="{{activeCategory === 'library'}}">题库</view>
+  </view>
+
+  <view class="store-empty" wx:if="{{activeCategory === 'membership'}}">暂无可订阅的会员功能权益</view>
+  <block wx:else>
+  <text class="page-copy">按考试项目选择题库和使用期限</text>
+  <scroll-view class="project-filter" scroll-x="true" enable-flex="true">
+    <view
+      class="project-chip {{!activeProjectId ? 'project-chip-active' : ''}}"
+      data-id=""
+      bindtap="selectProject"
+      role="button"
+      aria-label="全部考试项目"
+    >全部项目</view>
+    <view
+      wx:for="{{projects}}"
+      wx:key="id"
+      class="project-chip {{activeProjectId === item.id ? 'project-chip-active' : ''}}"
+      data-id="{{item.id}}"
+      bindtap="selectProject"
+      role="button"
+      aria-label="{{item.label}}"
+    >{{item.label}}</view>
+  </scroll-view>
+
+  <view class="state-line state-line-failed" wx:if="{{loadFailed}}" bindtap="loadProducts" role="button" aria-label="重试">套餐加载失败，点击重试</view>
+  <view class="store-loading" wx:if="{{loading && !packageGroups.length}}">正在读取套餐…</view>
+  <view class="store-empty" wx:elif="{{!loading && !packageGroups.length}}">当前项目暂无可购买套餐</view>
+
+  <view
+    class="package-card panel"
+    wx:for="{{packageGroups}}"
+    wx:key="packageKey"
+  >
+    <view class="package-head">
+      <view class="package-copy">
+        <text class="package-name">{{item.packageName}}</text>
+      </view>
+      <text class="package-mark" wx:if="{{item.variants.length > 1}}">多期限</text>
+    </view>
+    <text class="package-meta">{{item.projectName}} · {{item.scopeText}}</text>
+
+    <scroll-view class="variant-scroll" scroll-x="true" enhanced="true" show-scrollbar="{{false}}" scroll-into-view="variant-{{item.selectedVariantId}}">
+      <view class="variant-list">
+        <view
+          wx:for="{{item.variants}}"
+          wx:for-item="variant"
+          wx:key="id"
+          id="variant-{{variant.id}}"
+          class="variant-option {{item.selectedVariantId === variant.id ? 'variant-option-active' : ''}}"
+          data-id="{{variant.id}}"
+          bindtap="selectVariant"
+          role="button"
+          aria-label="{{variant.durationLabel}} {{variant.priceLabel}} {{variant.bonusLabel}}"
+        >
+          <text class="variant-duration">{{variant.durationLabel}}</text>
+          <text class="variant-price">{{variant.priceLabel}}</text>
+          <text class="variant-bonus">{{variant.bonusLabel}}</text>
+        </view>
+      </view>
+    </scroll-view>
+
+    <view class="package-foot">
+      <text class="package-notice">选择期限后可立即订购</text>
+      <button class="order-button" data-id="{{item.selectedVariantId}}" bindtap="startPurchase" disabled="{{!testPurchaseEnabled || purchaseBusy}}">{{testPurchaseEnabled ? (purchaseBusy ? '提交中…' : '测试订购') : '暂不可订购'}}</button>
+    </view>
+  </view>
+
+  <view class="order-footnote" bindtap="openPurchaseNotice" role="button" aria-label="购买须知与退款说明">购买须知 · 退款说明 ›</view>
+  </block>
+</view>

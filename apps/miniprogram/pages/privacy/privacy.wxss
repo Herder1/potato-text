@@ -2,6 +2,12 @@
 .privacy-title { color: #202522; font-size: 42rpx; font-weight: 900; }
 .privacy-subtitle { margin-top: 8rpx; color: #848b86; font-size: 20rpx; }
 .privacy-intro { margin-top: 28rpx; padding: 22rpx; color: #3f4943; background: #eaf4f2; border: 1rpx solid #dcebe6; border-radius: 8rpx; font-size: 22rpx; line-height: 1.7; }
+.privacy-sync-status { margin-top: 16rpx; padding: 18rpx 22rpx; color: #0b9588; background: #f0faf7; border: 1rpx solid #d7eee6; border-radius: 8rpx; font-size: 21rpx; line-height: 1.6; }
+.cloud-warning { margin-top: 16rpx; color: #975f20; font-size: 22rpx; line-height: 1.7; }
+.cloud-actions { display: flex; flex-wrap: wrap; gap: 16rpx; margin-top: 20rpx; }
+.cloud-actions button { flex: 1 1 240rpx; margin: 0; font-size: 24rpx; white-space: normal; }
+.cloud-conflict { margin-top: 24rpx; border-top: 1rpx solid #dce3df; padding-top: 20rpx; overflow-wrap: anywhere; }
+.cloud-version { height: 260rpx; margin-top: 12rpx; padding: 12rpx; box-sizing: border-box; background: #f4f5f4; font-size: 21rpx; white-space: pre-wrap; word-break: break-all; }
 .privacy-section { margin-top: 28rpx; padding: 24rpx 22rpx; background: #ffffff; border: 1rpx solid #eaede9; border-radius: 8rpx; }
 .privacy-section-title { color: #28312c; font-size: 26rpx; font-weight: 850; }
 .privacy-item { position: relative; margin-top: 16rpx; padding-left: 20rpx; color: #66706a; font-size: 21rpx; line-height: 1.7; }

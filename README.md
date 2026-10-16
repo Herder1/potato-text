@@ -40,6 +40,32 @@ npm.cmd run dev
 
 打开 `http://127.0.0.1:3212/admin/`。API 健康检查地址为 `http://127.0.0.1:3212/health`。
 
+### 本地代理与出站请求（2026-10-09）
+
+Node 的内置 `fetch` **不读 Windows 系统代理**，而浏览器和 Codex++ 会读。因此当某个上游按地区限制访问时，会出现「浏览器能连、题库后台报错」的现象——例如 `https://api.typesafe.ai` 直连会返回 **HTTP 451 `Typesafe is not available in your region.`**，走本机代理则正常。
+
+- 用 [`start-server.cmd`](start-server.cmd) 或 [`start-server-hidden.vbs`](start-server-hidden.vbs) 启动时，会先读取系统代理并自动带上 `NODE_USE_ENV_PROXY=1` / `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`（解析逻辑集中在 [`apps/api/src/outbound-proxy.js`](apps/api/src/outbound-proxy.js)，启动脚本只做转发）。
+- 手工启动（例如 AGENTS §8 里那条重启命令）时请自己带上这几个环境变量：
+
+  ```cmd
+  cmd /c cd /d "D:\龙虾工作站\题库" && set NODE_USE_ENV_PROXY=1 && set HTTPS_PROXY=http://127.0.0.1:7897 && set HTTP_PROXY=http://127.0.0.1:7897 && set NO_PROXY=localhost,127.0.0.1,::1 && node apps\api\src\server.js >> runtime-server-3212-current.log 2>> runtime-server-3212-current.err.log
+  ```
+
+- 自查：`http://127.0.0.1:3212/health` 的 `outboundProxy` 会如实报告 `active` / `mode`（`env_active`＝真的在走代理、`system_only`＝系统代理开着但服务端没走、`none`＝没有代理）；后台「AI 配置」页在 `system_only` 时会显示一条带重启方式的提示。
+- `NO_PROXY` 必须包含 `127.0.0.1`，否则服务端自己的内部自调用（试卷导入流水线）会被塞进代理。`start-server.cmd` 已自动处理。
+
+### 供应商协议支持（2026-10-09）
+
+| 协议 | 用途 | 备注 |
+| --- | --- | --- |
+| OpenAI Chat Completions | 可绑定 AI 场景路由 | `POST {base}/chat/completions` |
+| OpenAI Responses | 可绑定 AI 场景路由 | `POST {base}/responses` |
+| Anthropic Messages | 可绑定 AI 场景路由 | `POST {base}/messages` |
+| Google Gemini | 可绑定 AI 场景路由 | `POST {base}/models/{model}:generateContent` |
+| **Typesafe System One（Jev）** | 只能「读取模型」+「测试」 | `POST {base}/systemone`，body = `state` + `model` + `questions`，返回 `choice` / `score` / `noul` 结构化判定；**不生成文本**，因此**不能**绑定 AI 场景路由（配置期就会被拒）。实测该上游没有 `/chat/completions` 与 `/responses`（404 Not Found）。 |
+
+读模型列表统一走 `GET {base}/models`（Base URL 不带路径时自动补 `/v1`）。协议选的不是上游真实协议时，后台报错会带上游原话（例如 `HTTP 404`），不再只给一个状态码。
+
 ## Docker 构建与运行
 
 推送到 `main` 或打 `v*` tag 时会自动构建并把镜像发布到 `ghcr.io/herder1/potato-text`（流水线正文 [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)）。

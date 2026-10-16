@@ -27,7 +27,10 @@ function inferExamTrack(question = {}) {
 function primaryKnowledgePoint(question = {}) {
   if (String(question.primaryKnowledgePoint || "").trim()) return String(question.primaryKnowledgePoint).trim();
   const points = (Array.isArray(question.knowledgePoints) ? question.knowledgePoints : []).map((value) => String(value || "").trim()).filter(Boolean);
-  if (!points.length) return "未归类知识点";
+  // 没有知识点时返回空值，不再造「未归类知识点」占位串：
+  // 占位串会冒充真实归类（产品手册 §3.5「不得为了完成流程强行选择知识点」）。
+  // 「待归类」由 question-classification-state.js 现场派生，不靠占位值表达。
+  if (!points.length) return "";
   const chapterParts = String(question.chapter || "").split(/[>·]/).map((value) => normalizeKnowledgePoint(value.replace(/^第[一二三四五六七八九十百\d]+[章节单元部编]\s*/, ""))).filter(Boolean);
   const conceptualPoints = points.filter((point) => !chapterParts.includes(normalizeKnowledgePoint(point)));
   return conceptualPoints[0] || points[0];

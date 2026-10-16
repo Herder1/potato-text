@@ -678,6 +678,9 @@ Page({
     }
     const localPack = getPrivatePack(this.packId);
     if (localPack) {
+      // 本地已有该题包 ⇒ 本页就是私有题包页：不依赖入口是否记得带 source=private。
+      // 2026-09-28 修复：漏传时 this.source 会停在 public，导致「添加卡片 / 更多」全部被拦。
+      this.adoptPrivateSource();
       this.applyCollection(localPack, "private");
       return;
     }
@@ -764,8 +767,18 @@ Page({
     this.setData({ addMenuOpen: false });
   },
 
+  // 进入本页后本地题包才是唯一事实：把 this.source 与 data.source 一起对齐，
+  // 让目录分组 / 分享链接 / 编辑判据都跟着变，而不是只有其中一处。
+  adoptPrivateSource() {
+    if (this.source === "private" && this.data.source === "private") return;
+    this.source = "private";
+    this.setData({ source: "private" });
+  },
+
+  // 判据与「更多」抽屉里私有专属入口的显示条件（data.pack.isPrivate）保持同一来源，
+  // 避免出现「入口显示得出来、一点却提示请先收藏到我的题包」的自相矛盾。
   requirePrivatePack() {
-    if (this.source === "private" && this.data.pack && this.data.pack.isPrivate) return true;
+    if (this.data.pack && this.data.pack.isPrivate) return true;
     wx.showToast({ title: "请先收藏到我的题包", icon: "none" });
     this.closeAddMenu();
     return false;

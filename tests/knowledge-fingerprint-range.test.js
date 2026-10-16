@@ -67,7 +67,7 @@ function seedStructure(store, sourceQuestion) {
   return structure;
 }
 
-async function startServer(sourceQuestion) {
+async function startServer(sourceQuestion, questionFamilyStore = createMemoryQuestionFamilyStore()) {
   const questionStore = createMemoryQuestionStore([sourceQuestion]);
   const knowledgeStructureStore = createMemoryKnowledgeStructureStore();
   seedStructure(knowledgeStructureStore, sourceQuestion);
@@ -85,7 +85,7 @@ async function startServer(sourceQuestion) {
     aiConfigStore: createMemoryAiConfigStore(),
     questionStore,
     knowledgeStructureStore,
-    questionFamilyStore: createMemoryQuestionFamilyStore(),
+    questionFamilyStore,
     textbookCatalogStore,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -93,9 +93,73 @@ async function startServer(sourceQuestion) {
     server,
     questionStore,
     knowledgeStructureStore,
+    questionFamilyStore,
     baseUrl: `http://127.0.0.1:${server.address().port}`,
   };
 }
+
+test("omitting the retired anchor preserves even an obsolete value while validating other fingerprint fields", async (context) => {
+  const sourceQuestion = question("legacy-anchor-q");
+  const runtime = await startServer(sourceQuestion);
+  context.after(() => new Promise((resolve) => runtime.server.close(resolve)));
+  const state = runtime.knowledgeStructureStore.exportState();
+  const record = state.records.find((item) => item.bookId === sourceQuestion.bookId);
+  record.fingerprints.find((item) => item.questionId === sourceQuestion.id).knowledgeThemeRangeAnchorNodeId = "retired-node";
+  record.fingerprints.find((item) => item.questionId === sourceQuestion.id).scopeAnchorNodeId = "retired-node";
+  runtime.knowledgeStructureStore.replaceState(state);
+  const detail = await fetch(`${runtime.baseUrl}/api/admin/questions/${sourceQuestion.id}`).then((response) => response.json());
+  const body = {
+    action: "update", bookId: sourceQuestion.bookId,
+    expectedQuestionVersion: detail.question.version,
+    expectedFingerprintSignature: detail.question.knowledgeFingerprintSignature,
+    primaryNodeId: "range-leaf-a", requiredNodeIds: ["range-leaf-a"],
+    problemKnowledgeRangeNodeIds: ["range-leaf-a", "range-leaf-b"],
+  };
+  const invalid = await fetch(`${runtime.baseUrl}/api/admin/questions/${sourceQuestion.id}/knowledge-fingerprint`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, primaryNodeId: "missing-node" }),
+  });
+  assert.equal(invalid.status, 422);
+  const response = await fetch(`${runtime.baseUrl}/api/admin/questions/${sourceQuestion.id}/knowledge-fingerprint`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const saved = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(saved));
+  assert.equal(saved.question.knowledgeFingerprint.knowledgeThemeRangeAnchorNodeId, "retired-node");
+  assert.deepEqual(saved.question.knowledgeFingerprint.problemKnowledgeRangeNodeIds, ["range-leaf-a", "range-leaf-b"]);
+  const refreshed = await fetch(`${runtime.baseUrl}/api/admin/questions/${sourceQuestion.id}`).then((result) => result.json());
+  assert.equal(refreshed.question.knowledgeFingerprint.knowledgeThemeRangeAnchorNodeId, "retired-node");
+});
+
+test("question detail derives set membership from live family links after changes", async (context) => {
+  const sourceQuestion = question("set-derived-q");
+  const familyStore = createMemoryQuestionFamilyStore({
+    families: [
+      { id: "family-a", bookId: sourceQuestion.bookId, name: "甲族", status: "confirmed", createdAt: 1, updatedAt: 1, members: [{ questionId: sourceQuestion.id, isPrimary: true, reviewStatus: "confirmed" }] },
+      { id: "family-b", bookId: sourceQuestion.bookId, name: "乙族", status: "confirmed", createdAt: 1, updatedAt: 1, members: [{ questionId: sourceQuestion.id, reviewStatus: "pending_fit" }] },
+    ],
+    familySets: [
+      { id: "set-a", bookId: sourceQuestion.bookId, knowledgeNodeId: "range-anchor-section", name: "集合甲", createdAt: 1, updatedAt: 1 },
+      { id: "set-b", bookId: sourceQuestion.bookId, knowledgeNodeId: "range-anchor-section", name: "集合乙", createdAt: 1, updatedAt: 1 },
+    ],
+    familySetLinks: [
+      { id: "link-a", setId: "set-a", memberType: "family", memberId: "family-a", createdAt: 1 },
+      { id: "link-b", setId: "set-b", memberType: "family", memberId: "family-b", createdAt: 1 },
+    ],
+  });
+  const runtime = await startServer(sourceQuestion, familyStore);
+  context.after(() => new Promise((resolve) => runtime.server.close(resolve)));
+  const read = async () => (await fetch(`${runtime.baseUrl}/api/admin/questions/${sourceQuestion.id}`).then((response) => response.json())).question.familySetMemberships;
+  assert.deepEqual((await read()).map((set) => set.setId), ["set-a", "set-b"]);
+  assert.equal((await read())[1].sources[0].status, "pending");
+  const before = familyStore.exportState();
+  const failed = await fetch(`${runtime.baseUrl}/api/admin/question-family-sets/missing/members/family/family-a`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: "{}" });
+  assert.notEqual(failed.status, 200);
+  assert.deepEqual((await read()).map((set) => set.setId), ["set-a", "set-b"]);
+  assert.deepEqual(familyStore.exportState(), before);
+  familyStore.removeSetMember("set-a", "family", "family-a");
+  assert.deepEqual((await read()).map((set) => set.setId), ["set-b"]);
+});
 
 test("explicit problem range replaces stale cross-branch nodes before theme-anchor validation", async (context) => {
   const sourceQuestion = question("range-anchor-replacement-q");

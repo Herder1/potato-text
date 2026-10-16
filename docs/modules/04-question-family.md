@@ -87,6 +87,58 @@
 
 ## 6. 实现状态、验收状态和已知缺口
 
+### 题族集派生归属（2026-10-09）
+
+- **已确认／已实现**：规则正文见产品手册 §4.12。`question-family-set-membership.js` 从现有成员关系和严格树派生集合及来源，不增加单题直挂关系；题目页只读，调整沿用原管理弹窗与题族成员编辑。服务端每次题目读取重算，关系写入成功后管理区重载，失败保持原展示。测试与页面待验收边界见模块 02 §6。
+
+### 题目列表与题族分用两棵目录（2026-09-28）
+
+- **已确认／已实现／已验证**：规则正文见产品手册 §4.4.1／§8.2。题目列表转为来源目录，不再读取题库指纹旧统计；题族视图仍用人工整理树与 §6.2 的正式投影。跨树通过已有映射定位，不改题族定义、锚点、成员关系和审核状态；未决映射不扩大查询。题族目录刷新时清除旧题数并显示读取或错误状态。完整自动回归、81项页面检查、真实数据核对及重启边界统一见模块02 §6「题目列表来源目录与独立统计」。
+
+### 全教材载入性能与切换保护（2026-09-28）
+
+- **已实现／已验证**：题族查询复用已查明不存在的知识树，保留历史教材兼容；不修改任何题族定义、成员关系或正式指纹。共用加载状态、取消与晚到响应保护，真实数据性能、测试证据及重启要求统一见模块 02 §6「题库载入提速与切换保护」。正式账号重启后体验待验收。
+
+### 统计卡片移至工作区顶部（2026-09-28）
+
+- **已实现／已验证**：按产品手册 §8.2 的同日后续展示要求调整统计卡片与操作栏位置，题族、成员、统计及筛选业务逻辑不变。实现、测试和人工验收边界统一见模块 02 §6「题库统计卡片与三段顺序」；本轮只需强刷，不另要求重启后端。
+
+### 题族与题目列表统一筛选（2026-09-28）
+
+- **已确认／已实现**：规则正文见产品手册 §8.2。题族接口支持跨教材及五项交集，用完整成员＋独立可见成员 ID 表达筛选，定义审核与成员审核仍为两个正式事实。待审核结果可包含定义已确认的题族及其待审成员；未归档由当前全部成员关系派生，不把待审关系误当作不存在；已归组／待归组正式投影统计保持原口径。空题族按定义筛选，有题型／批次条件时不得冒充命中成员。
+- **已验证／待验收**：2026-09-28 全量 **1599/1599**、73 项实际页面检查及36份正式 JSON 哈希不变；专项覆盖按筛选显示但弹窗仍保留完整五名成员、已有题组集跨教材编辑、创建动作教材保护及状态选择保留。证据路径、详细覆盖和未验收范围统一见模块 02 §6「题库五项共享筛选与紧凑工具栏」，不重复维护。正式后端需由负责人重启；本轮不执行任何恢复、迁移或重审。
+
+### 七题历史缺失归属定向恢复（2026-09-28）
+
+- **授权／范围**：负责人针对截图七题同意从旧备份恢复缺失归属。本次不是 AI 重新成族、整库回滚或完整历史迁移；仅恢复「韵母基础知识」4 条、「韵母分类判断」2 条、「音节综合判断」1 条，保留原题族 ID。旧三族其他 6 条成员不在授权范围，未恢复、未移动。
+- **已核实／状态边界**：2026-08-31 08:44:12 +08:00 备份中三族存在，2026-09-27 14:24:01 的迁移备份已缺失；确切丢失原因未建立，不归因于本次相同建议修复。旧定义 `confirmed` 及审核信息保留。七题旧成员均缺少贡献知识，当前六题只有 `suggested` 指纹，「烟／央」题的已确认指纹知识集与旧族覆盖范围不一致；按产品手册 §4.10–4.11，本次恢复关系明确为 `pending_fit`，不把旧状态兼容读取当作对当前适配的重新确认，不代改指纹或补造贡献知识。
+- **已执行**：2026-09-28 12:47:13 +08:00 通过正式 QuestionFamily Store 增补 3 个定义、7 条成员关系，仅推进这七题成员修订号；原 120 个题族及全部其他状态逐字段不变。正式根目录 JSON 仅 `question-families.json` 与新增一条审计的 `admin-actions.json` 改变；题目正文／版本／答案、指纹、目录映射和其他数据哈希不变，旧审计（含已披露的 12 条历史测试审计）全部保留。
+- **维护入口／保护**：`scripts/maintenance/restore-question-family-memberships.js` 默认只读预演，要求明确关系清单、来源哈希与当前预演哈希；同名／别名／已有归属／节点缺失冲突拒绝，写前备份与二次哈希检查，正式 Store 写入，追加审计，幂等重跑不写入。审计前失败只补偿自己的写入，不覆盖并发新状态；跨进程检查仍不是数据库事务，执行时应暂停并发管理操作。不是正式 PostgreSQL 迁移工具。
+- **证据**：审计 `operation-584f3943-2fde-4b28-9799-76de61d610f9`；恢复前题族／审计原始字节备份、清单、前后哈希和提交结果保存在 `.runtime/maintenance-backups/restore-family-links.2026-09-28T04-47-13-034Z.bb754cfc-bba8-4c81-bccd-ce399705430e/manifest.json` 同目录。只读历史审计 `tmp/seven-ungrouped-audit-20260928.json`；回执 `tmp/seven-family-restore-result-20260928.json`。
+- **已验证（2026-09-28）**：恢复／目录投影／旧索引维护专项 **29/29**，全量 `NODE_ENV=development node --test tests/*.test.js` **1574/1574**，测试期间正式 JSON 哈希不变。全量日志 `tmp/family-restoration-full.log`，哈希证据 `tmp/family-restoration-test-data-check.json`。执行后重新读正式 Store，并以真实七题的内存副本验证现行后台接口及六项展示模型：7/7 返回原题族名称，列表状态为「建议」、归属待复核、无审核建议时打开归属确认，不进入正式目录投影；原 120 族不变。脚本 `tmp/verify-seven-family-restoration.js` 与证据 `tmp/seven-family-restoration-verification-20260928.json`。
+- **未验证／待验收**：未验证正式账号浏览器点击、PostgreSQL 和崩溃恢复；此脚本保留准备／提交清单，但不是服务启动自动恢复协议。未对七题做教研适配确认，尤其「烟／央」须人工核对指纹及归属。丢失根因仍未知。本轮无前端／API 运行代码改动，不需单独重启；最终正式 `/health` 为 `ok`、`apiSourceStale=false`，后台已于 2026-09-28 11:14:55 重启（不是由本轮 Agent 启动），此前重启提示已不适用。无 `delivery_check` 工具，未声明 PASS；不关闭上线门禁。
+
+### 已有成员不重复添加（2026-09-28）
+
+- **已实现**：完善页无巡检结论时，提交前重读本题关系，剔除所有已有成员关系，仅调用尚未加入题族的原成员接口；全部已存在时提示无需重复写入，原确认／待审核状态均保留。未改变成员接口、题族定义或指纹人工保存触发重审的规则。
+- **已验证／待验收**：已确认关系、待审核关系、混合新旧选择、读取失败不写库均有回归，浏览器验证重复点击无请求且完整 Store 不变。规则入口为产品手册 §10.3.1；测试数量、正式数据哈希、浏览器证据与人工验收边界统一见模块 02 §6「重复建议与重复题族提交修正」。
+
+### 目录编辑不因空值规范化重开成员审核（2026-09-28）
+
+- **已实现**：目录锚点保存联调发现，旧题无 `material`／`scoringPoints`，经题目 Store 规范化后分别成为空字符串／空数组，旧的内容敏感比较因此误判为内容改变。`server.js#questionFamilySensitiveSnapshot` 现将这两种缺省表示按相同空值比较，不放宽真实材料／得分点变化的审核失效规则。
+- **已验证**：来源目录编辑与清空后，原指纹、完整题族、成员确认和其他题目不变；原题目正文／评分变更失效回归仍通过。详细专项、全量、真实浏览器证据、测试审计事故与待验收项统一见模块 02 §6「题目详情教材目录锚点」。未迁移或修正正式题族数据。
+
+### 新增成员不隐式补写已有定义（2026-09-28）
+
+- **已实现**：统一查看／裁决的隔离保存测试发现，无原型成员且已存空白考查动作的题族，追加成员会被 `normalizeFamily()` 自动填入该成员动作。改为仅对缺少该字段的历史记录推导，显式空白也作为已有定义保留；不改成员审核门禁、不迁移正式数据，依据产品手册 §4.10 的定义／成员分离及 §4.6.12／DEC-104 的已有内容保护。
+- **已验证**：`tests/question-family.test.js` 新增已有空白定义／原成员确认不变、缺字段历史记录继续兼容两条回归；真实浏览器明确保存本题成员后，逐字段比较其他成员归属信息不变，新成员仍为 `pending_fit`。本轮完整测试与页面证据统一见模块 02 §6「完善页统一查看／裁决」；正式数据未回填，真实样本人工验收仍待完成。
+
+### DEC-104 单题补缺与已有题族优先（2026-09-27）
+
+- **已实现**：补缺预览显式启用 `allowSingleton`，按知识节点、必要知识集合、焦点及作答动作匹配已有题族；匹配不到才提供新建候选。已有同名／同焦点但要求不一致时提示人工核对，不重复建族。其余历史 builder 调用默认门槛不变。
+- **已实现**：只有人工确认选中的缺失关系才追加；已有任何关系均保留。给已有族添成员不改变定义来源、审核状态或老成员；新成员仍为 `pending_fit`，新族仍为 `pending_review`，未放宽正式目录投影或训练条件。
+- **已验证／待验收**：单题新建、已有族优先、同批同族合并追加、重复确认和原题族审核回归已通过；完整证据及已知限制统一见 [模块 02 §6](02-question-authoring-answer-review.md)。真实题目匹配质量与产品体验仍待验收。
+
 ### 【已实现】
 
 - 六组定义事实、成员归属与逐成员贡献知识、题族集严格树与原子迁入、范围锚点原子变更、候选新题族草稿。
@@ -110,11 +162,13 @@
 - 候选草稿字段质量、迁移预演与批量操作仍需真实审核流程验证（§5.7）。
 - 自动成族仍含科目特例，尚未完成"向量匹配为主、规则兜底"的通用引擎（§5.7）。
 - 巡检旧建议对题族名称/状态等更广泛语义变化的精确失效待完善（§5.7）。
+- **待归类题（DEC-093，无教材/章节/知识点）暂时进不了题族归属选择**：题目编辑页的题族选择器按当前教材加载（`loadQuestionMembershipCatalog(bookId)` 对空 `bookId` 直接返回空目录），题族工作区也按选中的教材目录展示未成族题目。这是**筛选语义，不是数据丢失**——待归类题不落任何目录节点；正确顺序是先按 DEC-093 补归属（教材/章节/知识点），再挂题族。若产品负责人希望"零归属也能先挂题族"，需要单独立项（届时必须定义它挂到哪个目录节点下）。
 
 ## 7. 代码、测试与历史决策入口
 
 - 代码：[`question-family-store.js`](../../apps/api/src/question-family-store.js)、[`question-family-relations.js`](../../apps/api/src/question-family-relations.js)、[`question-family-catalog-projection.js`](../../apps/api/src/question-family-catalog-projection.js)、[`knowledge-classification-pipeline.js`](../../apps/api/src/knowledge-classification-pipeline.js)（Agent 3 题族核验）。
 - 测试：[`tests/question-family.test.js`](../../tests/question-family.test.js)、[`question-family-relations.test.js`](../../tests/question-family-relations.test.js)、[`question-family-catalog-projection.test.js`](../../tests/question-family-catalog-projection.test.js)、[`admin-question-family-set-ui.test.js`](../../tests/admin-question-family-set-ui.test.js)、[`admin-question-family-search-ui.test.js`](../../tests/admin-question-family-search-ui.test.js)、[`admin-question-family-dialog-layout.test.js`](../../tests/admin-question-family-dialog-layout.test.js)、[`retire-question-family-unresolved-index.test.js`](../../tests/retire-question-family-unresolved-index.test.js)。
 - 维护脚本：[`scripts/maintenance/retire-question-family-unresolved-index.js`](../../scripts/maintenance/retire-question-family-unresolved-index.js)。
+- 定向历史恢复：[`scripts/maintenance/restore-question-family-memberships.js`](../../scripts/maintenance/restore-question-family-memberships.js)，回归 [`tests/restore-question-family-memberships.test.js`](../../tests/restore-question-family-memberships.test.js)；使用范围及状态保护见 §6。
 - 规则正文：产品手册 §4.10、§4.11、§4.12、§6.2、§7.3。
 - 历史决策：DEC-015–024、037、038、039（索引见产品手册 §0.4）；076+ 索引缺口见 [`../OPEN_DECISIONS.md`](../OPEN_DECISIONS.md) C2。

@@ -1,10 +1,13 @@
 const http = require("node:http");
 const crypto = require("node:crypto");
+const { normalizeQuestionType } = require("../../miniprogram/utils/question-type");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const zlib = require("node:zlib");
 const { AsyncLocalStorage } = require("node:async_hooks");
+const { feedbackMessages } = require("./feedback-messages");
+const { isOwnFeedback, publicFeedback } = require("./feedback-conversation");
 const { examProject, subjects, books } = require("../../../packages/domain/catalog");
 const { normalizeText, scoreFastSubjectiveAnswer, scoreSubjectiveAnswer } = require("../../miniprogram/utils/subjective-scoring");
 const {
@@ -23,6 +26,7 @@ const {
 const {
   completePromptWithProvider,
   completeVisionPromptWithProvider,
+  isConversationalProtocol,
   listProviderModels,
   parseJsonContent,
   renderPromptTemplate,
@@ -30,25 +34,42 @@ const {
   streamPromptWithProvider,
   testProvider,
 } = require("./ai-provider");
+const {
+  MAX_BATCH_TEXT_LENGTH,
+  createProviderBatchRegistry,
+  mergePassedProviderBatch,
+  parseProviderBatchDocument,
+  publicProviderBatchCandidate,
+  publicProviderBatchJob,
+  runProviderBatchJob,
+} = require("./ai-provider-batch");
 const { createFileAiTaskStore, createMemoryAiTaskStore } = require("./ai-task-store");
+const { outboundProxyStatus } = require("./outbound-proxy");
 const { createFileAiScoreCacheStore, createMemoryAiScoreCacheStore } = require("./ai-score-cache-store");
 const {
   CARD_ASSISTANCE_SCHEMA_VERSION,
   buildCardAssistanceSource,
   normalizeCardAssistanceOutput,
 } = require("./card-assistance");
-const { createFileQuestionStore, createMemoryQuestionStore } = require("./question-store");
-const { createFileQuestionFamilyStore, createMemoryQuestionFamilyStore } = require("./question-family-store");
+const { createFileQuestionStore, createMemoryQuestionStore, questionFingerprint, UNASSIGNED_BOOK_FILTER, matchesBookSelection } = require("./question-store");
+const { questionClassificationState, questionNeedsClassification } = require("./question-classification-state");
+const { matchesWorkspaceStatus, workspaceFamilySelection, workspaceFamilySets } = require("./question-workspace-filter");
+const { createFileQuestionFamilyStore, createMemoryQuestionFamilyStore, buildFamilyCandidates } = require("./question-family-store");
+const { deriveQuestionFamilySets } = require("./question-family-set-membership");
 const { decorateFamiliesWithDynamicRelations } = require("./question-family-relations");
 const {
   buildQuestionFamilyCatalogProjection,
   buildQuestionFamilyCatalogTreeSummary,
   decorateQuestionsWithFamilyCatalogProjection,
 } = require("./question-family-catalog-projection");
-const { createFileKnowledgeStructureStore, createMemoryKnowledgeStructureStore } = require("./knowledge-structure-store");
+const { createLibraryDirectories, descendantIds, dossierNodeIds, questionNodeIds } = require("./library-directories");
+const { questionSourceDirectory } = require("./question-source-directory");
+const { createQuestionCompletion } = require("./question-completion");
+const { createFileKnowledgeStructureStore, createMemoryKnowledgeStructureStore, buildFingerprints } = require("./knowledge-structure-store");
 const { estimateDifficulty, knowledgeDifficultyProfiles } = require("./question-assessment");
-const { createFileQuestionEnrichmentStore, createMemoryQuestionEnrichmentStore, questionEnrichmentNeeds } = require("./question-enrichment-store");
-const { createFileKnowledgeClassificationStore, createMemoryKnowledgeClassificationStore } = require("./knowledge-classification-store");
+const { createFileQuestionEnrichmentStore, createMemoryQuestionEnrichmentStore, normalizeQuestionEnrichmentFilters, questionEnrichmentMatchesNeeds, questionEnrichmentNeeds } = require("./question-enrichment-store");
+const { suggestionChanges: questionEnrichmentSuggestionChanges } = require("../../admin/question-enrichment-diff");
+const { createFileKnowledgeClassificationStore, createMemoryKnowledgeClassificationStore, AUDIT_REVIEW_STATES } = require("./knowledge-classification-store");
 const {
   CORE_KNOWLEDGE_ROLES,
   contentHash,
@@ -66,6 +87,17 @@ const {
   validateFeatureProfileContract,
 } = require("./question-classification-features");
 const { filterRelatedFamilySuggestions } = require("./classification-verification-policy");
+// 确定性体检（DEC-100 / §4.6.12）：词表、规则层、上下文层、服务层都在这里接上。
+// 本文件不重写任何体检判据，只做"把 Store 现状喂给服务层、把结果摆到接口上"。
+// 中文词表一律从 question-audit-rules.js 取（`AUDIT_ISSUE_LABELS` 原样下发给前端，前端不再存第二份）。
+const {
+  AUDIT_ISSUE_LABELS,
+  auditIssueTitle,
+  formatAuditFindings,
+} = require("./question-audit-rules");
+const { createQuestionAuditService } = require("./question-audit-service");
+const { createAssessmentModeService, assessmentModePrompt } = require("./assessment-mode-standards");
+const { createAssessmentModeRoutes } = require("./assessment-mode-routes");
 const { actionTextSimilarity } = require("../../../packages/domain/assessment-action-semantics");
 const {
   createFileKnowledgeClassificationExperienceStore,
@@ -104,7 +136,6 @@ const {
   requestHash: classificationCommitRequestHash,
 } = require("./classification-commit-store");
 const { createClassificationCommitCoordinator } = require("./classification-commit-coordinator");
-const { SUGGESTION_SOURCES } = require("./suggestion-lifecycle");
 const {
   SCHEMA_VERSION: QUESTION_MERGE_COMMIT_SCHEMA_VERSION,
   createFileQuestionMergeCommitStore,
@@ -120,13 +151,25 @@ const { formatTextbookEvidence, generatedQuestionSchema, normalizeBodyOcrPages, 
 const { createFileExamStore, createMemoryExamStore } = require("./exam-store");
 const { createFileExamImportStore, createMemoryExamImportStore } = require("./exam-import-store");
 const { createFilePackStore, createMemoryPackStore } = require("./pack-store");
-const { createFileBillingStore, createMemoryBillingStore } = require("./billing-store");
+const { createFileBillingStore, createMemoryBillingStore, roundBeans, BEANS_PER_CREDIT } = require("./billing-store");
 const { createFileCommunityAssetStore, createMemoryCommunityAssetStore } = require("./community-asset-store");
 const { createFileUserAuthStore, createMemoryUserAuthStore } = require("./user-auth-store");
 const {
   createFileCommunityInteractionStore,
   createMemoryCommunityInteractionStore,
 } = require("./community-interaction-store");
+const {
+  createFileFavoriteFolderStore,
+  createMemoryFavoriteFolderStore,
+} = require("./favorite-folder-store");
+const {
+  createFileCardLibraryStore,
+  createMemoryCardLibraryStore,
+} = require("./card-library-store");
+const {
+  createFilePersonalCloudAssetStore,
+  createMemoryPersonalCloudAssetStore,
+} = require("./personal-cloud-asset-store");
 const {
   TYPE_DESCRIPTIONS: RESTRICTION_TYPE_DESCRIPTIONS,
   TYPE_LABELS: RESTRICTION_TYPE_LABELS,
@@ -135,6 +178,7 @@ const {
 } = require("./user-restriction-store");
 const { createFileLearningStateStore, createMemoryLearningStateStore } = require("./learning-state-store");
 const { createFileAnnouncementStore, createMemoryAnnouncementStore } = require("./announcement-store");
+const { createFilePlatformContentStore, createMemoryPlatformContentStore } = require("./platform-content-store");
 const { catalogPagesForModel, extractPdf, loadPdfFile, loadPdfPagePreview, loadPdfPagePreviewFromPath, localCatalogDraft, renderPdfPageRangeForOcr, renderPdfPagesForOcr, requiresPdfOcr, savePdfFile, tocCatalogDraft } = require("./textbook-pdf");
 const { applySequentialObjectiveAnswerSections, applyVerbatimAnswerBlocks, deleteExamSourceFiles, examPagesForModel, extractVerbatimAnswerBlocks, loadExamSourceFile, mergeAnswerRecognitions, mergeExamRecognitions, normalizeExamModelOutput, saveExamSourceFile } = require("./exam-paper-import");
 const { deleteExamJobFiles, extractExamDocument, loadExamJobFile, readExamMultipart, saveExamJobFile } = require("./exam-document-import");
@@ -144,7 +188,30 @@ const { parseQuestionImportText } = require("./question-text-import");
 const { parseMineruLayout } = require("./mineru-layout");
 const { formatMaterialWithMarks, materialMarksForQuestion } = require("./material-mark");
 const { groupQuestionUnits } = require("./question-group");
+// 材料题组整组取数/整组分值规划（DEC-099）：分配算法与分值来源词汇都在 material-score-allocation.js。
+const {
+  buildMaterialGroupScorePlan,
+  materialGroupMembers,
+  scoreNeedsReviewForBasis,
+} = require("./material-group-score");
 const { catalogNodeForChapter, evidencePageRange, resolveQuestionTextbookContext } = require("./question-textbook-context");
+// 考试项目（专业）一级的唯一读取入口（DEC-098）：归属判断按 项目 → 科目 → 教材 → 知识树 收敛。
+const {
+  DEFAULT_EXAM_PROJECT_ID,
+  CLASSIFICATION_ACCURACY_TARGETS,
+  listExamProjects,
+  findExamProject,
+  normalizeExamProjectId,
+  subjectsOfProject,
+  booksOfProject,
+  // 题组总分缺失时的兜底（DEC-099 ⑪：该科目材料题组默认满分）——唯一读取入口就在这里。
+  materialGroupTotalForSubject,
+} = require("./exam-project-registry");
+const {
+  createApiFreshnessProbe,
+  formatStamp,
+  formatDateKey,
+} = require("./api-freshness");
 
 const adminRoot = path.resolve(__dirname, "../../admin");
 const MAX_AGENT3_CANDIDATE_KNOWLEDGE_NODES = 16;
@@ -259,6 +326,15 @@ function canonicalizeLearningSyncPayload(payload, mappings) {
     reviewStates: canonicalizeLearningActiveMap(payload?.reviewStates, mappings, "lastReviewAt"),
     bookmarks: canonicalizeLearningActiveMap(payload?.bookmarks, mappings, "updatedAt"),
   };
+}
+
+// AI 巡检「送去完善题目」的来源说明（DEC-100：完善建议里要能看出这次是巡检送来的，
+// 以及是哪一项巡检结论送来的）。措辞取自**唯一一份**体检项词表 `AUDIT_ISSUE_LABELS`
+// （question-audit-rules.js）——本文件不再维护第二份中文标签表（AGENTS §5）。
+function knowledgeInspectionOriginLabel(result = {}, issueCode = "") {
+  const code = String(issueCode || result.issueCode || "").trim();
+  if (!code) return "来自 AI 巡检";
+  return `来自 AI 巡检：${auditIssueTitle(code)}`;
 }
 
 function knowledgeClassificationQuestionBaseline(fingerprint, familyMembershipRevision = 0) {
@@ -434,7 +510,11 @@ const SUPER_ADMIN_ONLY_ADMIN_PATHS = [
   "/api/admin/accounts",   // 后台账号管理
   "/api/admin/ai-config",  // 模型供应商与密钥配置（含掩码后的密钥信息）
   "/api/admin/ai/",        // 供应商/模型/场景路由/提示词/连通性测试
-  "/api/admin/billing",    // 收费、商品与额度发放
+  "/api/admin/billing",    // 收费、商品与豆币发放
+  // 平台设置（2026-10-05，产品负责人确认）：用户协议 / 隐私政策 / AI 服务说明 / 退款政策 /
+  // 账号注销说明 / 运营主体与客服信息 / 个人信息收集清单。协议文本有法律效力，改协议是治理边界，
+  // 因此**只放行超级管理员**——不为运营操作员开放（测试 admin-auth.test.js 要求显式登记分类）。
+  "/api/admin/platform-content",
 ];
 
 // 运营操作员可用的后台业务前缀（内容、题库、考试、审核与限制记录等）。
@@ -448,6 +528,7 @@ const OPERATOR_ADMIN_PATHS = [
   "/api/admin/question-family-sets",
   "/api/admin/question-family-options",
   "/api/admin/question-enrichment",
+  "/api/admin/new-library",
   "/api/admin/knowledge-structure",
   "/api/admin/knowledge-dossiers",
   "/api/admin/knowledge-dossier-deltas",
@@ -541,6 +622,9 @@ async function exchangeWechatCode(code, developmentIdentity = "") {
 function catalogPayload() {
   return {
     project: examProject,
+    // 一级考试项目列表（DEC-098 的多项目预留形态）：注册引导的「目标」选择用它，
+    // 客户端优先读 projects、读不到再退回单个 project，扩展专业时不改客户端。
+    projects: listExamProjects().map((project) => ({ id: project.id, name: project.name, region: project.region, examType: project.examType })),
     subjects: subjects.map((subject) => ({
       ...subject,
       books: books.filter((book) => book.subjectId === subject.id),
@@ -659,7 +743,8 @@ function clientQuestionPayload(question) {
   if (!question) return null;
   const subject = subjects.find((item) => item.id === question.subjectId);
   const book = books.find((item) => item.id === question.bookId);
-  const knowledgePoint = question.knowledgePoints && question.knowledgePoints[0] || "未归类知识点";
+  // 没有知识点时保持为空，不再造「未归类知识点」占位串（占位串会冒充真实归类）。
+  const knowledgePoint = question.knowledgePoints && question.knowledgePoints[0] || "";
   const source = [question.sourceLabel, question.sourcePage].filter(Boolean).join(" · ");
   return {
     id: question.id,
@@ -696,7 +781,7 @@ function clientQuestionPayload(question) {
     usesSharedMaterial: question.usesSharedMaterial,
     groupNumber: question.groupNumber,
     subNumber: question.subNumber,
-    responseMode: question.responseMode,
+    responseMode: "text",
     annotationText: question.annotationText,
     answerSource: question.answerSource,
     sourceLabel: question.sourceLabel,
@@ -789,6 +874,22 @@ function publicExamPayload(exam) {
   };
 }
 
+// 用户端可见的题目状态白名单：未经批准发布（pending_review）或已下架（offline）的题目
+// 不得出现在任何用户端路径上——列表、练习池、详情、AI 判分与 AI 讲解都算。
+const PUBLISHED_QUESTION_STATUSES = new Set(["official", "public", "featured"]);
+
+function isUserVisibleQuestion(question) {
+  return Boolean(question) && PUBLISHED_QUESTION_STATUSES.has(question.status);
+}
+
+// 后台读出的题目都带上派生的待归类状态（不落库、按缺失字段实时算）：
+// 题目列表、题目详情、录入/编辑响应、题目完善中心共用同一口径，前端不必自己重算。
+const withQuestionClassification = (question) => ({
+  ...question,
+  classification: questionClassificationState(question),
+  needsClassification: questionNeedsClassification(question),
+});
+
 function publicQuestionList(questionStore, filters = {}) {
   const library = filters.library === "public" ? "public" : "official";
   const listed = questionStore.list({
@@ -863,7 +964,7 @@ function adminOverview(aiConfig = null, aiTaskDashboard = null, questionCounts =
         if (fallbackProvider) {
           return { scene: sceneLabel, provider: `复用 ${provider.name}`, model: effectiveRoute.model, fallback: "来自 Agent 2" };
         }
-        return { scene: sceneLabel, provider: provider.name, model: effectiveRoute.model, fallback: "失败不扣额度" };
+        return { scene: sceneLabel, provider: provider.name, model: effectiveRoute.model, fallback: "失败不扣豆币" };
       }
       if (route && route.mode === "local_rule_demo") {
         return { scene: sceneLabel, provider: "本地规则演示", model: "未配置", fallback: "可切换正式模型" };
@@ -879,6 +980,7 @@ function aiTaskMetadata(config, sceneId, payload = {}, overrides = {}) {
   const provider = route && config.providers.find((item) => item.id === route.providerId);
   return {
     requestId: String(payload.requestId || `${sceneId}-${Date.now()}`),
+    userId: String(overrides.userId || ""),
     sceneId,
     sceneLabel: effectiveSceneLabel(config, sceneId) || overrides.sceneLabel || sceneId,
     providerId: String(overrides.providerId || provider?.id || ""),
@@ -911,6 +1013,8 @@ function isRetryableProviderFailure(error) {
   const message = String(error && error.message || error || "").toLowerCase();
   return message === "provider_timeout"
     || message.includes("auth_unavailable")
+    // 451（地区/法务限制）与本机代理没配好是基础设施问题，值得瞬时重试一次；也要能被仪表盘归到「网络/基础设施」。
+    || message.includes("provider_region_blocked")
     || message.includes("provider_http_error:http 502")
     || message.includes("provider_http_error:http 503")
     || message.includes("provider_http_error:http 504")
@@ -949,7 +1053,7 @@ async function completePromptWithTransientRetry(provider, route, prompt, values,
 }
 
 function subjectiveScoringRoute(route, question, isRescore) {
-  const complexQuestion = question && ["appreciation", "essay"].includes(question.type);
+  const complexQuestion = question && question.type === "essay";
   const useReview = isRescore || complexQuestion;
   return {
     ...route,
@@ -1294,6 +1398,9 @@ function serveStatic(response, pathname) {
 }
 
 function createServer(options = {}) {
+  // 本进程的启动时刻（「后端没重启，改动没生效」自检的基准；测试可用 options.bootedAtMs 注入）。
+  const bootedAtMs = Number(options.bootedAtMs) > 0 ? Number(options.bootedAtMs) : Date.now();
+  const apiFreshnessProbe = createApiFreshnessProbe({ bootedAtMs, dir: path.join(__dirname) });
   const aiConfigStore = options.aiConfigStore || createFileAiConfigStore();
   const aiTaskStore = options.aiTaskStore
     || (options.aiConfigStore
@@ -1327,6 +1434,32 @@ function createServer(options = {}) {
     || (options.aiConfigStore
       ? createMemoryKnowledgeDossierStore()
       : createFileKnowledgeDossierStore());
+  const assessmentModes = createAssessmentModeService(knowledgeClassificationExperienceStore, questionStore);
+  const assessmentModeRoutes = createAssessmentModeRoutes({
+    service: assessmentModes, sendJson, readJsonBody,
+    actor: () => currentAdminDisplayName() || "管理员",
+    logOperation: (entry) => logOperation(entry),
+    suggest: async (context) => {
+      const config = aiConfigStore.load();
+      const scene = configuredScene(config, "question_enrichment");
+      if (!scene) throw Object.assign(new Error("assessment_mode_route_unavailable"), { statusCode: 503 });
+      const task = aiTaskStore.start(aiTaskMetadata(config, "question_enrichment", {}, {
+        inputSummary: { purpose: "assessment_modes", questionId: context.question.id, questionVersion: context.question.version,
+          standards: context.standards.map(({ id, version }) => ({ id, version })) },
+      }));
+      try {
+        const completion = await completePromptWithProvider(scene.provider, { ...scene.route, temperature: 0.1 },
+          assessmentModePrompt, context, { jsonMode: true });
+        const result = assessmentModes.validateSuggestion(context, parseJsonContent(completion.content));
+        aiTaskStore.finish(task.id, { status: "succeeded", chargeable: false, usage: completion.usage, outputChars: completion.content.length });
+        return { ...result, taskId: task.id };
+      } catch (error) {
+        aiTaskStore.finish(task.id, { status: "failed", errorCode: error.message, failureStage: "assessment_modes" });
+        if (!error.statusCode) error.statusCode = 502;
+        throw error;
+      }
+    },
+  });
   const operationLogStore = options.operationLogStore
     || (options.aiConfigStore ? createMemoryAdminOperationStore() : createFileAdminOperationStore());
   const adminAccountStore = options.adminAccountStore
@@ -1339,6 +1472,13 @@ function createServer(options = {}) {
     || (options.aiConfigStore ? createMemoryTextbookKnowledgeStore() : createFileTextbookKnowledgeStore());
   const knowledgeStructureStore = options.knowledgeStructureStore
     || (options.aiConfigStore ? createMemoryKnowledgeStructureStore() : createFileKnowledgeStructureStore());
+  // 确定性体检服务（DEC-100 / §4.6.12）：纯只读，返回一本书的体检报告。
+  // 规则判据全部在 question-audit-* 三个模块里，这里只是把三个 Store 接上去。
+  const questionAuditService = createQuestionAuditService({
+    questionStore,
+    knowledgeStructureStore,
+    textbookKnowledgeStore,
+  });
   const classificationCommitStore = options.classificationCommitStore
     || (options.aiConfigStore || options.persistence
       ? createMemoryClassificationCommitStore()
@@ -1352,9 +1492,12 @@ function createServer(options = {}) {
     knowledgeClassificationStore,
     operationLogStore,
   });
-  const decorateQuestionKnowledgeFingerprint = (question, structureOverride = null) => {
+  const decorateQuestionKnowledgeFingerprint = (question, structureOverride) => {
     if (!question) return null;
-    const structure = structureOverride || knowledgeStructureStore.get(question.bookId);
+    // An explicit null is a resolved absence, not a request to read the tree again.
+    const structure = structureOverride !== undefined
+      ? structureOverride
+      : (question.bookId ? knowledgeStructureStore.get(question.bookId) : null);
     const fingerprint = (structure?.fingerprints || []).find((item) => item.questionId === question.id) || null;
     const confirmedKnowledgeFingerprint = fingerprint?.status === "confirmed" ? fingerprint : null;
     const candidateKnowledgeFingerprint = fingerprint && fingerprint.status !== "confirmed" ? fingerprint : null;
@@ -1366,6 +1509,8 @@ function createServer(options = {}) {
       knowledgeFingerprint: confirmedKnowledgeFingerprint,
       candidateKnowledgeFingerprint,
       knowledgeFingerprintStatus: confirmedKnowledgeFingerprint ? "confirmed" : (candidateKnowledgeFingerprint ? "suggested" : "missing"),
+      knowledgeFingerprintLabel: (structure?.nodes || []).find(node => node.id === fingerprint?.primaryNodeId)?.path
+        || (structure?.nodes || []).find(node => node.id === fingerprint?.primaryNodeId)?.title || "",
       knowledgeFingerprintSignature: fingerprintSignature,
     };
   };
@@ -1373,13 +1518,21 @@ function createServer(options = {}) {
     const items = Array.isArray(questions) ? questions : [];
     const memberships = questionFamilyStore.memberships(items.map((question) => question.id), { status: "all" });
     const structures = new Map();
+    const familySetsByBook = new Map();
     return items.map((question) => ({
       ...decorateQuestionKnowledgeFingerprint(question, (() => {
         if (structureOverride && structureOverride.bookId === question.bookId) return structureOverride;
-        if (!structures.has(question.bookId)) structures.set(question.bookId, knowledgeStructureStore.get(question.bookId));
+        if (!structures.has(question.bookId)) structures.set(question.bookId, question.bookId ? knowledgeStructureStore.get(question.bookId) : null);
         return structures.get(question.bookId);
       })()),
       familyMemberships: memberships[question.id] || [],
+      familySetMemberships: (() => {
+        if (!question.bookId || typeof questionFamilyStore.listSets !== "function") return [];
+        if (!familySetsByBook.has(question.bookId)) {
+          familySetsByBook.set(question.bookId, questionFamilyStore.listSets({ bookId: question.bookId }).sets);
+        }
+        return deriveQuestionFamilySets(memberships[question.id] || [], familySetsByBook.get(question.bookId));
+      })(),
     }));
   };
   const questionFamilySetsForBook = (bookId, query = "") => {
@@ -2360,6 +2513,7 @@ function createServer(options = {}) {
     && (dossier.claims || []).every((claim) => (claim.evidence || []).length > 0);
   const knowledgeDossierFamilyContext = (bookId, dossiers = null, families = null) => {
     const structure = knowledgeStructureStore.get(bookId);
+    const directory = libraryDirectories.read(bookId);
     const nodeById = new Map((structure?.nodes || []).map((node) => [node.id, node]));
     const allDossiers = Array.isArray(dossiers) ? dossiers : knowledgeDossierStore.list({ bookId });
     const allFamilies = Array.isArray(families)
@@ -2390,12 +2544,14 @@ function createServer(options = {}) {
     const activeEvidenceNodeIds = new Set();
     allDossiers.filter(knowledgeDossierEvidenceIsComplete).forEach((dossier) => {
       (dossier.occurrences || []).forEach((occurrence) => {
+        // Directory correspondence locates related families; it is not evidence of knowledge equivalence.
         if (occurrence.nodeId && nodeById.has(occurrence.nodeId)) activeEvidenceNodeIds.add(occurrence.nodeId);
       });
     });
     return {
       bookId,
       nodeById,
+      directory,
       dossiers: allDossiers,
       families: allFamilies,
       familySets,
@@ -2488,7 +2644,7 @@ function createServer(options = {}) {
     };
   };
   const knowledgeDossierFamilyCoverage = (dossier, context) => {
-    const occurrenceNodeIds = new Set((dossier?.occurrences || []).map((item) => item.nodeId).filter(Boolean));
+    const occurrenceNodeIds = new Set((dossier?.occurrences || []).flatMap((item) => questionNodeIds(context.directory, item.nodeId)));
     const relatedFamilies = occurrenceNodeIds.size
       ? context.families.filter((family) => [
         family.coreKnowledgeNodeId || family.knowledgeNodeId,
@@ -2579,22 +2735,25 @@ function createServer(options = {}) {
     const coverage = knowledgeDossierFamilyCoverage(dossier, resolvedContext);
     return [...coverage.confirmedFamilies, ...coverage.pendingFamilies];
   };
-  const knowledgeDossierTreeSummary = (bookId, dossiers = []) => {
+  const knowledgeDossierTreeSummary = (bookId, dossiers = [], sourceDirectory = null) => {
     const structure = bookId && bookId !== "all" ? knowledgeStructureStore.get(bookId) : null;
-    const nodes = structure?.nodes || [];
+    const nodes = sourceDirectory?.dossierNodes || structure?.nodes || [];
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const nodeDossierCounts = new Map(nodes.map((node) => [node.id, 0]));
     let locatedDossierCount = 0;
     dossiers.forEach((dossier) => {
       const countedNodeIds = new Set();
       (dossier.occurrences || []).forEach((occurrence) => {
-        let node = nodeById.get(occurrence.nodeId);
-        const visitedNodeIds = new Set();
-        while (node && !visitedNodeIds.has(node.id)) {
-          visitedNodeIds.add(node.id);
-          countedNodeIds.add(node.id);
-          node = node.parentId ? nodeById.get(node.parentId) : null;
-        }
+        const ids = sourceDirectory ? dossierNodeIds(sourceDirectory, occurrence.nodeId) : [occurrence.nodeId];
+        ids.forEach((id) => {
+          let node = nodeById.get(id);
+          const visitedNodeIds = new Set();
+          while (node && !visitedNodeIds.has(node.id)) {
+            visitedNodeIds.add(node.id);
+            countedNodeIds.add(node.id);
+            node = node.parentId ? nodeById.get(node.parentId) : null;
+          }
+        });
       });
       if (countedNodeIds.size) locatedDossierCount += 1;
       countedNodeIds.forEach((nodeId) => {
@@ -2639,16 +2798,33 @@ function createServer(options = {}) {
     });
     return { selections };
   };
+  const resolveQuestionCatalogAnchor = (payload, bookId) => {
+    const resolved = { ...payload };
+    delete resolved.expectedQuestionVersion;
+    delete resolved.textbookCatalogNodeId;
+    if (!Object.prototype.hasOwnProperty.call(payload, "textbookCatalogNodeId")) return resolved;
+    const nodeId = String(payload.textbookCatalogNodeId || "").trim();
+    const requestedPath = String(payload.chapter || "");
+    if (!nodeId) {
+      if (requestedPath) throw new Error("question_catalog_anchor_invalid");
+      return { ...resolved, chapter: "" };
+    }
+    const textbook = bookId ? textbookCatalogStore.get(bookId) : null;
+    const node = catalogNodesWithPaths(textbook?.confirmed?.nodes || []).find(entry => entry.id === nodeId);
+    if (!node) throw new Error("question_catalog_anchor_invalid");
+    if (requestedPath !== node.path) throw new Error("question_catalog_anchor_changed");
+    return { ...resolved, chapter: node.path };
+  };
   const questionFamilySensitiveSnapshot = (question = {}) => JSON.stringify({
     subjectId: question.subjectId,
     bookId: question.bookId,
     type: question.type,
     stem: question.stem,
-    material: question.material,
+    material: String(question.material || ""),
     options: question.options,
     correctAnswer: question.correctAnswer,
     referenceAnswer: question.referenceAnswer,
-    scoringPoints: question.scoringPoints,
+    scoringPoints: Array.isArray(question.scoringPoints) ? question.scoringPoints : [],
   });
   const markQuestionFamilyMembersPending = (questionIds, reason, actor = currentAdminDisplayName() || "超级管理员") => (
     typeof questionFamilyStore.markPendingForQuestions === "function"
@@ -2727,12 +2903,25 @@ function createServer(options = {}) {
     || (options.aiConfigStore ? createMemoryCommunityAssetStore() : createFileCommunityAssetStore());
   const userAuthStore = options.userAuthStore
     || (options.aiConfigStore ? createMemoryUserAuthStore() : createFileUserAuthStore());
+  const resolveBillingUserId = (identifier) => {
+    const value = String(identifier || "").trim();
+    return value === "test-user" ? value : userAuthStore.resolveUserId(value);
+  };
   const userRestrictionStore = options.userRestrictionStore
     || (options.aiConfigStore ? createMemoryUserRestrictionStore() : createFileUserRestrictionStore());
   const communityInteractionStore = options.communityInteractionStore
     || (options.aiConfigStore ? createMemoryCommunityInteractionStore() : createFileCommunityInteractionStore());
+  // 收藏的文件夹 / 子文件夹 / 置顶标记（DEC-096）。只存"怎么组织"，收藏本身仍在上面两个 store 里。
+  const favoriteFolderStore = options.favoriteFolderStore
+    || (options.aiConfigStore ? createMemoryFavoriteFolderStore() : createFileFavoriteFolderStore());
   const learningStateStore = options.learningStateStore
     || (options.aiConfigStore ? createMemoryLearningStateStore() : createFileLearningStateStore());
+  // 卡集与知识卡本体（产品负责人 2026-09-23 定：从小程序本地库搬到服务端，见 docs/OPEN_DECISIONS.md C15）。
+  // 只存卡片与卡集；「是否加入复习」仍在 learningStateStore 的 savedKnowledgeIds 里，不重复存。
+  const cardLibraryStore = options.cardLibraryStore
+    || (options.aiConfigStore ? createMemoryCardLibraryStore() : createFileCardLibraryStore());
+  const personalCloudAssetStore = options.personalCloudAssetStore
+    || (options.aiConfigStore ? createMemoryPersonalCloudAssetStore() : createFilePersonalCloudAssetStore());
   const questionMergeCommitStore = options.questionMergeCommitStore
     || (options.aiConfigStore || options.persistence
       ? createMemoryQuestionMergeCommitStore()
@@ -2755,8 +2944,16 @@ function createServer(options = {}) {
   questionEnrichmentStore.recoverInterrupted();
   knowledgeClassificationStore.recoverInterrupted();
   if (typeof knowledgeDossierStore.recoverInterruptedRuns === "function") knowledgeDossierStore.recoverInterruptedRuns();
+  // DEC-107：历史 AI 额度按 1 点 = 0.1 豆币折算。折算在 billing-store **读取时按字段形状完成**（幂等），
+  // 落盘只发生在下一次真正的写操作（或运维显式跑 `node scripts/migrate-billing-beans.js --write`）。
+  // 启动时**不**主动写：`createServer` 同样被测试进程使用，默认文件 store 指向正式 `.runtime/billing.json`，
+  // 启动即写会让"跑一次测试"等于"改一次正式数据"（2026-10-03 实测踩到）。
   const announcementStore = options.announcementStore
     || (options.aiConfigStore ? createMemoryAnnouncementStore() : createFileAnnouncementStore());
+  // 平台设置（2026-10-05）：7 份用户端文本的唯一维护处。默认文件 store 落在正式 `.runtime/platform-content.json`，
+  // 与 announcementStore 同一套"有注入 store（测试/postgres）就用注入，否则读文件"的判断。
+  const platformContentStore = options.platformContentStore
+    || (options.aiConfigStore ? createMemoryPlatformContentStore() : createFilePlatformContentStore());
   const examExportRoot = path.resolve(options.examExportRoot || path.resolve(__dirname, "../../../.runtime/exam-exports"));
   const examJobRoot = path.resolve(options.examJobRoot || path.resolve(__dirname, "../../../.runtime/exams/jobs"));
   const examUploadRoot = path.resolve(options.examUploadRoot || path.resolve(__dirname, "../../../.runtime/exams/uploads"));
@@ -2833,6 +3030,12 @@ function createServer(options = {}) {
     const actor = adminActorContext.getStore() || {};
     return actor.displayName || actor.username || "";
   };
+  // 巡检复核留痕要的是**登录账号名**（契约 v1：result.auditReview.actor = 当前登录账号 username），
+  // 不是展示名——两者在后台可以是不同的人名，只有账号名能唯一对回账号。
+  const currentAdminUsername = () => {
+    const actor = adminActorContext.getStore() || {};
+    return actor.username || actor.displayName || "";
+  };
   const logOperation = (payload = {}) => {
     const actor = adminActorContext.getStore() || {};
     const signedIn = Boolean(actor.accountId);
@@ -2846,6 +3049,142 @@ function createServer(options = {}) {
         ? (ADMIN_ROLE_LABELS[actor.role] || "system")
         : (payload.actorRole || ADMIN_ROLE_LABELS[actor.role] || "system"),
     });
+  };
+
+  // ---------- 「待完善」派生：知识指纹与题族归属也算待完善（2026-09-26 产品负责人确认） ----------
+  // 这两项不是题目字段能判断的——指纹在知识树里（knowledge-structure-store 的 fingerprints），
+  // 题族在题族库里（family.members）。调用方把**该册的题目 id 列表**传进来，本函数按册各算一次，
+  // 不按题反复扫库；没有教材的题不参与（它们连挂到哪棵树都不确定，且已由 needsTextbook 计一次）。
+  const enrichmentDerivedNeedsForBook = (bookId, questionIds = []) => {
+    const normalizedBookId = String(bookId || "").trim();
+    const ids = [...new Set((Array.isArray(questionIds) ? questionIds : []).map(String).filter(Boolean))];
+    const result = new Map();
+    if (!normalizedBookId || !ids.length) return result;
+    const structure = knowledgeStructureStore.get(normalizedBookId);
+    // 有 primaryNodeId 才算"指纹已建立"：只有条目不落到知识节点上，等于没建立归属。
+    const fingerprintIds = new Set((structure?.fingerprints || [])
+      .filter((item) => String(item?.primaryNodeId || "").trim())
+      .map((item) => String(item.questionId)));
+    const memberships = questionFamilyStore.memberships(ids, { bookId: normalizedBookId, status: "all" });
+    ids.forEach((id) => {
+      result.set(id, {
+        needsFingerprint: !fingerprintIds.has(id),
+        needsFamily: (memberships[id] || []).length === 0,
+      });
+    });
+    return result;
+  };
+
+  const libraryDirectories = createLibraryDirectories({ knowledgeStructureStore, textbookCatalogStore, textbookKnowledgeStore });
+  const questionCompletion = createQuestionCompletion({ questionStore, knowledgeStructureStore, questionFamilyStore, textbookKnowledgeStore, directories: libraryDirectories });
+
+  // ---------- 「按册重算」的单一实现（完善题目的批量确定性动作与各自的原入口共用，避免第二份） ----------
+  // 重算知识树＝教材目录 + 正文大纲 + 正文片段 + 该册题目 → 生成知识节点与**知识指纹**。
+  const regenerateKnowledgeStructureForBook = (bookId) => {
+    const textbook = textbookCatalogStore.get(bookId);
+    if (!textbook?.confirmed?.nodes?.length) throw new Error("catalog_confirmed_not_found");
+    const knowledge = textbookKnowledgeStore.get(bookId, { includeContent: true });
+    if (!knowledge?.chunks?.length) throw new Error("textbook_knowledge_not_built");
+    const questions = questionStore.list({ library: "official", status: "all", bookId }).questions
+      .filter((question) => question.status !== "offline");
+    return knowledgeStructureStore.generate({
+      bookId,
+      catalogNodes: textbook.confirmed.nodes,
+      outlineNodes: textbookKnowledgeStore.outline(bookId),
+      chunks: knowledge.chunks,
+      questions,
+    });
+  };
+
+  // 按知识指纹生成候选题族（纯计算，不调用任何模型）：指纹缺失时先补一层知识树。
+  const regenerateQuestionFamiliesForBook = (bookId, options = {}) => {
+    const questions = questionStore.list({ library: "official", status: "all", bookId }).questions
+      .filter((question) => question.status !== "offline");
+    let structure = knowledgeStructureStore.get(bookId);
+    if (!structure) {
+      const textbook = textbookCatalogStore.get(bookId);
+      const knowledge = textbookKnowledgeStore.get(bookId, { includeContent: true });
+      structure = knowledgeStructureStore.generate({
+        bookId,
+        catalogNodes: textbook?.confirmed?.nodes || [],
+        outlineNodes: textbookKnowledgeStore.outline(bookId),
+        chunks: knowledge?.chunks || [],
+        questions,
+      });
+    }
+    const fingerprintMap = new Map((structure.fingerprints || []).map((item) => [item.questionId, item]));
+    const nodeOrder = new Map((structure.nodes || []).map((node, index) => [node.id, index + 1]));
+    // 注意：store 返回的 familyCount 是"该册合并后的题族**总数**"（question-family-store.js:2226），
+    // 不是"本次生成几个"。对外要说清"新增几个"，所以这里自己算增量。
+    const beforeFamilyIds = new Set((questionFamilyStore.list({ bookId }).families || []).map((family) => family.id));
+    const result = questionFamilyStore.generate(questions, bookId, {
+      fingerprintMap,
+      nodeOrder,
+      archiveReason: "knowledge_structure_regenerated",
+      resetReviewFamilyIds: options.resetFamilyIds,
+    });
+    const createdFamilyCount = (questionFamilyStore.list({ bookId }).families || [])
+      .filter((family) => !beforeFamilyIds.has(family.id)).length;
+    return { ...result, createdFamilyCount, existingFamilyCount: beforeFamilyIds.size };
+  };
+
+  // ---------- 局部确定性动作：只给勾选（或某批次）的题补指纹与题族（2026-09-27） ----------
+  // 与"按册重算"的关键区别：**不重算整棵知识树**。指纹用与整册重算**同一个** buildFingerprints()
+  // 对着现有知识树 + 正文片段算，再走 assignQuestions 的逐题覆盖通道写入（它自己会留快照）。
+  const assignFingerprintsForQuestions = (bookId, questions) => {
+    const structure = knowledgeStructureStore.get(bookId);
+    if (!structure) throw new Error("knowledge_structure_not_found");
+    const chunks = textbookKnowledgeStore.get(bookId, { includeContent: true })?.chunks || [];
+    const computed = buildFingerprints(questions, structure.nodes || [], chunks);
+    const assignments = computed
+      .filter((fingerprint) => String(fingerprint.primaryNodeId || "").trim())
+      .map((fingerprint) => ({
+        questionId: fingerprint.questionId,
+        primaryNodeId: fingerprint.primaryNodeId,
+        primaryNodeRole: fingerprint.primaryNodeRole,
+        requiredNodeIds: fingerprint.requiredNodeIds,
+        problemKnowledgeRangeNodeIds: fingerprint.problemKnowledgeRangeNodeIds,
+        knowledgeThemeRangeAnchorNodeId: fingerprint.knowledgeThemeRangeAnchorNodeId,
+      }));
+    // 知识点在知识树里找不到节点的题**不建指纹**（不许拿纯文本当节点 id），单独回报。
+    const skipped = computed
+      .filter((fingerprint) => !String(fingerprint.primaryNodeId || "").trim())
+      .map((fingerprint) => fingerprint.questionId);
+    if (assignments.length) knowledgeStructureStore.assignQuestions(bookId, assignments);
+    return { assignedQuestionIds: assignments.map((item) => item.questionId), skippedQuestionIds: skipped };
+  };
+
+  // 只给这些题生成题族候选。**必须传 preserveFamilyIds**：questionFamilyStore.generate 默认是
+  // "整册替换"（question-family-store.js:2207），不传会把同册其它题族一起清掉。
+  const enrichmentDeterministicScope = (payload = {}) => {
+    const batchId = String(payload.importBatchId || "").trim();
+    if (batchId && batchId !== "all") {
+      const questions = questionStore.list({ library: "official", status: "all" }).questions
+        .filter((question) => question.status !== "offline"
+          && String(question.importBatchId || "") === batchId);
+      const byBook = new Map();
+      const unassignedQuestionIds = [];
+      questions.forEach((question) => {
+        const bookId = String(question.bookId || "").trim();
+        if (!bookId) { unassignedQuestionIds.push(question.id); return; }
+        if (!byBook.has(bookId)) byBook.set(bookId, []);
+        byBook.get(bookId).push(question);
+      });
+      return {
+        scope: "batch",
+        scopeKey: batchId,
+        questionCount: questions.length,
+        unassignedQuestionIds,
+        books: [...byBook.entries()].map(([bookId, items]) => ({ bookId, questions: items })),
+      };
+    }
+    const bookId = String(payload.bookId || "").trim();
+    if (!bookId || bookId === "all" || bookId === UNASSIGNED_BOOK_FILTER) {
+      throw new Error("deterministic_rebuild_scope_required");
+    }
+    const questions = questionStore.list({ library: "official", status: "all", bookId }).questions
+      .filter((question) => question.status !== "offline");
+    return { scope: "book", scopeKey: bookId, questionCount: questions.length, unassignedQuestionIds: [], books: [{ bookId, questions }] };
   };
 
   // ---------- 用户侧治理：限制（禁言 / 禁止投稿 / 公开功能限制 / 账号封禁） ----------
@@ -3040,7 +3379,7 @@ function createServer(options = {}) {
     usesSharedMaterial: question.usesSharedMaterial !== false,
     groupNumber: question.groupNumber,
     subNumber: question.subNumber,
-    responseMode: question.responseMode,
+    responseMode: "text",
     annotationText: question.annotationText,
     sourceLabel: draft.source.fileName,
     sourcePage: question.sourcePage,
@@ -3295,10 +3634,9 @@ function createServer(options = {}) {
     const official = String(question?.answerVariants?.official || "").trim();
     return question?.answerReviewStatus === "verified" && official ? official : "";
   };
-  const retrieveQuestionEvidence = (question, extraQuery = "", limit = 6) => {
-    if (!question || !question.bookId) return [];
+  const questionRetrievalQuery = (question, extraQuery = "") => {
     const officialAnswer = verifiedOfficialAnswer(question);
-    const query = [
+    return [
       question.stem,
       question.material,
       ...(question.options || []).map((option) => `${option.key || ""} ${option.text || ""}`),
@@ -3309,7 +3647,27 @@ function createServer(options = {}) {
       ...knowledgeClassificationBridgeTerms(question),
       extraQuery,
     ].filter(Boolean).join("\n").slice(0, 12000);
-    return textbookKnowledgeStore.search(question.bookId, query, { limit });
+  };
+  const retrieveQuestionEvidence = (question, extraQuery = "", limit = 6, bookId = "") => {
+    const targetBookId = String(bookId || (question && question.bookId) || "").trim();
+    if (!question || !targetBookId) return [];
+    return textbookKnowledgeStore.search(targetBookId, questionRetrievalQuery(question, extraQuery), { limit });
+  };
+  // 跨册候选时的证据检索：题目自己那本多取几段，同科目其它册各取少量并标出出自哪一册——
+  // 模型要靠"这段正文讲的东西属于哪一册"来定册次，证据不标册次就无从判断。
+  const retrieveQuestionEnrichmentEvidence = (question, candidates, extraQuery = "") => {
+    const ownBookId = String(question && question.bookId || "").trim();
+    const chunks = [];
+    (Array.isArray(candidates) ? candidates : []).forEach((candidate) => {
+      const knowledge = textbookKnowledgeStore.get(candidate.bookId);
+      const searchable = knowledge && ["ready", "partial", "building"].includes(knowledge.status)
+        && Number(knowledge.chunkCount) > 0;
+      if (!searchable) return;
+      const perBook = candidate.bookId === ownBookId ? 5 : (ownBookId ? 2 : 4);
+      retrieveQuestionEvidence(question, extraQuery, perBook, candidate.bookId)
+        .forEach((chunk) => chunks.push({ ...chunk, bookLabel: candidate.bookLabel }));
+    });
+    return chunks.slice(0, 9);
   };
   const resolveTextbookContext = (question) => resolveQuestionTextbookContext({
     question,
@@ -3329,27 +3687,137 @@ function createServer(options = {}) {
   const activeQuestionEnrichmentJobs = new Set();
   const enrichmentEvidence = (chunks) => (Array.isArray(chunks) ? chunks : []).map((chunk) => ({
     chunkId: String(chunk.id || ""),
+    // 跨册候选时证据要带教材名，否则弹窗里看不出"这段正文出自上册还是下册"。
+    bookLabel: String(chunk.bookLabel || ""),
     printedPage: Number(chunk.printedPageStart) > 0
       ? `${chunk.printedPageStart}${Number(chunk.printedPageEnd) > Number(chunk.printedPageStart) ? `-${chunk.printedPageEnd}` : ""}`
       : "",
     catalogPath: String(chunk.catalogPath || ""),
     excerpt: String(typeof chunk.retrievalText === "string" ? chunk.retrievalText : chunk.text || "").trim().slice(0, 1200),
   }));
-  const questionEnrichmentCatalog = (bookId) => {
-    const textbook = textbookCatalogStore.get(bookId);
-    if (!textbook || !textbook.confirmed || !Array.isArray(textbook.confirmed.nodes) || !textbook.confirmed.nodes.length) {
-      throw new Error("catalog_confirmed_not_found");
+  const questionEnrichmentBookLabel = (book) => (book
+    ? `${book.title || book.id}${book.volume ? ` · ${book.volume}` : ""}`
+    : "");
+  // 候选教材 = 这道题所属科目下**所有目录已确认的教材**（2026-09-24 产品负责人确认：
+  // 一个导入批次常横跨上下册，"批次级只能挂一本教材"逼得操作者只能留空＝待归类；
+  // 正确形态是让 AI 在整个科目的目录里挑，并把"挑的是哪一册"作为建议的一部分交人工确认）。
+  // 题目自己那本教材永远排第一位；同一科目的其它册作为跨册候选一起递进去。
+  const questionEnrichmentCandidates = (question = {}) => {
+    const ownBookId = String(question.bookId || "").trim();
+    const subjectId = String(question.subjectId || "").trim()
+      || String((books.find((book) => book.id === ownBookId) || {}).subjectId || "");
+    // 归属判断自顶向下（DEC-098）：先钉住考试项目（今天只有一个，接口按多项目预留），
+    // 项目内**所有科目**都是候选——科目是题目级字段，人工在导入时选过，但选错要能被 AI 指出来。
+    const projectId = normalizeExamProjectId(question.projectId || DEFAULT_EXAM_PROJECT_ID);
+    const project = findExamProject(projectId);
+    const projectSubjects = subjectsOfProject(projectId);
+    const bookCandidate = (book) => {
+      const textbook = textbookCatalogStore.get(book.id);
+      const nodes = textbook && textbook.confirmed && Array.isArray(textbook.confirmed.nodes)
+        ? catalogNodesWithPaths(textbook.confirmed.nodes).filter((node) => node.id && node.path)
+        : [];
+      return {
+        bookId: book.id,
+        bookLabel: questionEnrichmentBookLabel(book),
+        subjectId: String(book.subjectId || ""),
+        volume: String(book.volume || ""),
+        nodes,
+      };
+    };
+    // 候选教材 = 项目内**全部**目录已确认的教材（跨科目），因为"科目也判错"时得让模型
+    // 在别的科目里挑到书；排序：题目自己那本 → 本科目其余册 → 项目内其它科目。
+    const candidates = booksOfProject(projectId)
+      .map(bookCandidate)
+      .filter((candidate) => candidate.nodes.length)
+      .sort((left, right) => {
+        const rank = (candidate) => (candidate.bookId === ownBookId ? 0 : (candidate.subjectId === subjectId ? 1 : 2));
+        return rank(left) - rank(right);
+      });
+    if (!candidates.length) {
+      // 「题目连科目都没定」与「项目下没有已确认目录」要分开报：前者要人先定科目，
+      // 后者才是操作者熟悉的那句"请先确认教材目录，再构建正文知识库"。
+      throw new Error(subjectId ? "catalog_confirmed_not_found" : "question_enrichment_subject_required");
     }
+    // 候选科目只保留"项目内有已确认目录"的那些——没有目录的科目递进去，模型选了也落不了地。
+    const bookCountOfSubject = (id) => candidates.filter((candidate) => candidate.subjectId === id).length;
+    const subjectCandidates = projectSubjects
+      .filter((subject) => bookCountOfSubject(subject.id) > 0)
+      .map((subject) => ({
+        id: subject.id,
+        name: String(subject.name || subject.id),
+        isCurrent: subject.id === subjectId,
+        books: candidates.filter((candidate) => candidate.subjectId === subject.id)
+          .map((candidate) => ({ bookId: candidate.bookId, bookLabel: candidate.bookLabel, nodeCount: candidate.nodes.length })),
+      }));
+    // 「题目当前科目在项目里还没有已确认目录」不是错误、也不该让整条建议失败（DEC-098）：
+    // 此时最有用的一条判断恰恰可能是"这道题其实属于另一个科目"——把它报成
+    // 「请先确认教材目录」等于把第二级判断也一并关掉。是否成立由人工看证据决定。
+    const ownSubjectUncovered = Boolean(subjectId) && !subjectCandidates.some((subject) => subject.id === subjectId);
     return {
-      textbook,
-      nodes: catalogNodesWithPaths(textbook.confirmed.nodes).filter((node) => node.id && node.path),
+      projectId,
+      project: project ? { id: project.id, name: project.name, region: project.region, examType: project.examType, year: project.year } : null,
+      subjectId,
+      ownBookId,
+      ownSubjectUncovered,
+      candidates,
+      subjectCandidates,
+      // 合并后的节点带 bookId/bookLabel：模型挑节点时能说出挑的是哪一册，
+      // 采纳时也据此把教材一并写进题目（目录节点 id 全库唯一，跨册不会串）。
+      nodes: candidates.flatMap((candidate) => candidate.nodes.map((node) => ({
+        ...node,
+        bookId: candidate.bookId,
+        bookLabel: candidate.bookLabel,
+        subjectId: candidate.subjectId,
+      }))),
     };
   };
-  const normalizeQuestionEnrichmentSuggestion = (raw, question, nodes, evidenceChunks, context = {}) => {
+  const normalizeQuestionEnrichmentSuggestion = (raw, question, catalog, evidenceChunks, context = {}) => {
+    const nodes = Array.isArray(catalog) ? catalog : (catalog && catalog.nodes || []);
+    const candidates = Array.isArray(catalog) ? [] : (catalog && catalog.candidates || []);
+    const subjectCandidates = Array.isArray(catalog) ? [] : (catalog && catalog.subjectCandidates || []);
+    const candidateIds = new Set(candidates.map((candidate) => candidate.bookId));
+    const candidateSubjectIds = new Set(subjectCandidates.map((subject) => subject.id));
     const requestedNodeId = String(raw && (raw.catalogNodeId || raw.chapterNodeId) || "");
-    const currentPathNode = nodes.find((node) => node.path === question.chapter);
-    const node = nodes.find((item) => item.id === requestedNodeId) || (!requestedNodeId ? currentPathNode : null);
+    const requestedBookId = String(raw && raw.bookId || "").trim();
+    const requestedNode = nodes.find((item) => item.id === requestedNodeId) || null;
+    // 科目一级先判（DEC-098）：模型可以指出"这道题其实属于另一个科目"，但它说的科目必须在
+    // 项目候选里（跨项目/跨专业一律拒绝——多项目形态下那是另一次归属判断，不是完善建议）。
+    // 科目先于教材判，是为了让拒收理由指向更根本的那一级，而不是报"教材不存在"这种下游现象。
+    let subjectId = String(raw && raw.subjectId || "").trim();
+    if (subjectId && candidateSubjectIds.size && !candidateSubjectIds.has(subjectId)) {
+      throw new Error("question_enrichment_subject_invalid");
+    }
+    // 册次以「模型说的教材」为准，但它给的节点若属于另一册，以节点为准（节点 id 全库唯一，
+    // 比模型复述的 id 更可信）；两者都缺时退回题目已有的教材。
+    let bookId = requestedBookId || (requestedNode && requestedNode.bookId) || String(question.bookId || "").trim();
+    if (requestedNode && requestedNode.bookId && requestedBookId && requestedNode.bookId !== requestedBookId) {
+      bookId = requestedNode.bookId;
+    }
+    if (!bookId || (candidateIds.size && !candidateIds.has(bookId))) {
+      bookId = requestedNode && requestedNode.bookId
+        || (candidateIds.has(String(question.bookId || "").trim()) ? String(question.bookId).trim() : "");
+    }
+    if (!bookId || (candidateIds.size && !candidateIds.has(bookId))) {
+      throw new Error("question_enrichment_book_invalid");
+    }
+    if (!subjectId) {
+      subjectId = String((candidates.find((candidate) => candidate.bookId === bookId) || {}).subjectId || "")
+        || String(question.subjectId || "").trim();
+    }
+    // 科目与教材必须同源：说古代汉语却挑了一本现代汉语的册次，等于把两级的判断拼在一起，
+    // 采纳时必然把题目挂到错树——宁可拒收，也不给一条自相矛盾的建议。
+    const bookSubjectId = String((candidates.find((candidate) => candidate.bookId === bookId) || {}).subjectId || "");
+    if (bookSubjectId && subjectId && bookSubjectId !== subjectId) {
+      throw new Error("question_enrichment_subject_book_mismatch");
+    }
+    const bookNodes = nodes.filter((node) => node.bookId === bookId);
+    const currentPathNode = bookNodes.find((node) => node.path === question.chapter);
+    const node = (requestedNode && requestedNode.bookId === bookId ? requestedNode : null)
+      || bookNodes.find((item) => item.id === requestedNodeId)
+      || (!requestedNodeId ? currentPathNode : null);
     if (!node) throw new Error("question_enrichment_catalog_node_invalid");
+    const candidate = candidates.find((item) => item.bookId === bookId);
+    const subjectCandidate = subjectCandidates.find((item) => item.id === subjectId);
     const knowledgePoints = (Array.isArray(raw && raw.knowledgePoints) ? raw.knowledgePoints : [])
       .map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20);
     if (!knowledgePoints.length) throw new Error("question_enrichment_knowledge_points_required");
@@ -3371,6 +3839,13 @@ function createServer(options = {}) {
       questionId: question.id,
       questionVersion: question.version,
       status: "recommended",
+      projectId: String(catalog && catalog.projectId || ""),
+      subjectId,
+      subjectLabel: String((subjectCandidate && subjectCandidate.name) || ""),
+      subjectIdFrom: String(question.subjectId || ""),
+      bookIdFrom: String(question.bookId || ""),
+      bookId,
+      bookLabel: String((candidate && candidate.bookLabel) || (requestedNode && requestedNode.bookLabel) || ""),
       chapterNodeId: node.id,
       catalogPath: node.path,
       knowledgePoints,
@@ -3382,14 +3857,18 @@ function createServer(options = {}) {
       model: String(context.model || ""),
       promptVersion: Number(context.promptVersion) || 1,
       jobId: String(context.jobId || ""),
+      // 来源留痕随 job 传下来（DEC-100：AI 巡检送来的完善要能看出出处）。
+      origin: String(context.origin || ""),
+      originLabel: String(context.originLabel || ""),
     };
   };
-  const generateQuestionEnrichmentSuggestion = async (question, jobId) => {
+  const generateQuestionEnrichmentSuggestion = async (question, jobId, origin = {}) => {
     const config = aiConfigStore.load();
     const scene = configuredScene(config, "question_enrichment");
     if (!scene) throw new Error("question_enrichment_route_unavailable");
-    const { textbook, nodes } = questionEnrichmentCatalog(question.bookId);
-    const evidenceChunks = retrieveQuestionEvidence(question, "判断章节归属、知识点与结构化得分点", 8);
+    const catalog = questionEnrichmentCandidates(question);
+    const { nodes, candidates } = catalog;
+    const evidenceChunks = retrieveQuestionEnrichmentEvidence(question, candidates, "判断章节归属、知识点与结构化得分点");
     const task = aiTaskStore.start(aiTaskMetadata(config, "question_enrichment", {}, {
       providerId: scene.provider.id,
       providerName: scene.provider.name,
@@ -3400,13 +3879,24 @@ function createServer(options = {}) {
         jobId,
         questionId: question.id,
         questionVersion: question.version,
+        projectId: catalog.projectId,
+        subjectId: question.subjectId,
         bookId: question.bookId,
+        candidateSubjectIds: catalog.subjectCandidates.map((subject) => subject.id),
+        candidateBookIds: candidates.map((candidate) => candidate.bookId),
         needs: questionEnrichmentNeeds(question).needs,
       },
     }));
     try {
       const requiredOutput = {
-        catalogNodeId: "必须从已确认目录中选择一个 id",
+        // 归属判断自顶向下（DEC-098）：项目 → 科目 → 教材 → 目录节点。
+        // 今天只有一个项目，模型只需复述；多项目形态下这一项才是真正的第一级判断。
+        projectId: "必须复述 candidateProjects 里唯一的项目 id（多项目形态下从候选里选）",
+        subjectId: "必须从 candidateSubjects 里选一个 id（与题目当前科目一致时也复述）",
+        // 题目没有教材时（跨册批次）这一项就是"定册次"：必须从候选教材里挑一本，
+        // 不能省——省了就等于把建议写成"没有教材也能完善"，而章节与知识点都挂在教材下面。
+        bookId: "必须从 candidateTextbooks 里选一个 id（题目已定教材时也要复述同一本体，改册必须给出证据）",
+        catalogNodeId: "必须从 confirmedCatalog 中选择一个 id（节点自带 bookId，须与上面选的教材一致）",
         knowledgePoints: ["主知识点", "辅助知识点"],
         scoringPoints: [{
           description: "独立可判分的得分点；非主观题返回空数组",
@@ -3416,7 +3906,7 @@ function createServer(options = {}) {
           sourceNote: "教材名 · 目录路径",
         }],
         confidence: 0.9,
-        reason: "目录与知识点判断依据",
+        reason: "科目/教材/目录与知识点的判断依据；改科目或改教材时写明是哪条证据指向另一本",
         uncertainty: "不确定项，没有则留空",
       };
       const completion = await completePromptWithProvider(
@@ -3432,6 +3922,12 @@ function createServer(options = {}) {
             options: question.options,
             referenceAnswer: question.referenceAnswer,
             maxScore: question.maxScore,
+            currentProjectId: catalog.projectId,
+            currentSubjectId: question.subjectId,
+            // 当前科目在项目里没有已确认目录时，模型唯一能落地的判断就是"换到有目录的科目"，
+            // 这个标记让它知道"你没得选，但必须给证据"，而不是默默套一个不相干的目录。
+            currentSubjectHasConfirmedCatalog: !catalog.ownSubjectUncovered,
+            currentBookId: question.bookId,
             currentChapter: question.chapter,
             currentKnowledgePoints: question.knowledgePoints,
             currentScoringPoints: question.scoringPoints,
@@ -3439,8 +3935,39 @@ function createServer(options = {}) {
             fieldsNeedingCompletion: questionEnrichmentNeeds(question).needs,
             immutableFields: ["referenceAnswer", "answerVariants", "correctAnswer", "stem", "options"],
           },
+          // 第一级：考试项目（今天只有一个，接口按多项目预留——扩展专业只改 exam-project-registry）。
+          candidateProjects: catalog.project ? [{
+            id: catalog.project.id,
+            name: catalog.project.name,
+            region: catalog.project.region,
+            examType: catalog.project.examType,
+            year: catalog.project.year,
+            isCurrent: true,
+          }] : [],
+          // 第二级：科目。题目自己的科目排第一位并标 isCurrent；每项带上它目录已确认的教材，
+          // 因为科目与册次必须一起定（说古代汉语却挑现代汉语的册次会被服务端拒收）。
+          candidateSubjects: catalog.subjectCandidates.map((subject) => ({
+            id: subject.id,
+            name: subject.name,
+            isCurrent: subject.isCurrent,
+            books: subject.books,
+          })),
+          // 第三级：教材。候选教材 = 项目内目录已确认的全部教材（跨科目、跨册），
+          // 题目未定教材时没有"唯一一本"，AI 必须自己定册次，所以候选清单要显式给它。
+          candidateTextbooks: candidates.map((candidate) => ({
+            id: candidate.bookId,
+            label: candidate.bookLabel,
+            subjectId: candidate.subjectId,
+            volume: candidate.volume,
+            nodeCount: candidate.nodes.length,
+            isCurrent: candidate.bookId === String(question.bookId || "").trim(),
+          })),
+          // 第四级：知识树（目录节点）。
           confirmedCatalog: nodes.slice(0, 500).map((node) => ({
             id: node.id,
+            subjectId: node.subjectId,
+            bookId: node.bookId,
+            bookLabel: node.bookLabel,
             level: node.level,
             path: node.path,
             startPage: node.startPage,
@@ -3454,9 +3981,15 @@ function createServer(options = {}) {
       const suggestion = normalizeQuestionEnrichmentSuggestion(
         parseJsonContent(completion.content),
         question,
-        nodes,
+        catalog,
         evidenceChunks,
-        { model: completion.model, promptVersion: config.prompts.question_enrichment && config.prompts.question_enrichment.version, jobId },
+        {
+          model: completion.model,
+          promptVersion: config.prompts.question_enrichment && config.prompts.question_enrichment.version,
+          jobId,
+          origin: origin.origin,
+          originLabel: origin.originLabel,
+        },
       );
       const saved = questionEnrichmentStore.addSuggestion(suggestion);
       aiTaskStore.finish(task.id, {
@@ -3475,6 +4008,8 @@ function createServer(options = {}) {
     if (activeQuestionEnrichmentJobs.has(jobId)) return;
     const initialJob = questionEnrichmentStore.getJob(jobId);
     if (!initialJob || !["queued", "running"].includes(initialJob.status)) return;
+    // AI 巡检送来的 job 不按"完善口径是否齐全"二次拦截（理由见下面的调用处）。
+    const skipEnrichmentNeedsCheck = initialJob.origin === "knowledge_inspection";
     activeQuestionEnrichmentJobs.add(jobId);
     questionEnrichmentStore.updateJob(jobId, { status: "running", startedAt: initialJob.startedAt || Date.now(), error: "" });
     try {
@@ -3484,8 +4019,13 @@ function createServer(options = {}) {
         try {
           const question = questionStore.get(questionId);
           if (!question) throw new Error("question_not_found");
-          if (questionEnrichmentNeeds(question).complete) throw new Error("question_enrichment_not_required");
-          await generateQuestionEnrichmentSuggestion(question, jobId);
+          // 缺省按完善口径拦掉"已齐全"的题；但 AI 巡检送来的 job（origin=knowledge_inspection）是从
+          // 巡检结论出发的——题按完善口径齐全，不代表巡检没问题（如「分值缺失或异常」「近似重复」），
+          // 这类题必须能生成建议稿，否则 DEC-100 的处理链路走不通。
+          if (!skipEnrichmentNeedsCheck && questionEnrichmentNeeds(question).complete) {
+            throw new Error("question_enrichment_not_required");
+          }
+          await generateQuestionEnrichmentSuggestion(question, jobId, { origin: initialJob.origin, originLabel: initialJob.originLabel });
           succeeded = true;
         } catch (error) {
           errorMessage = error.message;
@@ -3495,6 +4035,8 @@ function createServer(options = {}) {
             questionVersion: question && question.version || 1,
             status: "failed",
             jobId,
+            origin: initialJob.origin,
+            originLabel: initialJob.originLabel,
             error: errorMessage,
           });
         }
@@ -3518,6 +4060,74 @@ function createServer(options = {}) {
     } finally {
       activeQuestionEnrichmentJobs.delete(jobId);
     }
+  };
+  /**
+   * 「生成完善建议」的产线本体（唯一实现处）。
+   * 原来是 `POST /api/admin/question-enrichment/jobs` 的路由体；AI 巡检的
+   * 「送去完善题目」（产品手册 §4.6.12 / DEC-100）必须复用同一条产线，所以在这里抽成内部函数，
+   * 两处都调它，避免把生成逻辑抄第二份。
+   *
+   * `options` 只给 AI 巡检用，**不带 options 时与原路由逐行等价**（人工发起的口径一个字都不变）：
+   * - `allowComplete`：跳过"按完善口径是否齐全"的过滤。巡检结论与完善口径不是一回事——
+   *   题可能教材/章节/知识点/得分点都不缺，但巡检报了「分值缺失或异常」「近似重复」，
+   *   这种题照样要能生成建议稿，否则 DEC-100 的处理链路在用户那里就是断的。
+   * - `reuseActiveJob`：该题已有排队/运行中的完善 job 时直接复用它的 id（不重复排队、也不报错）。
+   * - `origin` / `originLabel`：来源留痕（manual＝人工发起；knowledge_inspection＝AI 巡检送来）。
+   */
+  const createQuestionEnrichmentJob = (payload = {}, options = {}) => {
+    const config = aiConfigStore.load();
+    if (!configuredScene(config, "question_enrichment")) throw new Error("question_enrichment_route_unavailable");
+    const origin = options.origin === "knowledge_inspection" ? "knowledge_inspection" : "manual";
+    const requestedIds = [...new Set((Array.isArray(payload.questionIds) ? payload.questionIds : []).map(String).filter(Boolean))];
+    // 巡检「送去完善题目」只针对一道题：它已经排着队就直接把那口 job 还回去，不再新排一次。
+    if (options.reuseActiveJob === true && requestedIds.length === 1) {
+      const active = questionEnrichmentStore.activeJobForQuestion(requestedIds[0]);
+      if (active) return active;
+    }
+    // 与列表同一套多选筛选（数组形态；单值/`all` 兼容，归一化只在 question-enrichment-store 一处）。
+    const filters = normalizeQuestionEnrichmentFilters(payload);
+    let questions = questionStore.list({
+      library: "official",
+      status: "all",
+      subjectId: payload.subjectId || "all",
+      bookId: payload.bookId || "all",
+      type: payload.type || "all",
+      importBatchId: payload.importBatchId || "all",
+      subjectIds: filters.subjectIds,
+      bookIds: filters.bookIds,
+      types: filters.types,
+      importBatchIds: filters.importBatchIds,
+      query: payload.query || "",
+    }).questions;
+    if (requestedIds.length) {
+      const requestedSet = new Set(requestedIds);
+      questions = questions.filter((question) => requestedSet.has(question.id));
+    }
+    if (filters.needs.length) {
+      questions = questions.filter((question) => questionEnrichmentMatchesNeeds(
+        questionEnrichmentNeeds(question).needs,
+        filters.needs,
+      ));
+    } else if (options.allowComplete !== true) {
+      questions = questions.filter((question) => !questionEnrichmentNeeds(question).complete);
+    }
+    const runningIds = new Set(questionEnrichmentStore.jobs(100)
+      .filter((job) => ["queued", "running"].includes(job.status))
+      .flatMap((job) => job.questionIds));
+    const limit = Math.min(50, Math.max(1, Number(payload.limit) || 50));
+    const questionIds = questions.map((question) => question.id).filter((id) => !runningIds.has(id)).slice(0, limit);
+    if (!questionIds.length) throw new Error("question_enrichment_questions_required");
+    const job = questionEnrichmentStore.createJob(questionIds, { origin, originLabel: options.originLabel });
+    logOperation({
+      action: "question.enrichment_job_create",
+      category: "question",
+      targetType: "question_enrichment_job",
+      targetId: job.id,
+      summary: `创建 ${job.total} 道题目的 AI 完善任务`,
+      metadata: { questionIds, bookId: filters.bookIds.join(",") || "all", need: filters.needs.join(",") || "all", origin },
+    });
+    setImmediate(() => runQuestionEnrichmentJob(job.id));
+    return job;
   };
   const activeKnowledgeClassificationJobs = new Set();
   const activeKnowledgeClassificationApplies = new Set();
@@ -3812,6 +4422,33 @@ function createServer(options = {}) {
     if (latestResult && latestResult.id !== result.id) reasons.push("newer_result_available");
     return [...new Set(reasons)];
   };
+  /**
+   * 巡检记录的复核状态：**只读派生，绝不写库**（产品手册 §4.6.12 / DEC-100）。
+   *
+   * 四态里 reviewed / ignored 是"人对这一版题目下的结论"，题目一被改过（版本或巡检基线修订不一致），
+   * 旧结论就派生作废、按待复核显示——但记录里原来的状态要留在 recordedState，前端才能如实说"原来是已复核"。
+   * repaired（问题已被改库处理）与 pending_review 不受派生影响：它们本来就意味着"等重新巡检"。
+   *
+   * 返回 null ＝ 不派生（按记录原样输出）。
+   */
+  const deriveAuditReview = (result, { questionVersion, knowledgeRevision, familyRevision } = {}) => {
+    const recorded = result.auditReview || { state: "pending_review", note: "", actor: "", actorLabel: "", at: null };
+    if (recorded.state !== "reviewed" && recorded.state !== "ignored") return null;
+    // 题目被改过＝题目版本变了，或巡检基线（知识树拓扑／题族）修订与现状不一致（产品手册 §4.6.12 三）。
+    // 对外只报 question_changed 一个原因，不细分是哪一项变，免得前端多一个不稳定分支。
+    const questionChanged = Number(questionVersion) !== Number(result.baseQuestionVersion)
+      || (result.knowledgeRevisionFormat === "topology-v1"
+        && Number(knowledgeRevision) !== Number(result.baseKnowledgeRevision))
+      || Number(familyRevision) !== Number(result.baseFamilyRevision);
+    if (!questionChanged) return null;
+    return {
+      ...recorded,
+      state: "pending_review",
+      invalidated: true,
+      invalidatedReason: "question_changed",
+      recordedState: recorded.state,
+    };
+  };
   const knowledgeClassificationAnswerConflict = (question) => {
     if (!question || !objectiveQuestionTypes.has(question.type)) return null;
     const structured = [...new Set((question.correctAnswer || []).map((key) => String(key).trim().toUpperCase()).filter(Boolean))].sort();
@@ -3984,12 +4621,14 @@ function createServer(options = {}) {
       throw error;
     }
   };
-  const knowledgeDossierScope = (bookId, nodeId) => {
-    const structure = knowledgeStructureStore.get(bookId);
+  const knowledgeDossierScope = (bookId, nodeId, directory = "question") => {
+    const structure = directory === "source"
+      ? { nodes: libraryDirectories.read(bookId).dossierNodes } : knowledgeStructureStore.get(bookId);
     if (!structure) throw new Error("knowledge_structure_not_found");
     const node = structure.nodes.find((item) => item.id === nodeId);
     if (!node) throw new Error("knowledge_node_not_found");
-    const descendantIds = knowledgeStructureStore.descendants(bookId, nodeId);
+    const descendantIds = directory === "source"
+      ? require("./library-directories").descendantIds(structure.nodes, nodeId) : knowledgeStructureStore.descendants(bookId, nodeId);
     const isExerciseNode = (item) => /思考和练习|复习与练习|练习题/.test(String(item?.displayTitle || item?.title || ""));
     if (isExerciseNode(node)) throw new Error("knowledge_dossier_exercise_scope_not_supported");
     const excludedNodeIds = new Set(structure.nodes
@@ -6216,18 +6855,51 @@ function createServer(options = {}) {
     const needs = questionEnrichmentNeeds(question);
     const requested = payload.fields && typeof payload.fields === "object" ? payload.fields : {};
     const overrides = payload.overrides && typeof payload.overrides === "object" ? payload.overrides : {};
+    // 候选目录同样按**科目**展开：题目没有教材时（跨册批次）没有"唯一一本"，
+    // 操作者在弹窗里选定的那本、或建议稿定下的那本，都要先在这份候选里验明正身。
+    const catalog = questionEnrichmentCandidates(question);
+    const candidateIds = new Set(catalog.candidates.map((candidate) => candidate.bookId));
+    const candidateSubjectIds = new Set(catalog.subjectCandidates.map((subject) => subject.id));
+    const currentBookId = String(question.bookId || "").trim();
+    const currentSubjectId = String(question.subjectId || "").trim();
+    // 科目一级同样要在这份候选里验明正身（DEC-098）：操作者手选或建议稿定下的科目，
+    // 只要不属于本项目就不许写——跨项目的归属变更不是"完善建议"，得走另一次判断。
+    const targetSubjectId = String(overrides.subjectId || suggestion.subjectId || currentSubjectId).trim();
+    if (!targetSubjectId || (candidateSubjectIds.size && !candidateSubjectIds.has(targetSubjectId))) {
+      throw new Error("question_enrichment_subject_invalid");
+    }
+    const targetBookId = String(overrides.bookId || suggestion.bookId || currentBookId).trim();
+    if (!targetBookId || !candidateIds.has(targetBookId)) throw new Error("question_enrichment_book_invalid");
+    // 科目与教材必须同源（本书属于本科目），否则等于把两级判断拼在一起挂到错树。
+    const targetBookSubjectId = String((catalog.candidates.find((candidate) => candidate.bookId === targetBookId) || {}).subjectId || "");
+    if (targetBookSubjectId && targetSubjectId && targetBookSubjectId !== targetSubjectId) {
+      throw new Error("question_enrichment_subject_book_mismatch");
+    }
+    const subjectChanged = targetSubjectId !== currentSubjectId;
+    const bookChanged = targetBookId !== currentBookId;
+    const useSubject = requested.subject !== undefined ? requested.subject === true : subjectChanged;
+    const useTextbook = requested.textbook !== undefined ? requested.textbook === true : (bookChanged || needs.needsTextbook);
     const useChapter = requested.chapter !== undefined ? requested.chapter === true : needs.needsChapter;
     const useKnowledgePoints = requested.knowledgePoints !== undefined
       ? requested.knowledgePoints === true : needs.needsKnowledgePoints;
     const useScoringPoints = requested.scoringPoints !== undefined
       ? requested.scoringPoints === true : needs.needsScoringPoints;
+    // 换科目或换册必须同时采纳目录与知识点：章节与知识点是教材的下级，`validateQuestionPayload`
+    // 在科目/教材变化时会把没重填的下级字段清空——只换上级等于把章节/知识点留在题上却指另一棵树。
+    if ((subjectChanged && useSubject) && (!useTextbook || !useChapter || !useKnowledgePoints)) {
+      throw new Error("question_enrichment_subject_change_requires_classification");
+    }
+    if (bookChanged && useTextbook && (!useChapter || !useKnowledgePoints)) {
+      throw new Error("question_enrichment_book_change_requires_classification");
+    }
     const patch = { changeNote: "采纳题目完善建议" };
     const appliedFields = [];
     if (useChapter) {
-      const { nodes } = questionEnrichmentCatalog(question.bookId);
       const chapterNodeId = String(overrides.chapterNodeId || suggestion.chapterNodeId);
-      const node = nodes.find((item) => item.id === chapterNodeId);
+      const node = catalog.nodes.find((item) => item.id === chapterNodeId)
+        || catalog.nodes.find((item) => item.bookId === targetBookId && item.path === String(suggestion.catalogPath || ""));
       if (!node) throw new Error("question_enrichment_catalog_node_invalid");
+      if (node.bookId !== targetBookId) throw new Error("question_enrichment_catalog_node_book_mismatch");
       patch.chapter = node.path;
       appliedFields.push("chapter");
     }
@@ -6247,7 +6919,23 @@ function createServer(options = {}) {
       patch.scoringPoints = scoringPoints;
       appliedFields.push("scoringPoints");
     }
+    if (bookChanged && useTextbook) {
+      // 归属写入是人工确认的结果（产品负责人 2026-09-24 决定：AI 可以建议科目与册次，写库必须点采纳）。
+      patch.bookId = targetBookId;
+      appliedFields.unshift("textbook");
+    }
+    if (subjectChanged && useSubject) {
+      // 科目一级同理：只有点过「采纳科目归属」才写；换科目同时要求教材/目录/知识点一起采纳（上面已拦）。
+      patch.subjectId = targetSubjectId;
+      appliedFields.unshift("subject");
+    }
     if (!appliedFields.length) throw new Error("question_enrichment_apply_fields_required");
+    const proposedContent = { status: "recommended", questionVersion: question.version,
+      subjectId: patch.subjectId, bookId: patch.bookId, catalogPath: patch.chapter,
+      knowledgePoints: patch.knowledgePoints, scoringPoints: patch.scoringPoints };
+    if (!questionEnrichmentSuggestionChanges({ question, suggestion: proposedContent }).length) {
+      return { question, suggestion, affectedFamilyIds: [], unchanged: true };
+    }
     const updated = questionStore.update(questionId, patch, "题目完善审核员");
     const familyResult = questionFamilySensitiveSnapshot(question) !== questionFamilySensitiveSnapshot(updated)
       ? markQuestionFamilyMembersPending([questionId], "question_enrichment_applied", "题目完善审核员")
@@ -6268,6 +6956,11 @@ function createServer(options = {}) {
         suggestionId: suggestion.id,
         appliedFields,
         version: updated.version,
+        // 归属写入要留痕：科目/教材从哪到哪是可追溯的产品事件，不能只留一个"采纳了建议"。
+        subjectIdFrom: currentSubjectId,
+        subjectIdTo: String(updated.subjectId || ""),
+        bookIdFrom: currentBookId,
+        bookIdTo: String(updated.bookId || ""),
         confidence: suggestion.confidence,
         affectedFamilyIds: familyResult.affectedFamilyIds || [],
       },
@@ -6286,8 +6979,22 @@ function createServer(options = {}) {
     const previous = appliedVersion && appliedVersion.previousSnapshot;
     if (!previous) throw new Error("question_enrichment_revert_unavailable");
     const patch = { changeNote: "撤回题目完善建议" };
-    if (suggestion.appliedFields.includes("chapter")) patch.chapter = previous.chapter;
-    if (suggestion.appliedFields.includes("knowledgePoints")) patch.knowledgePoints = previous.knowledgePoints;
+    // 科目一级的撤回：先回科目，再回教材与下级（顺序无关，同一次 update 写下去）。
+    if (suggestion.appliedFields.includes("subject")) {
+      patch.subjectId = String(previous.subjectId || "");
+    }
+    if (suggestion.appliedFields.includes("textbook")) {
+      // 撤回归属：教材本身回到上一版；下级字段由 validateQuestionPayload 在教材变化时清理，
+      // 只有回到"有教材"的状态才需要把原来的章节/知识点一起写回。
+      patch.bookId = String(previous.bookId || "");
+      if (patch.bookId) {
+        if (suggestion.appliedFields.includes("chapter")) patch.chapter = previous.chapter;
+        if (suggestion.appliedFields.includes("knowledgePoints")) patch.knowledgePoints = previous.knowledgePoints;
+      }
+    } else {
+      if (suggestion.appliedFields.includes("chapter")) patch.chapter = previous.chapter;
+      if (suggestion.appliedFields.includes("knowledgePoints")) patch.knowledgePoints = previous.knowledgePoints;
+    }
     if (suggestion.appliedFields.includes("scoringPoints")) patch.scoringPoints = previous.scoringPoints;
     const updated = questionStore.update(questionId, patch, "题目完善审核员");
     const familyResult = questionFamilySensitiveSnapshot(question) !== questionFamilySensitiveSnapshot(updated)
@@ -6304,10 +7011,163 @@ function createServer(options = {}) {
         suggestionId: suggestion.id,
         restoredFromVersion: suggestion.appliedVersion,
         version: updated.version,
+        subjectIdFrom: String(question.subjectId || ""),
+        subjectIdTo: String(updated.subjectId || ""),
+        bookIdFrom: String(question.bookId || ""),
+        bookIdTo: String(updated.bookId || ""),
         affectedFamilyIds: familyResult.affectedFamilyIds || [],
       },
     });
     return { question: updated, suggestion: reverted, affectedFamilyIds: familyResult.affectedFamilyIds || [] };
+  };
+  // ——— 材料题组分值分配（DEC-099 / 产品手册 §4.6.7）———
+  // 分工（AGENTS §5 一处维护）：
+  //   · 分配算法只在 `material-score-allocation.js`；
+  //   · 「这一组现在该怎么分」的整理（成员、得分点数、人工已改、总分来源）在 `material-group-score.js`；
+  //   · 这里只做两件与运行环境有关的事：① 从 Store 取该组小问（含科目默认满分兜底值）；
+  //     ② 整组一次采纳（逐题校验 + 逐题写库 + 审计日志）。粒度是**题组**，不是单题（DEC-099 ③）。
+  const materialGroupScoreContext = (groupId, options = {}) => {
+    const questions = questionStore.list({
+      library: options.library === "public" ? "public" : "official",
+      status: "all",
+      subjectId: "all",
+      bookId: "all",
+      type: "all",
+      importBatchId: "all",
+      query: "",
+    }).questions;
+    const lockedIds = new Set((Array.isArray(options.lockedIds) ? options.lockedIds : []).map((id) => String(id)));
+    const members = materialGroupMembers(questions, groupId, lockedIds);
+    const subjectId = members.length ? String(members[0].subjectId || "") : "";
+    // 题组总分缺失时的兜底＝该科目默认材料题组满分（DEC-099 ⑪）；唯一读取入口是 registry，
+    // 不在这里另写一份对照表——没登记该科目的默认值就是 0（= 没有兜底，如实标待核对）。
+    const defaultGroupTotal = subjectId ? materialGroupTotalForSubject(subjectId) : 0;
+    const plan = buildMaterialGroupScorePlan({
+      groupId,
+      questions,
+      groupTotal: options.groupTotal,
+      step: options.step,
+      lockedIds: [...lockedIds],
+      defaultTotal: defaultGroupTotal,
+    });
+    return { plan, questions, defaultGroupTotal };
+  };
+  const materialGroupScorePayload = (plan, defaultGroupTotal) => ({
+    group: {
+      id: plan.groupId,
+      title: plan.groupTitle,
+      memberCount: plan.memberCount,
+      subjectId: plan.subjectId,
+      bookId: plan.bookId,
+      groupTotal: plan.groupTotal,
+      // 总分是哪来的：manual（本次显式给定）/ recorded（本组合计）/ default（科目默认兜底）/ missing
+      groupTotalBasis: plan.groupTotalBasis,
+      defaultGroupTotal: Number(defaultGroupTotal) || 0,
+      step: plan.step,
+      allocatedTotal: plan.allocatedTotal,
+      conserved: plan.conserved,
+      placeholder: plan.placeholder,
+      needsReview: plan.needsReview,
+    },
+    members: plan.members,
+    allocations: plan.allocations,
+    issues: plan.issues,
+    warnings: plan.warnings,
+  });
+  const applyMaterialGroupScores = (groupId, payload = {}) => {
+    const { plan, defaultGroupTotal } = materialGroupScoreContext(groupId, {
+      library: payload.library,
+      groupTotal: payload.groupTotal,
+      step: payload.step,
+      lockedIds: payload.lockedIds,
+    });
+    // ① 组内归属必须一致（DEC-099 ⑨：强制同科目 + 同教材；章节与知识点允许各问不同）。
+    //    不一致时**不猜**、也不"顺手改归属"——那是归属变更，得走完善建议那条逐条确认的路。
+    const blockingIssue = plan.issues[0];
+    if (blockingIssue) throw new Error(blockingIssue.code);
+    // ② 题组总分缺失不编造（DEC-099 ⑤/⑦/⑪）：报错让操作者核对原卷总分，或由该科目默认满分兜底。
+    if (!(plan.groupTotal > 0) || !plan.plan.ok) throw new Error("material_group_total_required");
+    let allocations = plan.allocations;
+    // ③ 操作者可以把建议改过再采纳（界面允许手改）；改过的分值仍要满足同一套口径：
+    //    1 分步长（总分 0.5 结尾退回 0.5）、各小问之和严格等于题组总分（DEC-099 ⑤/⑥）。
+    if (Array.isArray(payload.allocations) && payload.allocations.length) {
+      const requested = new Map(payload.allocations.map((item) => [String(item && item.id), Number(item && item.score)]));
+      allocations = plan.allocations.map((allocation) => {
+        if (!requested.has(allocation.id)) throw new Error("material_group_allocation_incomplete");
+        const score = requested.get(allocation.id);
+        if (!Number.isFinite(score) || score < 0) throw new Error("material_group_allocation_invalid");
+        if (Math.abs(score / plan.step - Math.round(score / plan.step)) > 1e-9) {
+          throw new Error("material_group_allocation_step_invalid");
+        }
+        return { ...allocation, score: Number(score.toFixed(2)) };
+      });
+      const requestedTotal = Number(allocations.reduce((sum, item) => sum + item.score, 0).toFixed(2));
+      if (Math.abs(requestedTotal - plan.groupTotal) > 1e-9) throw new Error("material_group_allocation_not_conserved");
+    }
+    // ④ 整组一次写回（DEC-099 ④ 整组一次采纳）：逐题带上分值、来源与「是否仍需人工核对」。
+    //    值没变的题不写（不为了"统一"把每道题的版本号都推高一格）；人工已改过的小问由内核判定
+    //    locked 并保留现值，这里如实写回 locked（不会被下一次重新分配覆盖）。
+    const updated = [];
+    const unchanged = [];
+    plan.members.forEach((member) => {
+      const allocation = allocations.find((item) => item.id === member.id);
+      const scoreNeedsReview = scoreNeedsReviewForBasis(allocation.basis);
+      const same = Math.abs(Number(member.maxScore) - allocation.score) < 1e-9
+        && String(member.scoreBasis || "") === String(allocation.basis || "")
+        && member.scoreNeedsReview === scoreNeedsReview;
+      if (same) {
+        unchanged.push(member.id);
+        return;
+      }
+      const question = questionStore.update(member.id, {
+        maxScore: allocation.score,
+        scoreBasis: allocation.basis,
+        scoreNeedsReview,
+        changeNote: "材料题组分值分配（整组采纳）",
+      }, "材料题组分值分配员");
+      updated.push({
+        id: question.id,
+        maxScore: question.maxScore,
+        scoreBasis: question.scoreBasis,
+        scoreNeedsReview: question.scoreNeedsReview,
+        version: question.version,
+      });
+    });
+    const allocatedTotal = Number(allocations.reduce((sum, item) => sum + item.score, 0).toFixed(2));
+    logOperation({
+      action: "question.material_group_scores_apply",
+      category: "question",
+      targetType: "question_group",
+      targetId: groupId,
+      summary: `材料题组整组分值采纳：${plan.members.length} 个小问合计 ${allocatedTotal} 分`,
+      metadata: {
+        groupId,
+        groupTitle: plan.groupTitle,
+        subjectId: plan.subjectId,
+        bookId: plan.bookId,
+        groupTotal: plan.groupTotal,
+        groupTotalBasis: plan.groupTotalBasis,
+        defaultGroupTotal,
+        step: plan.step,
+        allocatedTotal,
+        conserved: Math.abs(allocatedTotal - plan.groupTotal) < 1e-9,
+        placeholder: plan.placeholder,
+        // 人工已改过的小问（被跳过、保留现值）要留痕：否则"为什么这问没跟着变"事后无从解释。
+        skippedLockedIds: plan.members.filter((member) => member.locked).map((member) => member.id),
+        updatedIds: updated.map((item) => item.id),
+        unchangedIds: unchanged,
+        allocations: allocations.map((item) => ({ id: item.id, score: item.score, basis: item.basis })),
+        warnings: plan.warnings,
+      },
+    });
+    return {
+      ...materialGroupScorePayload(plan, defaultGroupTotal),
+      allocations,
+      updated,
+      updatedCount: updated.length,
+      unchangedIds: unchanged,
+      skippedLockedIds: plan.members.filter((member) => member.locked).map((member) => member.id),
+    };
   };
   const runTextbookKnowledgeBuild = async (bookId, options = {}) => {
     const textbook = textbookCatalogStore.get(bookId);
@@ -6571,6 +7431,115 @@ function createServer(options = {}) {
     setImmediate(() => { drainExamImportQueue(); });
     return promise;
   };
+  // 供应商批量接入（文档导入 → 逐条连通性测试 → 只保留测试通过的）。
+  // 任务只活在进程内存里，密钥在任务存活期间留在服务端内存，落库后立刻清掉（结果行只有掩码）。
+  const providerBatchRegistry = options.providerBatchRegistry || createProviderBatchRegistry();
+
+  const providerBatchDefaults = (payload = {}) => ({
+    baseUrl: payload.baseUrl,
+    protocol: normalizeProtocol(payload.protocol),
+    model: payload.model,
+    name: payload.name,
+  });
+
+  const providerBatchErrorStatus = (error) => {
+    const message = String((error && error.message) || "");
+    if (message === "payload_too_large") return 413;
+    if (["invalid_json", "provider_batch_text_too_large", "provider_batch_too_many_entries", "provider_batch_document_empty"].includes(message)) return 422;
+    if (message === "provider_batch_too_many_jobs") return 429;
+    return 400;
+  };
+
+  // 单条候选的测试口径与「供应商连通性测试」单测完全一致：提示词、温度与最大 Token 都取自该场景路由，
+  // 被测的 Base URL / 密钥 / 模型由文档这一行决定。上游没有 /models 接口时，只要文档给了模型 ID 就继续测。
+  const runProviderBatchEntry = async (candidate, job) => {
+    const config = aiConfigStore.load();
+    const testRoute = config.routes.provider_connection_test || {};
+    const testPrompt = config.prompts.provider_connection_test || {};
+    const provider = {
+      protocol: candidate.protocol || "openai_chat_completions",
+      baseUrl: candidate.baseUrl,
+      apiKey: candidate.apiKey,
+      timeoutMs: job.timeoutMs,
+      supportsJsonMode: false,
+    };
+    let models = [];
+    let note = candidate.protocol === "typesafe_systemone"
+      ? "结构化判定上游（Typesafe/Jev System One）：只做结构化判定、不生成文本，因此不能绑定 AI 场景路由"
+      : "";
+    try {
+      models = await listProviderModels(provider);
+    } catch (error) {
+      const message = String((error && error.message) || "");
+      // 只有「上游根本没有 /models 接口」才退化成用文档里写的模型直接测；
+      // 鉴权、网络、超时等真实失败必须原样回报，否则 401 会被误读成"模型列表不可用"。
+      const modelListUnsupported = /provider_http_error:(404|405|501)/.test(message)
+        || message === "provider_models_empty"
+        || message === "provider_invalid_json_response";
+      if (!modelListUnsupported) throw error;
+      if (!candidate.model) throw new Error(`provider_models_unavailable:${message}`);
+      models = [candidate.model];
+      note = "该上游没有可用的 /models 接口，按文档里的模型 ID 直接测试";
+    }
+    const requestedModel = candidate.model && models.includes(candidate.model) ? candidate.model : (candidate.model || models[0]);
+    const result = await testProvider(provider, requestedModel, {
+      systemPrompt: testPrompt.systemPrompt,
+      userPrompt: renderPromptTemplate(testPrompt.userPromptTemplate || "", { providerName: candidate.name, model: requestedModel }),
+      temperature: testRoute.temperature,
+      maxTokens: testRoute.maxTokens,
+    });
+    return {
+      model: result.model || requestedModel,
+      models,
+      latencyMs: result.latencyMs,
+      preview: result.preview,
+      note,
+    };
+  };
+
+  const startProviderBatchJob = (input) => {
+    const job = providerBatchRegistry.start(input);
+    const running = runProviderBatchJob(job, {
+      runEntry: runProviderBatchEntry,
+      onFinished: async (finishedJob) => {
+        if (!finishedJob.savePassed) return;
+        const passed = finishedJob.results.filter((item) => item.status === "passed");
+        if (!passed.length) return;
+        try {
+          const merged = mergePassedProviderBatch(aiConfigStore.load(), finishedJob, { timeoutMs: finishedJob.timeoutMs });
+          const savedConfig = aiConfigStore.save(merged.config);
+          finishedJob.save = {
+            created: merged.created,
+            updated: merged.updated,
+            providers: sanitizeConfig(savedConfig).providers
+              .filter((provider) => merged.created.concat(merged.updated).some((item) => item.id === provider.id))
+              .map((provider) => ({ id: provider.id, name: provider.name, modelCount: provider.models.length, enabled: provider.enabled })),
+          };
+          logOperation({
+            action: "ai_provider.batch_import",
+            category: "ai_config",
+            targetType: "ai_provider_batch",
+            targetId: finishedJob.id,
+            summary: `批量接入模型供应商：新增 ${merged.created.length} 个、更新 ${merged.updated.length} 个（共测 ${finishedJob.total} 条，通过 ${passed.length} 条）`,
+            metadata: {
+              jobId: finishedJob.id,
+              tested: finishedJob.total,
+              passed: passed.length,
+              failed: finishedJob.results.filter((item) => item.status === "failed").length,
+              createdProviders: merged.created.map((item) => item.name),
+              updatedProviders: merged.updated.map((item) => item.name),
+            },
+          });
+        } catch (error) {
+          finishedJob.error = String((error && error.message) || "provider_batch_save_failed");
+        }
+      },
+    });
+    // 每条失败都已经记进结果；这里只兜住任务级异常，避免未处理的 rejection。
+    running.catch((error) => { job.error = String((error && error.message) || "provider_batch_failed"); });
+    return job;
+  };
+
   const handleRequest = async (request, response) => {
     if (options.persistence) {
       const nativeEnd = response.end.bind(response);
@@ -6847,7 +7816,27 @@ function createServer(options = {}) {
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
-      sendJson(response, 200, { status: "ok", service: "shukao-api", version: "0.1.0", fileStorage: objectStorage?.driver || "local" });
+      // 「新前端 + 旧后端」自检（2026-09-25）：只报事实，是否提示由后台页面决定。
+      const freshness = apiFreshnessProbe.read();
+      sendJson(response, 200, {
+        status: "ok",
+        service: "shukao-api",
+        version: "0.1.0",
+        fileStorage: objectStorage?.driver || "local",
+        startedAt: bootedAtMs,
+        startedAtLabel: formatStamp(bootedAtMs),
+        bootDate: formatDateKey(bootedAtMs),
+        uptimeMs: Math.max(0, Date.now() - bootedAtMs),
+        apiSourceStale: freshness.stale,
+        apiSourceDir: freshness.sourceDir,
+        apiSourceFiles: freshness.filesScanned,
+        apiSourceNewestFile: freshness.newestFile,
+        apiSourceNewestAt: freshness.newestMtimeMs,
+        apiSourceNewestLabel: freshness.newestMtimeLabel,
+        // 出站代理自检（2026-10-09）：Node 的内置 fetch 不读系统代理，上游按地区限制时会返回 451。
+        // 这里只报事实（是否在走、走的哪个、没走时怎么重启），提示由后台页面决定。
+        outboundProxy: outboundProxyStatus(),
+      });
       return;
     }
 
@@ -6867,10 +7856,12 @@ function createServer(options = {}) {
         const code = String(payload.code || "").trim();
         if (!code) throw new Error("wechat_code_required");
         const identity = await exchangeWechatCode(code, payload.deviceId);
-        const session = userAuthStore.loginWechat({ ...identity, profile: payload.profile });
+        // 登录只认 code 换来的 openid：头像昵称改由 POST /api/auth/profile 显式设置（见 user-auth-store.loginWechat 注释）。
+        const session = userAuthStore.loginWechat(identity);
         if (session.isNewUser) {
-          billingStore.grantCredits(session.user.id, {
-            amount: 5,
+          billingStore.grantBeans(session.user.id, {
+            // 原「新用户注册奖励 5 点 AI 额度」按 1 点 = 0.1 豆币折算（DEC-107）
+            amount: roundBeans(5 * BEANS_PER_CREDIT),
             source: "registration_reward",
             sourceLabel: "新用户注册奖励",
             expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
@@ -6888,6 +7879,9 @@ function createServer(options = {}) {
         sendJson(response, 200, {
           success: true,
           authMode: identity.authMode,
+          // 首次登录即建号（微信登录即注册）：引导层据此决定"弹注册引导"还是"直接放行"，
+          // 因此必须把它回给客户端，不能只在服务端内部用（2026-10-03）。
+          isNewUser: session.isNewUser === true,
           user: session.user,
           token: session.token,
           expiresAt: session.expiresAt,
@@ -6910,6 +7904,90 @@ function createServer(options = {}) {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/api/auth/profile") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+        return;
+      }
+      try {
+        // 头像走 data URL（与反馈截图同规格）；200KB 图转 base64 约 273KB，故上限放宽到 512KB。
+        const payload = await readJsonBody(request, 512 * 1024);
+        const patch = {};
+        for (const field of ["nickname", "avatarUrl", "signature", "region", "studyField", "dailyGoalMinutes", "publicLearningStats",
+          "gender", "ageBand", "examProjectId", "examYear"]) {
+          if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field];
+        }
+        const user = userAuthStore.updateProfile(session.user.id, patch);
+        sendJson(response, 200, { success: true, user });
+      } catch (error) {
+        const message = String(error && error.message || "profile_update_failed");
+        const clientError = [
+          "nickname_invalid", "avatar_invalid_format", "avatar_too_large",
+          "signature_invalid", "region_invalid", "study_field_invalid",
+          "daily_goal_invalid", "public_learning_stats_invalid",
+          "gender_invalid", "age_band_invalid", "exam_project_invalid", "exam_year_invalid",
+          "profile_patch_required", "invalid_json",
+        ].includes(message);
+        sendJson(response, clientError ? 400 : message === "payload_too_large" ? 413 : 500, { success: false, error: message });
+      }
+      return;
+    }
+
+    // 协议同意记录（2026-10-05，产品负责人选"服务端按账号记录 + 本机缓存"）：
+    // 只认**当前已发布**版本（不许记录到草稿或过期版本）；同一文档同一版本重复同意不重复落库，
+    // 换版本才追加新记录——历史同意记录只追加、不覆盖、不删除（对应"不得覆盖用户过去同意过的版本记录"）。
+    if (url.pathname === "/api/auth/agreements") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+        return;
+      }
+      if (request.method === "GET") {
+        sendJson(response, 200, { success: true, agreements: userAuthStore.listAgreements(session.user.id) });
+        return;
+      }
+      if (request.method === "POST") {
+        try {
+          const payload = await readJsonBody(request, 4096);
+          const docKey = String(payload.docKey || "").trim();
+          const version = String(payload.version || "").trim();
+          if (!docKey) {
+            sendJson(response, 400, { success: false, error: "agreement_doc_required" });
+            return;
+          }
+          if (!version) {
+            sendJson(response, 400, { success: false, error: "agreement_version_required" });
+            return;
+          }
+          let current = null;
+          try {
+            current = platformContentStore.current(docKey);
+          } catch (error) {
+            sendJson(response, 404, { success: false, error: error.message });
+            return;
+          }
+          if (!current) {
+            sendJson(response, 422, { success: false, error: "platform_content_not_published" });
+            return;
+          }
+          if (String(current.version) !== version) {
+            sendJson(response, 409, { success: false, error: "platform_content_version_not_current", currentVersion: current.version });
+            return;
+          }
+          const recorded = userAuthStore.recordAgreement(session.user.id, { docKey, version, source: payload.source });
+          sendJson(response, 200, { success: true, ...recorded });
+        } catch (error) {
+          const message = String(error && error.message || "agreement_record_failed");
+          const clientError = ["invalid_json", "agreement_doc_required", "agreement_version_required"].includes(message);
+          sendJson(response, clientError ? 400 : message === "payload_too_large" ? 413 : 500, { success: false, error: message });
+        }
+        return;
+      }
+      sendJson(response, 405, { success: false, error: "method_not_allowed" });
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/api/auth/logout") {
       userAuthStore.logout(bearerToken(request));
       sendJson(response, 200, { success: true });
@@ -6922,11 +8000,29 @@ function createServer(options = {}) {
         sendJson(response, 401, { success: false, error: "auth_session_invalid" });
         return;
       }
-      learningStateStore.deleteUser(session.user.id);
-      // 注销要一并清掉个人关系数据：社区收藏与复制记录（否则“谁收藏过什么”会残留）。
-      communityInteractionStore.deleteUser(session.user.id);
-      userAuthStore.deleteUser(session.user.id);
-      sendJson(response, 200, { success: true });
+      const userId = session.user.id;
+      try {
+        learningStateStore.deleteUser(userId);
+        // 社区关系、收藏夹和卡集属于账号私有数据，注销即删除。
+        communityInteractionStore.deleteUser(userId);
+        favoriteFolderStore.deleteUser(userId);
+        cardLibraryStore.deleteUser(userId);
+        personalCloudAssetStore.deleteUser(userId);
+        // 公开投稿保留但匿名化，未公开投稿删除。
+        if (typeof communityAssetStore.anonymizeUser === "function") communityAssetStore.anonymizeUser(userId);
+        // 反馈、举报和限制记录只保留必要证据，不再保留账号身份。
+        if (typeof moderationStore.anonymizeUser === "function") moderationStore.anonymizeUser(userId);
+        if (typeof userRestrictionStore.anonymizeUser === "function") userRestrictionStore.anonymizeUser(userId);
+        // AI 任务只保留匿名化的系统指标，账号级任务记录随注销删除。
+        if (typeof aiTaskStore.deleteUser === "function") aiTaskStore.deleteUser(userId);
+        // 订单/交易审计记录保留，但解除业务账号关联。
+        if (typeof billingStore.anonymizeUser === "function") billingStore.anonymizeUser(userId);
+        userAuthStore.deleteUser(userId);
+        sendJson(response, 200, { success: true });
+      } catch (error) {
+        // 账号仍保留时客户端可重试；不要把部分清理伪装成成功注销。
+        sendJson(response, 500, { success: false, error: "account_delete_failed" });
+      }
       return;
     }
 
@@ -6958,6 +8054,124 @@ function createServer(options = {}) {
       } catch (error) {
         sendJson(response, error.message === "payload_too_large" ? 413 : 422, { success: false, error: error.message });
       }
+      return;
+    }
+
+    // ── 个人云端资产（DEC-106）：私人题包、独立笔记、用户端 AI 对话 ──
+    if (request.method === "GET" && ["/api/personal-assets", "/api/personal-assets/export"].includes(url.pathname)) {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+        return;
+      }
+      sendJson(response, 200, url.pathname.endsWith("/export")
+        ? { success: true, export: personalCloudAssetStore.exportUser(session.user.id) }
+        : { success: true, library: personalCloudAssetStore.get(session.user.id) });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/personal-assets/sync") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+        return;
+      }
+      if (guardUserCapability(response, session.user.id, "write")) return;
+      try {
+        const payload = await readJsonBody(request, 8 * 1024 * 1024);
+        if (!userAuthStore.authenticate(bearerToken(request))) {
+          sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+          return;
+        }
+        const result = personalCloudAssetStore.sync(session.user.id, payload);
+        sendJson(response, 200, { success: true, uploaded: result.uploaded, acknowledgements: result.acknowledgements, library: result.library });
+      } catch (error) {
+        const invalid = /^(personal_asset_|invalid_json$)/.test(error.message);
+        sendJson(response, error.message === "payload_too_large" ? 413 : invalid ? 422 : 500, {
+          success: false, error: invalid || error.message === "payload_too_large" ? error.message : "personal_asset_storage_unavailable",
+        });
+      }
+      return;
+    }
+
+    const personalConflictMatch = url.pathname.match(/^\/api\/personal-assets\/conflicts\/([^/]+)\/resolve$/);
+    if (request.method === "POST" && personalConflictMatch) {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+        return;
+      }
+      if (guardUserCapability(response, session.user.id, "write")) return;
+      try {
+        const payload = await readJsonBody(request, 4096);
+        if (!userAuthStore.authenticate(bearerToken(request))) {
+          sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+          return;
+        }
+        const library = personalCloudAssetStore.resolve(session.user.id, decodeURIComponent(personalConflictMatch[1]), payload);
+        sendJson(response, 200, { success: true, library });
+      } catch (error) {
+        const status = error.message === "personal_asset_conflict_not_found" ? 404 : error.message === "personal_asset_conflict_changed" ? 409 : 422;
+        sendJson(response, status, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // ── 卡集与知识卡（产品负责人 2026-09-23 定：从小程序本地库搬到服务端，docs/OPEN_DECISIONS.md C15）──
+    // 语义见 apps/api/src/card-library-store.js 文件头：并集 + 每项 LWW + 删除墓碑 + 本地为空只拉不推。
+    if (request.method === "GET" && url.pathname === "/api/card-library") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+        return;
+      }
+      sendJson(response, 200, { success: true, library: cardLibraryStore.get(session.user.id) });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/card-library/sync") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+        return;
+      }
+      if (guardUserCapability(response, session.user.id, "write")) return;
+      try {
+        const payload = await readJsonBody(request, 4 * 1024 * 1024);
+        const result = cardLibraryStore.sync(session.user.id, payload);
+        sendJson(response, 200, { success: true, uploaded: result.uploaded, library: result.library });
+      } catch (error) {
+        sendJson(response, error.message === "payload_too_large" ? 413 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/card-library/share") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+        return;
+      }
+      try {
+        const payload = await readJsonBody(request, 256 * 1024);
+        const result = cardLibraryStore.shareSet(session.user.id, payload && payload.setId);
+        sendJson(response, 200, { success: true, shareId: result.shareId, sharedAt: result.sharedAt, title: result.title });
+      } catch (error) {
+        const status = error.message === "card_set_not_found" ? 404 : 422;
+        sendJson(response, status, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 分享快照按随机 id 匿名可读（不可枚举）：好友没登录也能打开分享链接。
+    const cardShareMatch = url.pathname.match(/^\/api\/card-library\/share\/([^/]+)$/);
+    if (request.method === "GET" && cardShareMatch) {
+      const share = cardLibraryStore.getShare(decodeURIComponent(cardShareMatch[1]));
+      if (!share) {
+        sendJson(response, 404, { success: false, error: "card_share_not_found" });
+        return;
+      }
+      sendJson(response, 200, { success: true, share });
       return;
     }
 
@@ -7095,6 +8309,177 @@ function createServer(options = {}) {
       return;
     }
 
+    // 「我的收藏」的组织数据：文件夹 / 子文件夹 / 成员归属 / 全局置顶（DEC-096）。
+    // 收藏本身不在这里，这里的 refId 只是引用；条数由两份真源（社区引用关系 + 学习状态里的书签）现算。
+    const favoriteFolderErrorStatus = (error) => {
+      const code = String((error && error.message) || "");
+      if (code === "favorite_folder_missing") return 404;
+      return 400;
+    };
+    const validFavoriteRefs = (userId) => {
+      const questionState = learningStateStore.get(userId) || {};
+      const bookmarks = questionState.bookmarks || {};
+      const questionIds = (Array.isArray(questionState.favoriteIds) ? questionState.favoriteIds : [])
+        .map((id) => String(id || ""))
+        .filter(Boolean);
+      const communityIds = communityInteractionStore.assetIdsForUser(userId, "favorite");
+      // 收藏时间：卡片右下角的「今天 / 昨天 / 9 月 18 日」必须是真的收藏时间，不用内容创建时间冒充。
+      const favoritedAt = {};
+      communityInteractionStore.list({ kind: "favorite", userId }).forEach((record) => {
+        favoritedAt[`community:${record.assetId}`] = Number(record.createdAt || 0);
+      });
+      questionIds.forEach((id) => {
+        const record = bookmarks[id];
+        favoritedAt[`question:${id}`] = Number((record && record.updatedAt) || 0);
+      });
+      return { community: communityIds, question: questionIds, favoritedAt };
+    };
+    const favoriteOrganizationSnapshot = (userId) => {
+      const refs = validFavoriteRefs(userId);
+      const { favoritedAt, ...validRefs } = refs;
+      favoriteFolderStore.prune({ userId, validRefs });
+      const { folders, pins } = favoriteFolderStore.list(userId);
+      const { direct, withChildren } = favoriteFolderStore.countsByFolder(userId);
+      const total = { community: refs.community.length, question: refs.question.length };
+      total.all = total.community + total.question;
+      const filedCount = Object.values(direct).reduce((sum, value) => sum + value, 0);
+      return {
+        success: true,
+        folders,
+        counts: { direct, withChildren },
+        membership: favoriteFolderStore.membershipMap(userId),
+        pins: pins.map((pin) => ({ kind: pin.kind, refId: pin.refId, pinnedAt: pin.pinnedAt })),
+        favoritedAt,
+        totals: { ...total, unfiled: Math.max(0, total.all - filedCount) },
+      };
+    };
+
+    if (request.method === "GET" && url.pathname === "/api/favorites/folders") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_required" });
+        return;
+      }
+      sendJson(response, 200, favoriteOrganizationSnapshot(session.user.id));
+      return;
+    }
+
+    // 注意：reorder 必须排在 `:id` 之前，否则 "reorder" 会被当成文件夹 id。
+    if (request.method === "POST" && url.pathname === "/api/favorites/folders/reorder") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_required" });
+        return;
+      }
+      try {
+        const payload = await readJsonBody(request);
+        favoriteFolderStore.reorder({
+          userId: session.user.id,
+          parentId: payload.parentId || null,
+          order: payload.order || [],
+        });
+      } catch (error) {
+        sendJson(response, favoriteFolderErrorStatus(error), { success: false, error: String((error && error.message) || "favorite_folder_reorder_failed") });
+        return;
+      }
+      sendJson(response, 200, favoriteOrganizationSnapshot(session.user.id));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/favorites/folders") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_required" });
+        return;
+      }
+      try {
+        const payload = await readJsonBody(request);
+        favoriteFolderStore.createFolder({
+          userId: session.user.id,
+          name: payload.name,
+          parentId: payload.parentId || null,
+          icon: payload.icon || "",
+        });
+      } catch (error) {
+        sendJson(response, favoriteFolderErrorStatus(error), { success: false, error: String((error && error.message) || "favorite_folder_create_failed") });
+        return;
+      }
+      sendJson(response, 200, favoriteOrganizationSnapshot(session.user.id));
+      return;
+    }
+
+    const favoriteFolderMatch = url.pathname.match(/^\/api\/favorites\/folders\/([^/]+)$/);
+    if (favoriteFolderMatch && (request.method === "PATCH" || request.method === "DELETE")) {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_required" });
+        return;
+      }
+      const folderId = decodeURIComponent(favoriteFolderMatch[1]);
+      try {
+        if (request.method === "DELETE") {
+          favoriteFolderStore.deleteFolder({ userId: session.user.id, folderId });
+        } else {
+          const payload = await readJsonBody(request);
+          favoriteFolderStore.updateFolder({
+            userId: session.user.id,
+            folderId,
+            name: payload.name,
+            icon: payload.icon,
+          });
+        }
+      } catch (error) {
+        sendJson(response, favoriteFolderErrorStatus(error), { success: false, error: String((error && error.message) || "favorite_folder_update_failed") });
+        return;
+      }
+      sendJson(response, 200, favoriteOrganizationSnapshot(session.user.id));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/favorites/membership") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_required" });
+        return;
+      }
+      try {
+        const payload = await readJsonBody(request);
+        favoriteFolderStore.assign({
+          userId: session.user.id,
+          kind: payload.kind,
+          refId: payload.refId,
+          folderId: payload.folderId || null,
+        });
+      } catch (error) {
+        sendJson(response, favoriteFolderErrorStatus(error), { success: false, error: String((error && error.message) || "favorite_membership_failed") });
+        return;
+      }
+      sendJson(response, 200, favoriteOrganizationSnapshot(session.user.id));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/favorites/pins") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_required" });
+        return;
+      }
+      try {
+        const payload = await readJsonBody(request);
+        favoriteFolderStore.setPin({
+          userId: session.user.id,
+          kind: payload.kind,
+          refId: payload.refId,
+          pinned: payload.pinned === undefined ? true : Boolean(payload.pinned),
+        });
+      } catch (error) {
+        sendJson(response, favoriteFolderErrorStatus(error), { success: false, error: String((error && error.message) || "favorite_pin_failed") });
+        return;
+      }
+      sendJson(response, 200, favoriteOrganizationSnapshot(session.user.id));
+      return;
+    }
+
     const communityWithdrawMatch = url.pathname.match(/^\/api\/community\/assets\/([^/]+)\/withdraw$/);
     if (request.method === "POST" && communityWithdrawMatch) {
       const session = userAuthStore.authenticate(bearerToken(request));
@@ -7156,6 +8541,54 @@ function createServer(options = {}) {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/api/billing/test-purchase") {
+      if (!developmentIdentityAllowed()) {
+        sendJson(response, 404, { success: false, error: "billing_test_purchase_unavailable" });
+        return;
+      }
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_required" });
+        return;
+      }
+      if (guardUserCapability(response, session.user.id, "write")) return;
+      try {
+        const payload = await readJsonBody(request);
+        const requestId = String(payload.requestId || "").trim();
+        if (!requestId || requestId.length > 128) throw new Error("billing_request_id_invalid");
+        const result = billingStore.purchaseProduct(session.user.id, String(payload.productId || ""), {
+          channel: "user_test_simulation",
+          requestId,
+        });
+        if (!result.duplicated) {
+          logOperation({ action: "billing.test_purchase", category: "billing", targetType: "user", targetId: session.user.id, summary: `测试订购：${result.product.name}`, metadata: { productId: result.product.id, orderId: result.order.id } });
+        }
+        sendJson(response, 200, { success: true, ...result });
+      } catch (error) {
+        sendJson(response, error.message === "billing_product_not_found" ? 404 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/billing/beans/consume") {
+      try {
+        const payload = await readJsonBody(request);
+        const identity = resolveRequestIdentity(request, payload.userId, userAuthStore);
+        if (!identity.userId) {
+          sendJson(response, 401, { success: false, error: "auth_session_required" });
+          return;
+        }
+        if (guardUserCapability(response, identity.userId, "write")) return;
+        const result = billingStore.consumeBeans(identity.userId, payload);
+        sendJson(response, 200, { success: true, ...result });
+      } catch (error) {
+        sendJson(response, error.message === "billing_bean_insufficient" ? 409 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 兼容已安装的体验版：这条路径的语义**不变**，仍是「扣 AI 额度」，
+    // 服务端按 1 点 = 0.1 豆币折算后扣同一份豆币余额；等体验版更新后随旧路径一并删除。
     if (request.method === "POST" && url.pathname === "/api/billing/credits/consume") {
       try {
         const payload = await readJsonBody(request);
@@ -7165,10 +8598,13 @@ function createServer(options = {}) {
           return;
         }
         if (guardUserCapability(response, identity.userId, "write")) return;
-        const result = billingStore.consumeCredits(identity.userId, payload);
-        sendJson(response, 200, { success: true, ...result });
+        const result = billingStore.consumeBeans(identity.userId, {
+          ...payload,
+          amount: roundBeans(Number(payload.amount) * BEANS_PER_CREDIT),
+        });
+        sendJson(response, 200, { success: true, ...result, deprecatedPath: "/api/billing/credits/consume" });
       } catch (error) {
-        sendJson(response, error.message === "billing_credit_insufficient" ? 409 : 422, { success: false, error: error.message });
+        sendJson(response, error.message === "billing_bean_insufficient" ? 409 : 422, { success: false, error: error.message });
       }
       return;
     }
@@ -7451,6 +8887,38 @@ function createServer(options = {}) {
       return;
     }
 
+    // 平台设置（2026-10-05）：用户端只读"已发布"版本；没有已发布版本时**返回 published:false**，
+    // 由前端显示「尚未发布」——不用 404，也不下发任何占位正文（AGENTS §3：不得伪装成正式协议）。
+    if (request.method === "GET" && url.pathname === "/api/platform-content") {
+      sendJson(response, 200, { success: true, documents: platformContentStore.publicList() });
+      return;
+    }
+
+    const platformContentMatch = url.pathname.match(/^\/api\/platform-content\/([^/]+)$/);
+    if (request.method === "GET" && platformContentMatch) {
+      try {
+        const document = platformContentStore.publicDocument(decodeURIComponent(platformContentMatch[1]));
+        sendJson(response, 200, { success: true, document, published: document.published === true });
+      } catch (error) {
+        sendJson(response, error.message === "platform_content_unknown_document" ? 404 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/messages") {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      response.setHeader("Cache-Control", "no-store");
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+        return;
+      }
+      sendJson(response, 200, {
+        success: true,
+        messages: feedbackMessages(moderationStore.list({}).reports, session.user.id),
+      });
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/feedback/mine") {
       const session = userAuthStore.authenticate(bearerToken(request));
       if (!session) {
@@ -7458,19 +8926,35 @@ function createServer(options = {}) {
         return;
       }
       const items = moderationStore.list({}).reports
-        .filter((item) => item.targetType === "app_feedback" && item.reporter && item.reporter.id === session.user.id)
-        .map((item) => ({
-          id: item.id,
-          category: item.feedbackCategory || "other",
-          content: item.detail,
-          status: item.status,
-          resolution: item.resolution,
-          response: item.history && item.history.length ? item.history[0].note : "",
-          attachmentCount: Array.isArray(item.attachments) ? item.attachments.length : 0,
-          createdAt: item.createdAt,
-          updatedAt: item.updatedAt,
-        }));
+        .filter((item) => isOwnFeedback(item, session.user.id))
+        .map(publicFeedback);
+      response.setHeader("Cache-Control", "no-store");
       sendJson(response, 200, { success: true, items });
+      return;
+    }
+
+    const feedbackReplyMatch = url.pathname.match(/^\/api\/feedback\/([^/]+)\/replies$/);
+    if (request.method === "POST" && feedbackReplyMatch) {
+      const session = userAuthStore.authenticate(bearerToken(request));
+      if (!session) {
+        sendJson(response, 401, { success: false, error: "auth_session_invalid" });
+        return;
+      }
+      try {
+        const payload = await readJsonBody(request);
+        if (guardUserCapability(response, session.user.id, "speak")) return;
+        const result = moderationStore.addMessage(decodeURIComponent(feedbackReplyMatch[1]), {
+          role: "user", userId: session.user.id, content: payload.content, clientMessageId: payload.clientMessageId,
+        });
+        if (!result.duplicate) logOperation({
+          action: "feedback.reply", category: "moderation", targetType: result.report.targetType,
+          targetId: result.report.id, summary: "用户补充反馈信息",
+          metadata: { reportId: result.report.id },
+        });
+        sendJson(response, 200, { success: true, duplicate: result.duplicate, item: publicFeedback(result.report) });
+      } catch (error) {
+        sendJson(response, error.message === "moderation_not_found" ? 404 : 422, { success: false, error: error.message });
+      }
       return;
     }
 
@@ -7486,6 +8970,25 @@ function createServer(options = {}) {
         if (guardUserCapability(response, session.user.id, "speak")) return;
         const category = String(payload.category || "other").trim();
         const content = String(payload.content || "").trim();
+      // 题目上下文（2026-10-01）：questionId 不存在**不阻断**提交；题型优先用**服务端**的，
+      // 题干预览也由服务端从题库取（客户端传值只作兜底，另存 clientStemPreview）。
+      const feedbackQuestionId = String(payload.questionId || "").trim();
+      const feedbackQuestion = feedbackQuestionId ? questionStore.get(feedbackQuestionId) : null;
+      const feedbackQuestionStem = feedbackQuestion ? String(feedbackQuestion.stem || "").slice(0, 120) : "";
+      const feedbackQuestionType = feedbackQuestion
+        ? String(feedbackQuestion.type || "").slice(0, 40)
+        : String(payload.questionType || "").slice(0, 40);
+      const feedbackClientId = String(payload.clientFeedbackId || "").trim().slice(0, 100);
+      // 幂等：同一用户 + 同一 clientFeedbackId 只留一条（防"请求成功但没收到响应→重试"产生重复反馈）。
+      if (feedbackClientId) {
+        const existing = (moderationStore.list({ type: "all", status: "all" }).reports || [])
+          .find((item) => String(item.reporter && item.reporter.id || "") === String(session.user.id)
+            && String(item.clientFeedbackId || "") === feedbackClientId);
+        if (existing) {
+          sendJson(response, 200, { success: true, duplicate: true, report: existing });
+          return;
+        }
+      }
         const categoryLabels = {
           feature_issue: "功能异常",
           content_issue: "内容问题",
@@ -7506,6 +9009,13 @@ function createServer(options = {}) {
           reason: content.slice(0, 120),
           detail: content,
           feedbackCategory: category,
+          questionId: feedbackQuestionId,
+          questionType: feedbackQuestionType,
+          feedbackType: String(payload.feedbackType || "").slice(0, 20),
+          scoreRequestId: String(payload.scoreRequestId || "").slice(0, 100),
+          clientFeedbackId: feedbackClientId,
+          questionStemPreview: feedbackQuestionStem,
+          clientStemPreview: String(payload.questionStemPreview || "").slice(0, 120),
           contact: payload.contact,
           attachments: payload.attachments,
           clientContext: payload.clientContext,
@@ -7556,6 +9066,34 @@ function createServer(options = {}) {
         sendJson(response, 201, { success: true, report });
       } catch (error) {
         sendJson(response, 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    const moderationMessageMatch = url.pathname.match(/^\/api\/admin\/moderation\/([^/]+)\/messages$/);
+    if (request.method === "GET" && moderationMessageMatch) {
+      const report = moderationStore.get(decodeURIComponent(moderationMessageMatch[1]));
+      response.setHeader("Cache-Control", "no-store");
+      sendJson(response, report ? 200 : 404, report
+        ? { success: true, report }
+        : { success: false, error: "moderation_not_found" });
+      return;
+    }
+    if (request.method === "POST" && moderationMessageMatch) {
+      try {
+        const payload = await readJsonBody(request);
+        const result = moderationStore.addMessage(decodeURIComponent(moderationMessageMatch[1]), {
+          role: "staff", actor: currentAdminDisplayName() || "超级管理员",
+          content: payload.content, clientMessageId: payload.clientMessageId,
+        });
+        if (!result.duplicate) logOperation({
+          action: "moderation.ask", category: "moderation", targetType: result.report.targetType,
+          targetId: result.report.id, summary: "向提交者追问",
+          metadata: { reportId: result.report.id },
+        });
+        sendJson(response, 200, { success: true, duplicate: result.duplicate, report: result.report });
+      } catch (error) {
+        sendJson(response, error.message === "moderation_not_found" ? 404 : 422, { success: false, error: error.message });
       }
       return;
     }
@@ -7654,7 +9192,70 @@ function createServer(options = {}) {
     }
 
     if (request.method === "GET" && url.pathname === "/api/admin/question-catalog") {
-      sendJson(response, 200, { success: true, ...questionStore.catalog() });
+      sendJson(response, 200, { success: true, ...questionStore.catalog(), projects: listExamProjects() });
+      return;
+    }
+
+    if (request.method === "POST" && [
+      "/api/admin/knowledge-structure/generate",
+      "/api/admin/question-families/generate",
+      "/api/admin/question-enrichment/deterministic-rebuild",
+      "/api/admin/question-enrichment/deterministic-rebuild-selection",
+    ].includes(url.pathname)) {
+      sendJson(response, 410, { success: false, error: "completion_preview_required", message: "整册重生成已停用。请刷新页面，使用只补缺预览并逐项确认；已有数据不会被覆盖。" });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/knowledge-structure/directories") {
+      try {
+        const bookId = String(url.searchParams.get("bookId") || "");
+        if (!bookId || bookId === "all") throw new Error("directory_book_required");
+        sendJson(response, 200, { success: true, directories: libraryDirectories.read(bookId) });
+      } catch (error) { sendJson(response, 422, { success: false, error: error.message }); }
+      return;
+    }
+
+    if (request.method === "PUT" && url.pathname === "/api/admin/knowledge-structure/directory-mapping") {
+      try {
+        const payload = await readJsonBody(request);
+        const directories = libraryDirectories.save(String(payload.bookId || ""), String(payload.questionNodeId || ""), payload.dossierNodeIds, payload.revision);
+        logOperation({ action: "knowledge_structure.directory_mapping", category: "question", targetType: "knowledge_directory", targetId: payload.questionNodeId,
+          summary: "更新题库目录与知识档案目录的对应关系，未改题目、指纹或题族", metadata: { bookId: payload.bookId, dossierNodeIds: payload.dossierNodeIds } });
+        sendJson(response, 200, { success: true, directories });
+      } catch (error) { sendJson(response, /stale/.test(error.message) ? 409 : 422, { success: false, error: error.message }); }
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/admin/question-enrichment/completion-preview") {
+      try {
+        const payload = await readJsonBody(request);
+        let questions;
+        if (Array.isArray(payload.questionIds)) {
+          const ids = [...new Set(payload.questionIds.map(String))];
+          if (!ids.length || ids.length > 5000) throw new Error("completion_selection_required");
+          questions = questionStore.getMany(ids);
+          if (questions.length !== ids.length || questions.some((question) => !question)) throw new Error("question_not_found");
+        } else {
+          const scope = enrichmentDeterministicScope(payload);
+          questions = scope.books.flatMap((book) => book.questions);
+          questions.push(...questionStore.getMany(scope.unassignedQuestionIds).filter(Boolean));
+        }
+        if (questions.length > 5000) throw new Error("completion_scope_too_large");
+        const rows = questionCompletion.preview(questions);
+        sendJson(response, 200, { success: true, mode: "fill_missing_preview", rows });
+      } catch (error) { sendJson(response, 422, { success: false, error: error.message }); }
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/admin/question-enrichment/completion-commit") {
+      try {
+        if (options.persistence) throw Object.assign(new Error("completion_postgres_transaction_required"), { statusCode: 503 });
+        const payload = await readJsonBody(request, 2 * 1024 * 1024);
+        const result = questionCompletion.commit(payload.items, currentAdminDisplayName() || "超级管理员");
+        logOperation({ action: "question_enrichment.fill_missing", category: "question", targetType: "question_enrichment_selection",
+          targetId: payload.items.map((item) => item.questionId).join(",").slice(0, 300), summary: "人工确认补齐缺失指纹与题族，已有内容保持不变", metadata: result });
+        sendJson(response, 200, { success: true, ...result });
+      } catch (error) { sendJson(response, error.statusCode || (/stale/.test(error.message) ? 409 : 422), { success: false, error: error.message }); }
       return;
     }
 
@@ -7674,9 +9275,12 @@ function createServer(options = {}) {
         dossier.id,
         knowledgeDossierFamilyCoverage(dossier, familyContext),
       ]));
-      const allowedNodeIds = nodeId && bookId !== "all" ? knowledgeStructureStore.descendants(bookId, nodeId) : null;
+      const sourceDirectory = url.searchParams.get("directory") === "source" && bookId !== "all" ? libraryDirectories.read(bookId) : null;
+      const allowedNodeIds = nodeId && bookId !== "all"
+        ? (sourceDirectory ? descendantIds(sourceDirectory.dossierNodes, nodeId) : knowledgeStructureStore.descendants(bookId, nodeId)) : null;
       const scopedItems = allowedNodeIds
-        ? filteredItems.filter((dossier) => dossier.occurrences.some((occurrence) => allowedNodeIds.has(occurrence.nodeId)))
+        ? filteredItems.filter((dossier) => dossier.occurrences.some((occurrence) => (sourceDirectory
+          ? dossierNodeIds(sourceDirectory, occurrence.nodeId) : [occurrence.nodeId]).some((id) => allowedNodeIds.has(id))))
         : filteredItems;
       const items = scopedItems.map((dossier) => ({
         ...dossier,
@@ -7687,7 +9291,7 @@ function createServer(options = {}) {
       sendJson(response, 200, {
         success: true,
         items,
-        treeSummary: knowledgeDossierTreeSummary(bookId, allBookItems),
+        treeSummary: knowledgeDossierTreeSummary(bookId, allBookItems, sourceDirectory),
         relationTargets: allBookItems.map((dossier) => ({
           id: dossier.id,
           canonicalName: dossier.canonicalName,
@@ -7733,7 +9337,7 @@ function createServer(options = {}) {
         const bookId = String(payload.bookId || "");
         const nodeId = String(payload.nodeId || "");
         if (!bookId || !nodeId) throw new Error("knowledge_dossier_scope_required");
-        const scope = knowledgeDossierScope(bookId, nodeId);
+        const scope = knowledgeDossierScope(bookId, nodeId, payload.directory === "source" ? "source" : "question");
         const book = books.find((item) => item.id === bookId);
         run = knowledgeDossierStore.createRun({ bookId, nodeId, nodePath: scope.node.path, status: "compiling" });
         const existingDossiers = knowledgeDossierStore.list({ bookId }).slice(0, 100);
@@ -7815,10 +9419,12 @@ function createServer(options = {}) {
         const dossier = knowledgeDossierStore.get(dossierId);
         if (!dossier) throw new Error("knowledge_dossier_not_found");
         const structure = knowledgeStructureStore.get(dossier.bookId);
+        const sourceNodes = libraryDirectories.read(dossier.bookId).dossierNodes;
         const validNodeIds = [...new Set(dossier.occurrences.map((item) => item.nodeId)
-          .filter((nodeId) => structure?.nodes?.some((node) => node.id === nodeId)))];
+          .filter((nodeId) => sourceNodes.some((node) => node.id === nodeId) || structure?.nodes?.some((node) => node.id === nodeId)))];
         if (!validNodeIds.length) throw new Error("knowledge_dossier_scope_required");
-        const scopes = validNodeIds.map((nodeId) => knowledgeDossierScope(dossier.bookId, nodeId));
+        const scopes = validNodeIds.map((nodeId) => knowledgeDossierScope(dossier.bookId, nodeId,
+          sourceNodes.some((node) => node.id === nodeId) ? "source" : "question"));
         const referencedChunkIds = new Set([
           ...dossier.claims.flatMap((claim) => claim.evidence.map((item) => item.chunkId)),
           ...dossier.occurrences.flatMap((item) => item.chunkIds),
@@ -7930,9 +9536,23 @@ function createServer(options = {}) {
           questions,
         });
       }
+      // optional=true：**可选读**。这本教材还没有树是正常情况（不是错误），调用方只想知道"有没有"，
+      // 不该为此吃一个 404（2026-09-27：归属确认弹窗要按题目的教材判断该显示哪种提示，
+      // 用 404 会让浏览器控制台每次都多一条资源报错）。默认行为不变，仍是 404。
+      const optional = url.searchParams.get("optional") === "true";
+      if (optional) {
+        sendJson(response, 200, { success: true, structure: structure || null });
+        return;
+      }
       sendJson(response, structure ? 200 : 404, structure
         ? { success: true, structure }
         : { success: false, error: "knowledge_structure_not_found" });
+      return;
+    }
+
+    // DEC-103：新题库已退役。拦截缓存页面的读写，不删除或迁移副本数据。
+    if (url.pathname === "/api/admin/new-library" || url.pathname.startsWith("/api/admin/new-library/")) {
+      sendJson(response, 410, { success: false, error: "new_library_retired", message: "新题库已停用，请刷新页面后使用「题库管理」。原题库与历史工作副本数据均已保留。" });
       return;
     }
 
@@ -8027,19 +9647,7 @@ function createServer(options = {}) {
       try {
         const payload = await readJsonBody(request).catch(() => ({}));
         const bookId = String(payload.bookId || "modern-chinese-7-1");
-        const textbook = textbookCatalogStore.get(bookId);
-        if (!textbook?.confirmed?.nodes?.length) throw new Error("catalog_confirmed_not_found");
-        const knowledge = textbookKnowledgeStore.get(bookId, { includeContent: true });
-        if (!knowledge.chunks?.length) throw new Error("textbook_knowledge_not_built");
-        const questions = questionStore.list({ library: "official", status: "all", bookId }).questions
-          .filter((question) => question.status !== "offline");
-        const structure = knowledgeStructureStore.generate({
-          bookId,
-          catalogNodes: textbook.confirmed.nodes,
-          outlineNodes: textbookKnowledgeStore.outline(bookId),
-          chunks: knowledge.chunks,
-          questions,
-        });
+        const structure = regenerateKnowledgeStructureForBook(bookId);
         logOperation({
           action: "knowledge_structure.generate",
           category: "question",
@@ -9097,6 +10705,8 @@ function createServer(options = {}) {
       const status = url.searchParams.get("status") || "all";
       const risk = url.searchParams.get("risk") || "all";
       const issue = url.searchParams.get("issue") || "all";
+      // 题族筛选（all／none＝未成族／has＝已进题族）：按**当前**成员关系实时判断，不看巡检结果里的历史快照。
+      const familyFilter = url.searchParams.get("family") || "all";
       const includeHistory = url.searchParams.get("includeHistory") === "true";
       const pageSize = Math.min(100, Math.max(20, Number(url.searchParams.get("pageSize")) || 50));
       const allResults = knowledgeClassificationStore.results({ bookId, limit: 1000 });
@@ -9115,6 +10725,64 @@ function createServer(options = {}) {
       const allBookFamilies = questionFamilyStore.list({ bookId, status: "all" }).families;
       const familyMap = new Map(allBookFamilies.map((family) => [family.id, family]));
       const currentMembershipMap = questionFamilyStore.memberships([...questionMap.keys()], { bookId, status: "all" });
+      // 复核状态派生要按**每条记录自己的书**比"当前修订"（列表本可按 bookId 过滤，
+      // 但历史记录可能标着另一本书，用错书会把结论判成没改过）。
+      const knowledgeRevisionByBook = new Map();
+      const currentKnowledgeRevision = (targetBookId) => {
+        if (!knowledgeRevisionByBook.has(targetBookId)) {
+          knowledgeRevisionByBook.set(targetBookId, knowledgeTopologyRevision(knowledgeStructureStore.get(targetBookId)));
+        }
+        return knowledgeRevisionByBook.get(targetBookId);
+      };
+      const familyRevisionByBook = new Map();
+      const currentFamilyRevision = (targetBookId) => {
+        if (!familyRevisionByBook.has(targetBookId)) familyRevisionByBook.set(targetBookId, knowledgeFamilyRevision(targetBookId));
+        return familyRevisionByBook.get(targetBookId);
+      };
+      // 确定性体检（DEC-100 / §4.6.12）：**每本书一次请求只体检一次**——`auditBook` 内部建的是
+      // 整本书的指纹索引（重复题要看整本书，不能按行判），所以绝不能每行调一次。
+      // 结果按 bookId 记住；这一页最多 50 行、一次请求通常只有一本书，实际就是一次全量体检。
+      //
+      // 「跑过且通过」与「没跑成」必须**不同形**（产品负责人 2026-09-26 明确不接受这个假阳性）：
+      //   status="audited"     → 整行带 `ruleFindings`（空数组＝跑过、没命中任何规则）；
+      //   status="unavailable" → 整行**不带** `ruleFindings`（前置条件缺失／体检查不动），
+      //                          并在 `summary.ruleFindingsUnavailable`（= `{reason, books}`）里给出原因。
+      //   字段缺失＝没体检成，字段为空数组＝体检通过，两者绝不混同（前端不该把"没体检"显示成"已留档·无问题"）。
+      //   同理：`summary.ruleFindingsByCode` / `summary.ruleFindingsPassed` 只在**有体检跑成的行**时出现，
+      //   未体检的书绝不进这两个计数（否则"没查"会被算成"没问题"）。
+      const ruleAuditByBook = new Map();
+      const currentRuleAudit = (targetBookId) => {
+        if (!ruleAuditByBook.has(targetBookId)) {
+          let entry;
+          try {
+            const report = questionAuditService.auditBook({ bookId: targetBookId });
+            const readiness = report.textbookReadiness || {};
+            entry = readiness.ready === true
+              ? { status: "audited", byQuestion: report.byQuestion || {}, reason: "", textbookReady: true }
+              // 教材正文不就绪＝「教材依据」这一类判不出结论；此时整行不给 ruleFindings，
+              // 由 summary.ruleFindingsUnavailable 说明原因，避免把"没体检成"说成"体检通过"。
+              : {
+                status: "unavailable",
+                byQuestion: {},
+                reason: readiness.reason || "该教材还没有可检索的正文／知识结构",
+                textbookReady: false,
+              };
+          } catch (error) {
+            // 体检是只读增强：某本书体检查不动不该把整张巡检清单打挂，但**必须**留下痕迹。
+            entry = { status: "unavailable", byQuestion: {}, reason: error.message || "体检执行失败", textbookReady: false };
+            logOperation({
+              action: "question.audit_book_failed",
+              category: "question",
+              targetType: "question_audit",
+              targetId: targetBookId,
+              summary: `教材 ${targetBookId} 的确定性体检失败，清单按“未体检”返回`,
+              metadata: { error: error.message },
+            });
+          }
+          ruleAuditByBook.set(targetBookId, entry);
+        }
+        return ruleAuditByBook.get(targetBookId);
+      };
       const latestReviewableByQuestion = new Map();
       const latestRecordByQuestion = new Map();
       allResults.forEach((result) => {
@@ -9194,10 +10862,29 @@ function createServer(options = {}) {
         const usedCaseIds = [...new Set([...(result.agent1CaseIds || []), ...(result.agent2CaseIds || [])])];
         const latestResult = latestReviewableByQuestion.get(result.questionId);
         const latestRecord = latestRecordByQuestion.get(result.questionId);
+        // 确定性体检的规则项（只读、来自整本书一次体检的 byQuestion）：**只取 source === "rule"**，
+        // AI 项不在这里造（那是归类产线的结论，见 issue / agent2Verification）。
+        // **没体检成就不给这个字段**（不是给空数组）：字段缺失＝未体检，空数组＝跑过且通过。
+        const bookRuleAudit = currentRuleAudit(result.bookId);
+        const ruleFindings = bookRuleAudit.status === "audited"
+          ? formatAuditFindings(bookRuleAudit.byQuestion[result.questionId] || []).filter((item) => item.source === "rule")
+          : null;
+        // 四态复核状态：记录里的 auditReview 是落库事实；派生作废只在响应里算，绝不回写（§4.6.12 / DEC-100）。
+        const recordedAuditReview = result.auditReview
+          || { state: "pending_review", note: "", actor: "", actorLabel: "", at: null };
+        const derivedAuditReview = deriveAuditReview(result, {
+          questionVersion: baseQuestion ? Number(baseQuestion.version) : Number(result.baseQuestionVersion),
+          knowledgeRevision: currentKnowledgeRevision(result.bookId),
+          familyRevision: currentFamilyRevision(result.bookId),
+        });
         return {
           ...result,
           risk: resultRisk,
           issue: resultIssue,
+          // 巡检结论的中文标签：取自唯一一份体检项词表，前端不必再维护第二份 map。
+          issueLabel: auditIssueTitle(resultIssue),
+          // 体检没跑成时这个键整体不出现（`ruleFindings === null`）——字段缺失＝未体检，空数组＝通过。
+          ...(ruleFindings ? { ruleFindings } : {}),
           question,
           answerConflict,
           agreement,
@@ -9206,6 +10893,7 @@ function createServer(options = {}) {
           latestResultId: latestResult && latestResult.id !== result.id ? latestResult.id : "",
           isHistoricalRecord: Boolean(latestRecord && latestRecord.id !== result.id),
           latestRecordId: latestRecord && latestRecord.id !== result.id ? latestRecord.id : "",
+          auditReview: derivedAuditReview || recordedAuditReview,
           suggestedKnowledgePath: verification?.primaryNode?.path || "",
           agent2Verification: verification,
           agent3Verification: verification,
@@ -9240,12 +10928,33 @@ function createServer(options = {}) {
           : result.status !== status && result.reviewStatus !== status)) return false;
         if (risk !== "all" && result.risk !== risk) return false;
         if (issue !== "all" && result.issue !== issue) return false;
+        if (familyFilter !== "all") {
+          // 「未成族」＝当前没有任何题族把它算作成员（不区分题族状态：待审核、已确认都算"有题族关系"）。
+          // 成员关系来自上面实时算出的 currentMembershipMap，不落库、不缓存。
+          const hasFamily = (result.question?.familyMemberships || []).length > 0;
+          if (familyFilter === "none" && hasFamily) return false;
+          if (familyFilter === "has" && !hasFamily) return false;
+        }
         if (query && ![result.questionId, result.question?.stem, result.question?.chapter, result.agent2Verification?.focusLabel]
           .filter(Boolean).join(" ").toLocaleLowerCase("zh-CN").includes(query)) return false;
         return true;
       });
       const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
       const page = Math.min(pageCount, Math.max(1, Number(url.searchParams.get("page")) || 1));
+      // 规则项计数只统计**体检跑成**的行（`ruleFindings` 是数组；未体检的行没这个字段）。
+      // 计数按行去重口径：同一行同一种规则项只算一次（一行可能因多个选项问题报多条 content_defect）。
+      // 「通过」必须是**真通过**：只算体检跑过且没命中任何规则项的行。
+      const auditedRecords = visibleRecords.filter((result) => Array.isArray(result.ruleFindings));
+      const ruleFindingsByCode = auditedRecords.reduce((counts, result) => {
+        new Set(result.ruleFindings.map((item) => item.code)).forEach((code) => {
+          counts[code] = (counts[code] || 0) + 1;
+        });
+        return counts;
+      }, {});
+      // 体检没跑成的书：把原因和书名列出来（前端据此显示"未体检"，而不是"已留档·无问题"）。
+      const unauditedBooks = [...new Set(visibleRecords
+        .filter((result) => !Array.isArray(result.ruleFindings))
+        .map((result) => result.bookId))];
       const summary = {
         total: visibleRecords.length,
         history: decorated.filter((result) => result.isHistoricalRecord).length,
@@ -9255,10 +10964,32 @@ function createServer(options = {}) {
         applied: visibleRecords.filter((result) => result.reviewStatus === "applied").length,
         rejected: visibleRecords.filter((result) => result.reviewStatus === "rejected").length,
         highRisk: visibleRecords.filter((result) => result.risk === "high").length,
+        // 四态计数按**派生后**的状态算（作废的 reviewed/ignored 计进待复核），与每行的 auditReview 一处一致。
+        auditReviewCounts: {
+          pending_review: visibleRecords.filter((result) => result.auditReview.state === "pending_review").length,
+          reviewed: visibleRecords.filter((result) => result.auditReview.state === "reviewed").length,
+          repaired: visibleRecords.filter((result) => result.auditReview.state === "repaired").length,
+          ignored: visibleRecords.filter((result) => result.auditReview.state === "ignored").length,
+        },
+        // 规则项计数与"通过"留档，与四态计数**并列**（互不覆盖：四态是人工复核进度，规则项是诊断结果）。
+        // 这两项**只在体检成功时出现**；有书没体检成时同样出现（只算成功的那几本），并额外给 ruleFindingsUnavailable。
+        ...(auditedRecords.length ? {
+          ruleFindingsByCode,
+          ruleFindingsPassed: auditedRecords.filter((result) => !result.ruleFindings.length).length,
+        } : {}),
+        ...(unauditedBooks.length ? {
+          ruleFindingsUnavailable: {
+            reason: currentRuleAudit(unauditedBooks[0]).reason || "该教材还没有可检索的正文／知识结构",
+            books: unauditedBooks,
+          },
+        } : {}),
       };
       sendJson(response, 200, {
         success: true,
         summary,
+        // 体检项词表原样下发（code → {title, source, severity, suggestion}）：前端只认 code、
+        // 显示后端给的中文标签与建议，**不得再保留第二份 map**（AGENTS §5 一处维护）。
+        issueLabels: AUDIT_ISSUE_LABELS,
         total: filtered.length,
         page,
         pageSize,
@@ -9268,6 +10999,8 @@ function createServer(options = {}) {
       });
       return;
     }
+
+    if (await assessmentModeRoutes(request, response, url)) return;
 
     if (request.method === "GET" && url.pathname === "/api/admin/knowledge-classification/rules") {
       const bookId = url.searchParams.get("bookId") || "all";
@@ -9396,6 +11129,73 @@ function createServer(options = {}) {
       return;
     }
 
+    // AI 巡检的复核状态（四态，产品手册 §4.6.12 / DEC-100）：只记录"人看没看过、看过后怎么处置"。
+    // 巡检只诊断不改库，所以这里**不产生任何写库动作**（写库归「完善题目」）。
+    const knowledgeClassificationAuditReviewMatch = url.pathname.match(/^\/api\/admin\/knowledge-classification\/results\/([^/]+)\/audit-review$/);
+    if (request.method === "POST" && knowledgeClassificationAuditReviewMatch) {
+      try {
+        const resultId = decodeURIComponent(knowledgeClassificationAuditReviewMatch[1]);
+        const payload = await readJsonBody(request).catch(() => ({}));
+        // 带 state 就校验（不在四态白名单 → 400）；只带 note 表示"补备注、不改状态"。
+        // 注意：带 state 却给了空串属于非法输入，不能当成"没带"——那会把打错的请求悄悄吞掉。
+        const hasState = payload.state !== undefined && payload.state !== null;
+        const state = String(payload.state || "").trim();
+        if (hasState && !AUDIT_REVIEW_STATES.has(state)) throw new Error("audit_review_state_invalid");
+        const updated = knowledgeClassificationStore.updateAuditReview(resultId, {
+          state: hasState ? state : undefined,
+          note: payload.note,
+          // actor＝登录账号名（审计唯一可定位），actorLabel＝展示名（界面显示中文名用）。
+          actor: currentAdminUsername() || "超级管理员",
+          actorLabel: currentAdminDisplayName() || currentAdminUsername() || "超级管理员",
+        });
+        logOperation({
+          action: "knowledge_classification.audit_review",
+          category: "question",
+          targetType: "knowledge_classification_result",
+          targetId: updated.id,
+          summary: `AI 巡检记录复核为 ${state}：${updated.questionId}`,
+          metadata: { state, questionId: updated.questionId, jobId: updated.jobId },
+        });
+        sendJson(response, 200, { success: true, ok: true, result: updated });
+      } catch (error) {
+        const status = error.message === "audit_review_state_invalid" ? 400
+          : (error.message === "knowledge_classification_result_not_found" ? 404 : 422);
+        sendJson(response, status, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 「送去完善题目」（产品手册 §4.6.12 / DEC-100）：不改库、不采纳，只在**该题**生成／补全建议稿，
+    // 并在巡检记录上记一笔 sentToEnrichmentAt。生成走的是同一条产线（createQuestionEnrichmentJob），
+    // 不在这里另写一份生成逻辑。
+    const knowledgeClassificationSendToEnrichmentMatch = url.pathname.match(/^\/api\/admin\/knowledge-classification\/results\/([^/]+)\/send-to-enrichment$/);
+    if (request.method === "POST" && knowledgeClassificationSendToEnrichmentMatch) {
+      try {
+        const resultId = decodeURIComponent(knowledgeClassificationSendToEnrichmentMatch[1]);
+        const result = knowledgeClassificationStore.getResult(resultId);
+        if (!result) throw new Error("knowledge_classification_result_not_found");
+        const question = questionStore.get(result.questionId);
+        if (!question) throw new Error("question_not_found");
+        // 只送这一道题，且**不按"完善口径是否齐全"过滤**：巡检结论与完善口径不是一回事
+        // （题可能教材/章节/知识点/得分点都不缺，但巡检报了「分值缺失或异常」「近似重复」）。
+        // 该题已有排队/运行中的 job 就复用它的 id，不再重复排队。
+        const job = createQuestionEnrichmentJob({ questionIds: [result.questionId] }, {
+          allowComplete: true,
+          reuseActiveJob: true,
+          origin: "knowledge_inspection",
+          originLabel: knowledgeInspectionOriginLabel(result, knowledgeClassificationIssue(result, question)),
+        });
+        knowledgeClassificationStore.markSentToEnrichment(result.id, Date.now());
+        sendJson(response, 200, { success: true, ok: true, questionId: result.questionId, jobId: job.id });
+      } catch (error) {
+        // 两种 404 都按契约给：记录不存在（knowledge_classification_result_not_found）与题目不存在（question_not_found）。
+        const status = ["knowledge_classification_result_not_found", "question_not_found"].includes(error.message) ? 404
+          : (error.message === "question_enrichment_route_unavailable" ? 503 : 422);
+        sendJson(response, status, { success: false, error: error.message });
+      }
+      return;
+    }
+
     const knowledgeClassificationFeedbackMatch = url.pathname.match(/^\/api\/admin\/knowledge-classification\/results\/([^/]+)\/feedback$/);
     if (request.method === "POST" && knowledgeClassificationFeedbackMatch) {
       try {
@@ -9423,7 +11223,10 @@ function createServer(options = {}) {
     if (request.method === "POST" && url.pathname === "/api/admin/knowledge-classification/jobs") {
       try {
         const payload = await readJsonBody(request, 512 * 1024);
-        const bookId = String(payload.bookId || "modern-chinese-7-1");
+        // 不伪造教材：以前缺省时直接落到一本真实教材（modern-chinese-7-1），
+        // 会让一次「没选教材」的巡检看起来像在检查那本书。缺条件就明确报缺条件。
+        const bookId = String(payload.bookId || "").trim();
+        if (!bookId) throw new Error("knowledge_classification_book_required");
         const config = aiConfigStore.load();
         if (!configuredScene(config, "knowledge_feature_extraction", "knowledge_hierarchy_navigation")) throw new Error("knowledge_feature_extraction_route_unavailable");
         if (!configuredScene(config, "knowledge_hierarchy_navigation")) throw new Error("knowledge_hierarchy_navigation_route_unavailable");
@@ -9450,7 +11253,26 @@ function createServer(options = {}) {
           && !activeQuestionIds.has(question.id)
           && (reclassifyConfirmed || currentFingerprints.get(question.id)?.status !== "confirmed"))
           .slice(0, limit);
-        if (!questions.length) throw new Error("knowledge_classification_questions_required");
+        // 明确跳过并说明缺失条件：被点名、但缺少教材上下文的题目不会进入本次巡检，
+        // 也不会被反复重试——它们在平台题目管理里补全归属后才会重新被选中。
+        const skipped = [];
+        if (requestedIds.size) {
+          questionStore.getMany([...requestedIds]).forEach((question) => {
+            if (!question || questions.some((item) => item.id === question.id)) return;
+            if (activeQuestionIds.has(question.id)) return;
+            const state = questionClassificationState(question);
+            if (state.missingBook) {
+              skipped.push({ questionId: question.id, reason: "missing_textbook_context", missing: state.missing });
+            } else if (String(question.bookId || "").trim() !== bookId) {
+              skipped.push({ questionId: question.id, reason: "not_in_target_textbook", bookId: question.bookId });
+            }
+          });
+        }
+        if (!questions.length) {
+          const requiredError = new Error("knowledge_classification_questions_required");
+          requiredError.skipped = skipped;
+          throw requiredError;
+        }
         const baseFamilyMembershipRevisions = questionFamilyStore.membershipRevisions(questions.map((question) => question.id));
         const created = knowledgeClassificationStore.createJob({
           bookId,
@@ -9471,13 +11293,14 @@ function createServer(options = {}) {
           targetType: "knowledge_classification_job",
           targetId: created.job.id,
           summary: `创建 ${created.job.total} 道题的四 Agent AI 知识巡检`,
-          metadata: { bookId, questionIds: created.job.questionIds, reclassifyConfirmed },
+          metadata: { bookId, questionIds: created.job.questionIds, reclassifyConfirmed, skipped },
         });
         setImmediate(() => runKnowledgeClassificationJob(created.job.id));
-        sendJson(response, 202, { success: true, job: created.job });
+        sendJson(response, 202, { success: true, job: created.job, skipped });
       } catch (error) {
         const unavailable = error.message.endsWith("_route_unavailable");
-        sendJson(response, unavailable ? 503 : 422, { success: false, error: error.message });
+        const status = error.message === "knowledge_classification_book_required" ? 422 : (unavailable ? 503 : 422);
+        sendJson(response, status, { success: false, error: error.message, ...(error.skipped ? { skipped: error.skipped } : {}) });
       }
       return;
     }
@@ -10531,11 +12354,22 @@ function createServer(options = {}) {
 
     if (request.method === "GET" && url.pathname === "/api/admin/question-families") {
       const bookId = url.searchParams.get("bookId") || "modern-chinese-7-1";
+      const subjectId = url.searchParams.get("subjectId") || "all";
+      const library = url.searchParams.get("library") || "official";
+      const workspaceStatus = url.searchParams.get("workspaceStatus") || "all";
+      const type = normalizeQuestionType(url.searchParams.get("type") || "all");
+      const importBatchId = url.searchParams.get("importBatchId") || "all";
+      const workspaceRequest = url.searchParams.has("workspaceStatus");
+      const scopedBookIds = new Set(books.filter(book => (bookId === "all" || book.id === bookId)
+        && (subjectId === "all" || book.subjectId === subjectId)).map(book => book.id));
+      if (bookId !== "all" && subjectId === "all") scopedBookIds.add(bookId);
       const knowledgeNodeId = url.searchParams.get("knowledgeNodeId") || "";
       const query = String(url.searchParams.get("query") || "").trim();
       const normalizedQuery = query.normalize("NFKC").toLocaleLowerCase("zh-CN");
-      const allBookQuestions = questionStore.list({ library: "official", status: "all", bookId }).questions;
-      const matchedQuestionIds = new Set(normalizedQuery ? allBookQuestions.filter((question) => [
+      const allBookQuestions = questionStore.list({ library, status: "all", bookId, subjectId }).questions;
+      const filteredQuestions = allBookQuestions.filter(question => (type === "all" || question.type === type)
+        && (importBatchId === "all" || question.importBatchId === importBatchId));
+      const matchedQuestionIds = new Set(normalizedQuery ? filteredQuestions.filter((question) => [
         question.id,
         question.stem,
         question.material,
@@ -10545,7 +12379,7 @@ function createServer(options = {}) {
         ...(question.options || []).flatMap((option) => [option.key, option.text, `${option.key}. ${option.text}`]),
       ].filter(Boolean).join(" ").normalize("NFKC").toLocaleLowerCase("zh-CN").includes(normalizedQuery))
         .map((question) => question.id) : []);
-      const knowledgeNodeIds = knowledgeNodeId ? knowledgeStructureStore.descendants(bookId, knowledgeNodeId) : null;
+      const knowledgeNodeIds = knowledgeNodeId && bookId !== "all" ? knowledgeStructureStore.descendants(bookId, knowledgeNodeId) : null;
       const result = questionFamilyStore.list({
         bookId,
         status: url.searchParams.get("status") || "all",
@@ -10554,31 +12388,41 @@ function createServer(options = {}) {
         knowledgeNodeIds,
       });
       const questionMap = new Map(allBookQuestions.map((question) => [question.id, question]));
-      const currentStructure = knowledgeStructureStore.get(bookId);
-      const knowledgeNodeMap = new Map((currentStructure?.nodes || []).map((node) => [node.id, node]));
-      const fingerprintMap = new Map((currentStructure?.fingerprints || []).map((fingerprint) => [fingerprint.questionId, fingerprint]));
-      const membershipMap = questionFamilyStore.memberships(allBookQuestions.map((question) => question.id), { bookId, status: "all" });
+      const structures = new Map([...scopedBookIds].map(id => [id, knowledgeStructureStore.get(id)]));
+      const currentStructure = structures.get(bookId);
+      const fingerprintMap = new Map([...structures.values()].flatMap(structure => (structure?.fingerprints || []).map(fingerprint => [fingerprint.questionId, fingerprint])));
+      const membershipMap = questionFamilyStore.memberships(allBookQuestions.map((question) => question.id), { status: "all" });
       const membershipRevisions = questionFamilyStore.membershipRevisions(allBookQuestions.map((question) => question.id));
       const activeBookQuestions = allBookQuestions.filter((question) => question.status !== "offline"
         && !question.mergedIntoQuestionId
         && !question.merge?.targetQuestionId);
-      const catalogProjection = questionFamilyCatalogProjectionForBook(bookId);
+      const catalogProjection = { byQuestionId: Object.assign({}, ...[...scopedBookIds].map(id => questionFamilyCatalogProjectionForBook(id).byQuestionId)) };
+      const singleBookProjection = bookId !== "all" ? questionFamilyCatalogProjectionForBook(bookId) : catalogProjection;
       const confirmedTopicQuestionCount = activeBookQuestions
         .filter((question) => Boolean(catalogProjection.byQuestionId[question.id])).length;
       const catalogTreeSummary = buildQuestionFamilyCatalogTreeSummary({
-        projection: catalogProjection,
+        projection: singleBookProjection,
         knowledgeNodes: currentStructure?.nodes || [],
         activeQuestionIds: new Set(activeBookQuestions.map((question) => question.id)),
         anchorField: "sourceAnchorNodeIds",
       });
       const pendingGroupingQuestionCount = activeBookQuestions.length - confirmedTopicQuestionCount;
-      const familiesWithRelations = decorateFamiliesWithDynamicRelations(result.families);
+      const scopedFamilies = result.families.filter(family => scopedBookIds.has(family.bookId));
+      const scopeFamilies = questionFamilyStore.list({ bookId, status: "all" }).families.filter(family => scopedBookIds.has(family.bookId));
+      const scopeFamilySets = [...scopedBookIds].flatMap(id => questionFamilySetsForBook(id).sets);
+      const selectedFamilies = workspaceRequest
+        ? workspaceFamilySelection(scopedFamilies, filteredQuestions, { workspaceStatus, type, importBatchId })
+        : scopedFamilies;
+      const familiesWithRelations = decorateFamiliesWithDynamicRelations(selectedFamilies);
       const familyQuestion = (question) => {
         if (!question) return null;
+        if (question.bookId && !structures.has(question.bookId)) {
+          structures.set(question.bookId, knowledgeStructureStore.get(question.bookId));
+        }
         // The catalog request already resolved the book's knowledge structure
         // above. Reusing it here avoids cloning/parsing the full tree once per
         // family member (which made the editor workspace several seconds slow).
-        const decoratedQuestion = decorateQuestionKnowledgeFingerprint(question, currentStructure);
+        const decoratedQuestion = decorateQuestionKnowledgeFingerprint(question, structures.get(question.bookId) ?? null);
         return {
           id: decoratedQuestion.id,
           subjectId: decoratedQuestion.subjectId,
@@ -10603,6 +12447,7 @@ function createServer(options = {}) {
           updatedAt: Number(decoratedQuestion.updatedAt) || Number(decoratedQuestion.createdAt) || 0,
           updatedBy: decoratedQuestion.updatedBy,
           library: decoratedQuestion.library,
+          importBatchId: decoratedQuestion.importBatchId,
           sourceLabel: decoratedQuestion.sourceLabel,
           sourcePage: decoratedQuestion.sourcePage,
           mergedIntoQuestionId: decoratedQuestion.mergedIntoQuestionId || "",
@@ -10627,6 +12472,9 @@ function createServer(options = {}) {
       };
       const ungroupedQuestions = (url.searchParams.get("status") || "all") === "all"
         ? allUngroupedQuestions.filter((question) => {
+          if (type !== "all" && question.type !== type) return false;
+          if (importBatchId !== "all" && question.importBatchId !== importBatchId) return false;
+          if (!matchesWorkspaceStatus(question, workspaceStatus, [])) return false;
           if (normalizedQuery && !matchedQuestionIds.has(question.id)) return false;
           return inSelectedKnowledgeScope(question);
         }).sort((left, right) => Number(right.updatedAt) - Number(left.updatedAt)).map(familyQuestion)
@@ -10635,6 +12483,12 @@ function createServer(options = {}) {
         success: true,
         summary: {
           ...result.summary,
+          total: scopeFamilies.length,
+          pending: scopeFamilies.filter(family => family.status === "pending_review").length,
+          confirmed: scopeFamilies.filter(family => family.status === "confirmed").length,
+          rejected: scopeFamilies.filter(family => family.status === "rejected").length,
+          familySetCount: scopeFamilySets.length,
+          pendingMemberCount: scopeFamilies.reduce((total, family) => total + family.members.filter(member => member.reviewStatus === "pending_fit").length, 0),
           activeQuestionCount: activeBookQuestions.length,
           confirmedTopicQuestionCount,
           pendingGroupingQuestionCount,
@@ -10645,8 +12499,10 @@ function createServer(options = {}) {
           ...catalogTreeSummary,
         },
         ungroupedQuestions,
-        familySets: questionFamilySetsForBook(bookId).sets,
+        familySets: workspaceFamilySets(scopeFamilySets, selectedFamilies,
+          workspaceRequest && (workspaceStatus !== "all" || type !== "all" || importBatchId !== "all")),
         families: familiesWithRelations.map((family) => {
+          const knowledgeNodeMap = new Map((structures.get(family.bookId)?.nodes || []).map(node => [node.id, node]));
           const members = family.members.map((member) => {
             const question = questionMap.get(member.questionId);
             const fingerprint = fingerprintMap.get(member.questionId) || null;
@@ -10873,28 +12729,7 @@ function createServer(options = {}) {
       try {
         const payload = await readJsonBody(request).catch(() => ({}));
         const bookId = String(payload.bookId || "modern-chinese-7-1");
-        const questions = questionStore.list({ library: "official", status: "all", bookId }).questions
-          .filter((question) => question.status !== "offline");
-        let structure = knowledgeStructureStore.get(bookId);
-        if (!structure) {
-          const textbook = textbookCatalogStore.get(bookId);
-          const knowledge = textbookKnowledgeStore.get(bookId, { includeContent: true });
-          structure = knowledgeStructureStore.generate({
-            bookId,
-            catalogNodes: textbook?.confirmed?.nodes || [],
-            outlineNodes: textbookKnowledgeStore.outline(bookId),
-            chunks: knowledge.chunks || [],
-            questions,
-          });
-        }
-        const fingerprintMap = new Map(structure.fingerprints.map((item) => [item.questionId, item]));
-        const nodeOrder = new Map(structure.nodes.map((node, index) => [node.id, index + 1]));
-        const result = questionFamilyStore.generate(questions, bookId, {
-          fingerprintMap,
-          nodeOrder,
-          archiveReason: "knowledge_structure_regenerated",
-          resetReviewFamilyIds: payload.resetFamilyIds,
-        });
+        const result = regenerateQuestionFamiliesForBook(bookId, { resetFamilyIds: payload.resetFamilyIds });
         logOperation({
           action: "question_family.generate",
           category: "question",
@@ -11535,7 +13370,7 @@ function createServer(options = {}) {
           exam: { title: "试卷名称", description: "说明", year: new Date().getFullYear(), durationMinutes: 120, totalQuestionCount: "卷面声明的总题数" },
           sections: [{
             title: "题型分组名称",
-            type: "single_choice|multiple_choice|true_false|fill_blank|punctuation|classical_word_explanation|translation|short_answer|term_definition|material_analysis|appreciation|essay",
+            type: "single_choice|multiple_choice|true_false|fill_blank|punctuation|classical_word_explanation|translation|short_answer|term_definition|material_analysis|essay",
             questions: [{
               number: "大题号",
               subNumber: "材料题小问号，没有则留空",
@@ -11546,8 +13381,7 @@ function createServer(options = {}) {
               subjectId: "必须从可用目录选择",
               bookId: "必须从该科目教材中选择",
               stem: "独立题干或该材料下的一道小问",
-              responseMode: "text|annotation，只有需要在原句上标记时使用 annotation",
-              annotationText: "需要用户添加下划线、波浪线、着重号或下标点的原句",
+              annotationText: "仅加点字词解释题：被解释的那个字词本身，例如“客”；其他题型留空",
               options: [{ key: "A", text: "选项" }],
               correctAnswer: [],
               referenceAnswer: "",
@@ -11589,7 +13423,7 @@ function createServer(options = {}) {
                       projectName: catalog.project.name,
                       fileName: payload.fileName,
                       scope: "五科九本综合试卷，每道题独立归类",
-                      extractionInstruction: `当前只输出题号首次出现在第 ${chunk.coreStart + 1}-${chunk.coreEnd} 个页面或文档片段的题目；相邻内容仅用于补全跨页题干、选项或答案。共享材料与每个小问必须分开，同一材料的小问使用相同 materialGroupId，并分别输出得分点和分值；如果某一小问无需材料，设置 usesSharedMaterial=false。原卷材料中已有下划线、双下划线、波浪线或加点时，必须按该小问实际引用范围写入 materialMarks，type 分别使用 underline、double_underline、wave、dot，text 必须逐字取自 material。materialMarks 表示原卷已有标记；responseMode 和 annotationText 只表示用户需要在原句上作答，二者不得混用。现代汉语题若要求用户在原句添加下划线、波浪线、着重号、下标点或标点，设置 responseMode=annotation 并把待作答原句放入 annotationText。加点字词解释题不得归入古文翻译，题干必须写成“原文\\n加点字词：”，例如“孟尝君客我！\\n客：”；若着重号无法可靠识别，保留原文并在 warnings 标注“加点字词待核对”，不得猜测。试卷文件未明确提供答案时，correctAnswer、referenceAnswer 和 scoringPoints 必须留空并标记 answerSource=missing，禁止根据常识补答案。双选题若卷面声明少选部分得分，必须输出 scoringPolicy。${retryInstruction}`,
+                      extractionInstruction: `当前只输出题号首次出现在第 ${chunk.coreStart + 1}-${chunk.coreEnd} 个页面或文档片段的题目；相邻内容仅用于补全跨页题干、选项或答案。共享材料与每个小问必须分开，同一材料的小问使用相同 materialGroupId，并分别输出得分点和分值；如果某一小问无需材料，设置 usesSharedMaterial=false。原卷材料中已有下划线、双下划线、波浪线或加点时，必须按该小问实际引用范围写入 materialMarks，type 分别使用 underline、double_underline、wave、dot，text 必须逐字取自 material。materialMarks 表示原卷材料上已有的标记。加点字词解释题不得归入古文翻译，题干必须写成“原文\\n加点字词：”，例如“孟尝君客我！\\n客：”，并把被解释的字词单独写入 annotationText；若着重号无法可靠识别，保留原文并在 warnings 标注“加点字词待核对”，不得猜测。试卷文件未明确提供答案时，correctAnswer、referenceAnswer 和 scoringPoints 必须留空并标记 answerSource=missing，禁止根据常识补答案。双选题若卷面声明少选部分得分，必须输出 scoringPolicy。${retryInstruction}`,
                     },
                     catalogContext,
                     pageRange: `核心页 ${chunk.coreStart + 1}-${chunk.coreEnd}；上下文页 ${chunk.contextStart + 1}-${chunk.contextEnd}`,
@@ -11952,6 +13786,114 @@ function createServer(options = {}) {
       return;
     }
 
+    // ---- 「AI 补充答案 / 得分点」场景的提示词契约与输出解析（唯一定义处）----
+    // 两条路由共用：试卷导入草稿（/api/admin/exams/imports/:id/questions/:localId/supplement-answer）
+    // 与题库正式题（/api/admin/questions/:id/ai-supplement-answer，只返回建议、不写库）。
+    // 依据 AGENTS §5「一处维护、其余引用」：模型契约与解析不得在两个路由里各写一份。
+    const answerSupplementPromptSpec = ({ question, effectiveQuestion, subject, book, catalogNodes, evidenceChunks, literalEvidence, contextResolution, supplementAnswers = true, supplementMetadata = false }) => {
+      const questionMaterialMarks = materialMarksForQuestion(question);
+      const materialWithMarks = formatMaterialWithMarks(question.material, questionMaterialMarks);
+      const requiredOutput = {
+        correctAnswer: supplementAnswers && (question.type === "single_choice" || question.type === "multiple_choice") ? ["A"] : [],
+        referenceAnswer: supplementAnswers
+          ? (question.type === "single_choice"
+            ? "完整候选解析：先给出答案，再说明正确项的具体依据并排除最易混淆项；不得只报答案；用 **短语** 标记重点"
+            : (question.type === "multiple_choice"
+              ? "完整候选解析：先给出答案，再逐项说明每个选项为何应选或不选并指出易错原因；不得只报答案；用 **短语** 标记重点"
+              : "完整候选参考答案；用 **短语** 标记核心概念、关键判断、得分点关键词和结论"))
+          : "",
+        scoringPoints: supplementAnswers ? [{
+          description: "得分点；选择题也必须填写一条简要判分依据",
+          score: question.maxScore,
+          textbookPage: "得分点对应的教材印刷页码或页码范围，例如 3-5；无法可靠确定则留空",
+          pageBasis: "confirmed_catalog | textbook_text | 空字符串",
+          sourceNote: "教材名 · 对应目录标题；无法可靠确定则留空",
+        }] : [],
+        chapter: supplementMetadata ? "从已确认目录选择的完整章节路径，无法确定则留空" : "",
+        knowledgePoints: supplementMetadata ? ["知识点"] : [],
+        uncertainty: "不确定项，没有则留空",
+      };
+      const variables = {
+        question: {
+          type: question.type,
+          material: question.material,
+          materialMarks: questionMaterialMarks,
+          materialWithMarks,
+          stem: question.stem,
+          options: question.options,
+          maxScore: question.maxScore,
+          sectionTitle: question.sectionTitle,
+          currentChapter: effectiveQuestion.chapter,
+          currentKnowledgePoints: effectiveQuestion.knowledgePoints,
+          sourcePosition: question.sourcePage,
+          pageFieldInstruction: "sourcePosition 是题目所在的试卷来源页或 Word 文档片段，只读且不得写入得分点教材页码。scoringPoints[].textbookPage 才是教材印刷页码。",
+          requestedFields: { answers: supplementAnswers, metadata: supplementMetadata },
+          literalEvidenceInstruction: "literalEvidence 由系统对共享材料逐字检索生成。凡题干要求分析文中若干处同一字词，必须按 occurrences 逐项作答；不得跳过任何一处，也不得在 actualCount 已满足 expectedCount 时声称原文缺失。",
+          materialMarkInstruction: "materialMarks 是本小题在原卷中实际对应的文字标记。回答下划线、双下划线、波浪线或加点题时，只能分析 materialWithMarks 中同名的【标记开始】与【标记结束】之间的原文，不得自行改选材料中的其他句段。",
+          literalEvidence,
+        },
+        catalogContext: {
+          subject: subject && subject.name,
+          book: book && `${book.title}${book.volume ? ` · ${book.volume}` : ""}`,
+          chapter: effectiveQuestion.chapter,
+          knowledgePoints: effectiveQuestion.knowledgePoints,
+          confirmedCatalog: catalogNodes.filter((node) => Number(node.level) <= 4).slice(0, 240).map((node) => ({ level: node.level, title: node.title, startPage: node.startPage, endPage: node.endPage, knowledgePoints: node.knowledgePoints || [] })),
+        },
+        textbookResolution: {
+          selectedBookId: question.bookId,
+          resolvedBookId: effectiveQuestion.bookId,
+          changed: effectiveQuestion.bookId !== question.bookId,
+          exactWorkTitles: contextResolution.workTitles,
+          chapter: contextResolution.chapterNode && contextResolution.chapterNode.path || "",
+          instruction: "具体作品的直接教材论述优先于作者姓名命中。章节、知识点、得分点页码和来源必须属于 resolvedBookId；正文证据不足时页码留空。",
+        },
+        textbookEvidence: formatTextbookEvidence(evidenceChunks, 16000),
+        requiredOutput,
+      };
+      return { requiredOutput, variables };
+    };
+
+    // 模型输出的正确答案：只认 A–L 选项字母，单选截断成一个。
+    const parseAnswerSupplementCorrectAnswer = (raw, type) => {
+      const parsed = [...new Set((Array.isArray(raw.correctAnswer) ? raw.correctAnswer : String(raw.correctAnswer || "").split(/[，,、\s]/))
+        .flatMap((item) => String(item).normalize("NFKC").toUpperCase().match(/[A-L]/g) || []))];
+      return type === "single_choice" ? parsed.slice(0, 1) : parsed;
+    };
+
+    const answerSupplementChoiceDescription = (keys, options) => (keys.length
+      ? `选择 ${keys.map((key) => {
+        const option = (options || []).find((item) => item.key === key);
+        return option && option.text ? `${key}（${option.text}）` : key;
+      }).join("、")}`
+      : "");
+
+    // 得分点归一：页码与来源只认检索到的教材直接证据（证据不足一律留空），选择题缺描述时用「选择 X（…）」兜底。
+    const normalizeAnswerSupplementScoringPoints = ({ rawPoints, isChoice, choiceAnswerDescription, textbookEvidencePage, textbookSourceNote }) =>
+      (Array.isArray(rawPoints) ? rawPoints : []).map((point) => {
+        const rawDescription = String(point && (point.description || point.point) || "").trim();
+        const description = isChoice && (!rawDescription || /^(?:得分点|判断依据|判分依据|选择正确选项)[。；：:]?$/.test(rawDescription))
+          ? choiceAnswerDescription : rawDescription;
+        return {
+          description,
+          score: Number(point && (point.score ?? point.points)),
+          textbookPage: textbookEvidencePage,
+          pageBasis: textbookEvidencePage ? "textbook_text" : "",
+          sourceNote: textbookSourceNote,
+        };
+      }).filter((point) => point.description && Number.isFinite(point.score) && point.score > 0);
+
+    // 得分点教材页码/来源的作用域：优先用目录锚点直接命中的正文证据，其次用同一目录路径下分数达标的片段。
+    const answerSupplementEvidenceScope = ({ evidenceChunks, matchedCatalogNode, contextResolution }) => {
+      const scopedEvidence = matchedCatalogNode
+        ? evidenceChunks.filter((chunk) => String(chunk.catalogPath || "") === matchedCatalogNode.path
+          || String(chunk.catalogPath || "").startsWith(`${matchedCatalogNode.path} > `))
+        : [];
+      const directEvidence = contextResolution.anchors.length
+        ? contextResolution.directEvidenceChunks
+        : scopedEvidence.filter((chunk) => Number(chunk.score) >= 0.15);
+      return { directEvidence, hasDirectTextbookEvidence: directEvidence.length > 0 };
+    };
+
     const adminExamAnswerSupplementMatch = url.pathname.match(/^\/api\/admin\/exams\/imports\/([^/]+)\/questions\/([^/]+)\/supplement-answer$/);
     if (request.method === "POST" && adminExamAnswerSupplementMatch) {
       const importId = decodeURIComponent(adminExamAnswerSupplementMatch[1]);
@@ -12005,69 +13947,23 @@ function createServer(options = {}) {
           ? contextResolution.evidenceChunks
           : retrieveQuestionEvidence(effectiveQuestion, "生成参考答案、得分点和知识点", 8);
         const literalEvidence = extractQuestionLiteralEvidence(question.stem, question.material);
-        const questionMaterialMarks = materialMarksForQuestion(question);
-        const materialWithMarks = formatMaterialWithMarks(question.material, questionMaterialMarks);
-        const requiredOutput = {
-          correctAnswer: supplementAnswers && (question.type === "single_choice" || question.type === "multiple_choice") ? ["A"] : [],
-          referenceAnswer: supplementAnswers
-            ? (question.type === "single_choice"
-              ? "完整候选解析：先给出答案，再说明正确项的具体依据并排除最易混淆项；不得只报答案；用 **短语** 标记重点"
-              : (question.type === "multiple_choice"
-                ? "完整候选解析：先给出答案，再逐项说明每个选项为何应选或不选并指出易错原因；不得只报答案；用 **短语** 标记重点"
-                : "完整候选参考答案；用 **短语** 标记核心概念、关键判断、得分点关键词和结论"))
-            : "",
-          scoringPoints: supplementAnswers ? [{
-            description: "得分点；选择题也必须填写一条简要判分依据",
-            score: question.maxScore,
-            textbookPage: "得分点对应的教材印刷页码或页码范围，例如 3-5；无法可靠确定则留空",
-            pageBasis: "confirmed_catalog | textbook_text | 空字符串",
-            sourceNote: "教材名 · 对应目录标题；无法可靠确定则留空",
-          }] : [],
-          chapter: supplementMetadata ? "从已确认目录选择的完整章节路径，无法确定则留空" : "",
-          knowledgePoints: supplementMetadata ? ["知识点"] : [],
-          uncertainty: "不确定项，没有则留空",
-        };
+        const { variables: answerSupplementVariables } = answerSupplementPromptSpec({
+          question,
+          effectiveQuestion,
+          subject,
+          book,
+          catalogNodes,
+          evidenceChunks,
+          literalEvidence,
+          contextResolution,
+          supplementAnswers,
+          supplementMetadata,
+        });
         const completionResult = await completePromptWithTransientRetry(
           { ...provider, timeoutMs: Math.max(Number(provider.timeoutMs) || 30000, 120000) },
           route,
           config.prompts.exam_answer_supplement,
-          {
-            question: {
-              type: question.type,
-              material: question.material,
-              materialMarks: questionMaterialMarks,
-              materialWithMarks,
-              stem: question.stem,
-              options: question.options,
-              maxScore: question.maxScore,
-              sectionTitle: question.sectionTitle,
-              currentChapter: effectiveQuestion.chapter,
-              currentKnowledgePoints: effectiveQuestion.knowledgePoints,
-              sourcePosition: question.sourcePage,
-              pageFieldInstruction: "sourcePosition 是题目所在的试卷来源页或 Word 文档片段，只读且不得写入得分点教材页码。scoringPoints[].textbookPage 才是教材印刷页码。",
-              requestedFields: { answers: supplementAnswers, metadata: supplementMetadata },
-              literalEvidenceInstruction: "literalEvidence 由系统对共享材料逐字检索生成。凡题干要求分析文中若干处同一字词，必须按 occurrences 逐项作答；不得跳过任何一处，也不得在 actualCount 已满足 expectedCount 时声称原文缺失。",
-              materialMarkInstruction: "materialMarks 是本小题在原卷中实际对应的文字标记。回答下划线、双下划线、波浪线或加点题时，只能分析 materialWithMarks 中同名的【标记开始】与【标记结束】之间的原文，不得自行改选材料中的其他句段。",
-              literalEvidence,
-            },
-            catalogContext: {
-              subject: subject && subject.name,
-              book: book && `${book.title}${book.volume ? ` · ${book.volume}` : ""}`,
-              chapter: effectiveQuestion.chapter,
-              knowledgePoints: effectiveQuestion.knowledgePoints,
-              confirmedCatalog: catalogNodes.filter((node) => Number(node.level) <= 4).slice(0, 240).map((node) => ({ level: node.level, title: node.title, startPage: node.startPage, endPage: node.endPage, knowledgePoints: node.knowledgePoints || [] })),
-            },
-            textbookResolution: {
-              selectedBookId: question.bookId,
-              resolvedBookId: effectiveQuestion.bookId,
-              changed: effectiveQuestion.bookId !== question.bookId,
-              exactWorkTitles: contextResolution.workTitles,
-              chapter: contextResolution.chapterNode && contextResolution.chapterNode.path || "",
-              instruction: "具体作品的直接教材论述优先于作者姓名命中。章节、知识点、得分点页码和来源必须属于 resolvedBookId；正文证据不足时页码留空。",
-            },
-            textbookEvidence: formatTextbookEvidence(evidenceChunks, 16000),
-            requiredOutput,
-          },
+          answerSupplementVariables,
           ({ attempt, error }) => aiTaskStore.update(task.id, {
             inputSummary: {
               retryCount: attempt,
@@ -12086,9 +13982,7 @@ function createServer(options = {}) {
         });
         const raw = parseJsonContent(completion.content);
         const isChoice = question.type === "single_choice" || question.type === "multiple_choice";
-        const parsedCorrectAnswer = [...new Set((Array.isArray(raw.correctAnswer) ? raw.correctAnswer : String(raw.correctAnswer || "").split(/[，,、\s]/))
-          .flatMap((item) => String(item).normalize("NFKC").toUpperCase().match(/[A-L]/g) || []))];
-        const correctAnswer = question.type === "single_choice" ? parsedCorrectAnswer.slice(0, 1) : parsedCorrectAnswer;
+        const correctAnswer = parseAnswerSupplementCorrectAnswer(raw, question.type);
         const referenceAnswer = String(raw.referenceAnswer || "").trim();
         if (supplementAnswers && answerContradictsLiteralEvidence(referenceAnswer, literalEvidence)) {
           throw new Error("provider_output_literal_evidence_conflict");
@@ -12096,10 +13990,7 @@ function createServer(options = {}) {
         const effectiveCorrectAnswer = supplementAnswers && correctAnswer.length
           ? [...new Set(correctAnswer)] : (question.correctAnswer || []);
         const choiceAnswerDescription = isChoice && effectiveCorrectAnswer.length
-          ? `选择 ${effectiveCorrectAnswer.map((key) => {
-            const option = (question.options || []).find((item) => item.key === key);
-            return option && option.text ? `${key}（${option.text}）` : key;
-          }).join("、")}`
+          ? answerSupplementChoiceDescription(effectiveCorrectAnswer, question.options)
           : "";
         const modelScoringPoints = Array.isArray(raw.scoringPoints) ? raw.scoringPoints : [];
         const rawScoringPoints = supplementAnswers && isChoice && choiceAnswerDescription
@@ -12116,30 +14007,18 @@ function createServer(options = {}) {
           ? contextResolution.chapterNode : null;
         const matchedCatalogNode = generatedCatalogNode || resolvedCatalogNode || existingCatalogNode;
         const chapter = matchedCatalogNode && matchedCatalogNode.path || "";
-        const scopedEvidence = matchedCatalogNode
-          ? evidenceChunks.filter((chunk) => String(chunk.catalogPath || "") === matchedCatalogNode.path
-            || String(chunk.catalogPath || "").startsWith(`${matchedCatalogNode.path} > `))
-          : [];
-        const directEvidence = contextResolution.anchors.length
-          ? contextResolution.directEvidenceChunks
-          : scopedEvidence.filter((chunk) => Number(chunk.score) >= 0.15);
-        const hasDirectTextbookEvidence = directEvidence.length > 0;
+        const { directEvidence, hasDirectTextbookEvidence } = answerSupplementEvidenceScope({ evidenceChunks, matchedCatalogNode, contextResolution });
         const textbookEvidencePage = hasDirectTextbookEvidence ? evidencePageRange(directEvidence) : "";
         const textbookSourceNote = hasDirectTextbookEvidence && matchedCatalogNode
           ? [book && `${book.title}${book.volume ? ` · ${book.volume}` : ""}`, matchedCatalogNode.path].filter(Boolean).join(" · ")
           : "";
-        const scoringPoints = rawScoringPoints.map((point) => {
-          const rawDescription = String(point && (point.description || point.point) || "").trim();
-          const description = isChoice && (!rawDescription || /^(?:得分点|判断依据|判分依据|选择正确选项)[。；：:]?$/.test(rawDescription))
-            ? choiceAnswerDescription : rawDescription;
-          return {
-            description,
-            score: Number(point && (point.score ?? point.points)),
-            textbookPage: textbookEvidencePage,
-            pageBasis: textbookEvidencePage ? "textbook_text" : "",
-            sourceNote: textbookSourceNote,
-          };
-        }).filter((point) => point.description && Number.isFinite(point.score) && point.score > 0);
+        const scoringPoints = normalizeAnswerSupplementScoringPoints({
+          rawPoints: rawScoringPoints,
+          isChoice,
+          choiceAnswerDescription,
+          textbookEvidencePage,
+          textbookSourceNote,
+        });
         const scoreTotal = scoringPoints.reduce((total, point) => total + point.score, 0);
         const knowledgePoints = (Array.isArray(raw.knowledgePoints) ? raw.knowledgePoints : String(raw.knowledgePoints || "").split(/[，,；;\n]/))
           .map((item) => String(item).trim()).filter(Boolean).slice(0, 20);
@@ -12213,6 +14092,147 @@ function createServer(options = {}) {
           preview,
           model: completion.model,
           retryCount: completionResult.retryCount,
+        });
+      } catch (error) {
+        aiTaskStore.finish(task.id, { status: "failed", errorCode: error.message, failureStage: "exam_answer_supplement" });
+        sendJson(response, ["provider_output_format_error", "provider_output_literal_evidence_conflict"].includes(error.message) ? 422 : 502, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 「AI 补充答案 / 得分点」——题库正式题（查看/裁决 · 题目详情）。
+    // 2026-10-10 产品负责人确认三条：①只返回建议、**不写库**（人工核对后由「保存新版本」入库，符合手册 §3.4「AI 建议、人工裁决」）；
+    // ②前端只填空缺，已有内容不动；③客观题只补答案与解析，不写得分点（「结构化得分点」输入框本就只对主观题显示）。
+    // 场景与提示词契约复用上面的 answerSupplementPromptSpec（唯一定义处）。
+    const adminQuestionAnswerSupplementMatch = url.pathname.match(/^\/api\/admin\/questions\/([^/]+)\/ai-supplement-answer$/);
+    if (request.method === "POST" && adminQuestionAnswerSupplementMatch) {
+      const supplementQuestionId = decodeURIComponent(adminQuestionAnswerSupplementMatch[1]);
+      const config = aiConfigStore.load();
+      const configuredRoute = config.routes.exam_answer_supplement;
+      const fallbackRoute = config.routes.exam_paper_extraction;
+      const route = configuredRoute && configuredRoute.mode === "provider" ? configuredRoute : fallbackRoute;
+      const provider = route && route.mode === "provider"
+        ? config.providers.find((item) => item.id === route.providerId && item.enabled)
+        : null;
+      const question = questionStore.get(supplementQuestionId);
+      if (!question) {
+        sendJson(response, 404, { success: false, error: "question_not_found" });
+        return;
+      }
+      if (!provider) {
+        sendJson(response, 503, { success: false, error: "answer_supplement_route_unavailable" });
+        return;
+      }
+      const supplementAnswers = true;
+      const supplementMetadata = false;
+      const isChoice = question.type === "single_choice" || question.type === "multiple_choice";
+      const contextResolution = resolveTextbookContext(question);
+      const resolvedBook = contextResolution.book
+        && (!contextResolution.changed || contextResolution.highConfidence)
+        ? contextResolution.book
+        : null;
+      const effectiveQuestion = resolvedBook ? {
+        ...question,
+        subjectId: resolvedBook.subjectId,
+        bookId: resolvedBook.id,
+        chapter: contextResolution.chapterNode && contextResolution.chapterNode.path || question.chapter,
+      } : question;
+      const task = aiTaskStore.start(aiTaskMetadata(config, "exam_answer_supplement", {}, {
+        providerId: provider.id,
+        providerName: provider.name,
+        protocol: provider.protocol,
+        model: route.model,
+        mode: "provider",
+        inputSummary: { questionId: question.id, questionVersion: question.version, type: question.type, maxScore: question.maxScore, writesQuestion: false },
+      }));
+      try {
+        const catalog = questionStore.catalog();
+        const subject = catalog.subjects.find((item) => item.id === effectiveQuestion.subjectId);
+        const book = catalog.books.find((item) => item.id === effectiveQuestion.bookId);
+        const textbook = book && textbookCatalogStore.get(book.id);
+        const catalogNodes = catalogNodesWithPaths(textbook && textbook.confirmed && textbook.confirmed.nodes || []);
+        const evidenceChunks = contextResolution.evidenceChunks.length
+          ? contextResolution.evidenceChunks
+          : retrieveQuestionEvidence(effectiveQuestion, "生成参考答案、得分点和知识点", 8);
+        const literalEvidence = extractQuestionLiteralEvidence(question.stem, question.material);
+        const { variables } = answerSupplementPromptSpec({
+          question,
+          effectiveQuestion,
+          subject,
+          book,
+          catalogNodes,
+          evidenceChunks,
+          literalEvidence,
+          contextResolution,
+          supplementAnswers,
+          supplementMetadata,
+        });
+        const completionResult = await completePromptWithTransientRetry(
+          { ...provider, timeoutMs: Math.max(Number(provider.timeoutMs) || 30000, 120000) },
+          route,
+          config.prompts.exam_answer_supplement,
+          variables,
+          ({ attempt, error }) => aiTaskStore.update(task.id, {
+            inputSummary: {
+              retryCount: attempt,
+              retryingModel: route.model,
+              firstFailureReason: String(error.message || error).slice(0, 300),
+            },
+          }),
+        );
+        const { completion } = completionResult;
+        const raw = parseJsonContent(completion.content);
+        const correctAnswer = parseAnswerSupplementCorrectAnswer(raw, question.type);
+        const referenceAnswer = String(raw.referenceAnswer || "").trim();
+        if (answerContradictsLiteralEvidence(referenceAnswer, literalEvidence)) {
+          throw new Error("provider_output_literal_evidence_conflict");
+        }
+        const matchedCatalogNode = catalogNodeForChapter(effectiveQuestion.chapter, catalogNodes)
+          || (contextResolution.book && contextResolution.book.id === effectiveQuestion.bookId ? contextResolution.chapterNode : null);
+        const { directEvidence, hasDirectTextbookEvidence } = answerSupplementEvidenceScope({ evidenceChunks, matchedCatalogNode, contextResolution });
+        const textbookEvidencePage = hasDirectTextbookEvidence ? evidencePageRange(directEvidence) : "";
+        const textbookSourceNote = hasDirectTextbookEvidence && matchedCatalogNode
+          ? [book && `${book.title}${book.volume ? ` · ${book.volume}` : ""}`, matchedCatalogNode.path].filter(Boolean).join(" · ")
+          : "";
+        // 客观题不产出得分点（产品负责人 2026-10-10 ③）：该字段只对主观题可见、客观题按题型判分。
+        const scoringPoints = isChoice ? [] : normalizeAnswerSupplementScoringPoints({
+          rawPoints: raw.scoringPoints,
+          isChoice: false,
+          choiceAnswerDescription: "",
+          textbookEvidencePage,
+          textbookSourceNote,
+        });
+        const scoreTotal = scoringPoints.reduce((total, point) => total + point.score, 0);
+        const answerInvalid = !referenceAnswer || (isChoice && !correctAnswer.length);
+        const scoringInvalid = !isChoice
+          && (!scoringPoints.length || Math.abs(scoreTotal - Number(question.maxScore)) > 0.001);
+        if (answerInvalid || scoringInvalid) throw new Error("provider_output_format_error");
+        const uncertainty = String(raw.uncertainty || "").trim().slice(0, 300);
+        aiTaskStore.finish(task.id, { status: "succeeded", chargeable: false, usage: completion.usage, outputChars: completion.content.length });
+        logOperation({
+          action: "question.ai_answer_supplement",
+          category: "question",
+          targetType: "question",
+          targetId: question.id,
+          summary: `AI 补充答案与得分点（仅生成建议，未写库）：${String(question.stem || "").slice(0, 60)}`,
+          metadata: { questionVersion: question.version, model: completion.model, type: question.type, scoringPointCount: scoringPoints.length, wroteQuestion: false },
+        });
+        sendJson(response, 200, {
+          success: true,
+          supplement: {
+            questionId: question.id,
+            questionVersion: question.version,
+            model: completion.model,
+            retryCount: completionResult.retryCount,
+            // 客观题：correctAnswer 是"建议答案"；主观题：correctAnswer 为空数组、只有解析与得分点。
+            correctAnswer: isChoice ? correctAnswer : [],
+            referenceAnswer,
+            scoringPoints,
+            scoringPointStatus: isChoice ? "not_required" : (scoringPoints.length ? "complete" : "not_required"),
+            textbookEvidencePage,
+            hasDirectTextbookEvidence,
+            uncertainty,
+          },
         });
       } catch (error) {
         aiTaskStore.finish(task.id, { status: "failed", errorCode: error.message, failureStage: "exam_answer_supplement" });
@@ -12357,6 +14377,75 @@ function createServer(options = {}) {
         logOperation({ action: `announcement.${payload.action}`, category: "announcement", targetType: "announcement", targetId: announcement.id, summary: `更新公告状态：${announcement.title} · ${announcement.status}`, metadata: { status: announcement.status, startsAt: announcement.startsAt, endsAt: announcement.endsAt } });
         sendJson(response, 200, { success: true, announcement });
       } catch (error) { sendJson(response, error.message === "announcement_not_found" ? 404 : 422, { success: false, error: error.message }); }
+      return;
+    }
+
+    // 平台设置（2026-10-05）：后台维护 正文 / 版本号 / 生效日期 / 发布·下架。
+    // 草稿可反复改写（同版本号重存＝更新草稿）；已发布版本不可改写，也没有"改写已发布版本"的入口。
+    // 权限：登记在 SUPER_ADMIN_ONLY_ADMIN_PATHS（仅超级管理员），不为运营操作员开放。
+    if (request.method === "GET" && url.pathname === "/api/admin/platform-content") {
+      sendJson(response, 200, {
+        success: true,
+        documents: platformContentStore.summaries(),
+        definitions: platformContentStore.definitions(),
+      });
+      return;
+    }
+
+    const adminPlatformContentMatch = url.pathname.match(/^\/api\/admin\/platform-content\/([^/]+)$/);
+    if (request.method === "GET" && adminPlatformContentMatch) {
+      try {
+        const key = decodeURIComponent(adminPlatformContentMatch[1]);
+        const state = platformContentStore.documents();
+        const document = state.documents[key];
+        if (!document) {
+          sendJson(response, 404, { success: false, error: "platform_content_unknown_document" });
+          return;
+        }
+        sendJson(response, 200, { success: true, document, history: platformContentStore.history(key) });
+      } catch (error) { sendJson(response, 422, { success: false, error: error.message }); }
+      return;
+    }
+
+    const adminPlatformContentVersionMatch = url.pathname.match(/^\/api\/admin\/platform-content\/([^/]+)\/versions$/);
+    if (request.method === "POST" && adminPlatformContentVersionMatch) {
+      try {
+        const key = decodeURIComponent(adminPlatformContentVersionMatch[1]);
+        const payload = await readJsonBody(request, 512 * 1024);
+        const version = platformContentStore.saveVersion(key, payload, currentAdminDisplayName() || "超级管理员");
+        logOperation({ action: "platform-content.save_version", category: "platform-content", targetType: "platform-content", targetId: key, summary: `新增平台文本草稿：${key} · ${version.version}`, metadata: { version: version.version, effectiveDate: version.effectiveDate, bodyLength: version.body.length } });
+        sendJson(response, 201, { success: true, version: { version: version.version, status: version.status, effectiveDate: version.effectiveDate, note: version.note, createdAt: version.createdAt } });
+      } catch (error) {
+        const message = String(error && error.message || "platform_content_save_failed");
+        const notFound = message === "platform_content_unknown_document";
+        const clientError = ["platform_content_version_required", "platform_content_version_too_long", "platform_content_body_required", "platform_content_body_too_long", "platform_content_version_conflict", "platform_content_effective_date_invalid"].includes(message);
+        sendJson(response, notFound ? 404 : clientError ? 422 : message === "payload_too_large" ? 413 : 500, { success: false, error: message });
+      }
+      return;
+    }
+
+    const adminPlatformContentActionMatch = url.pathname.match(/^\/api\/admin\/platform-content\/([^/]+)\/(publish|unpublish)$/);
+    if (request.method === "POST" && adminPlatformContentActionMatch) {
+      try {
+        const key = decodeURIComponent(adminPlatformContentActionMatch[1]);
+        const action = adminPlatformContentActionMatch[2];
+        const actor = currentAdminDisplayName() || "超级管理员";
+        if (action === "publish") {
+          const payload = await readJsonBody(request).catch(() => ({}));
+          // 发布时可补填生效日期（草稿常常先存正文、后定生效日）；已发布版本的日期不会被改写。
+          const summary = platformContentStore.publish(key, String(payload.version || "").trim(), actor, { effectiveDate: payload.effectiveDate });
+          logOperation({ action: "platform-content.publish", category: "platform-content", targetType: "platform-content", targetId: key, summary: `发布平台文本：${summary.title} · ${summary.currentVersion}`, metadata: { version: summary.currentVersion, effectiveDate: summary.effectiveDate, versionCount: summary.versionCount } });
+          sendJson(response, 200, { success: true, document: summary });
+        } else {
+          const summary = platformContentStore.unpublish(key);
+          logOperation({ action: "platform-content.unpublish", category: "platform-content", targetType: "platform-content", targetId: key, summary: `下架平台文本：${summary.title}`, metadata: { versionCount: summary.versionCount } });
+          sendJson(response, 200, { success: true, document: summary });
+        }
+      } catch (error) {
+        const message = String(error && error.message || "platform_content_action_failed");
+        const notFound = ["platform_content_unknown_document", "platform_content_version_not_found"].includes(message);
+        sendJson(response, notFound ? 404 : 422, { success: false, error: message });
+      }
       return;
     }
 
@@ -12863,177 +14952,72 @@ function createServer(options = {}) {
       return;
     }
 
-    // 裁决台统一队列（《链路职责矩阵》第十三节，形态 B）。
-    // 本端点只做"一个入口看全 + 分流与追溯"：采纳 / 驳回 / 就地修正仍在各自的裁决界面完成。
-    // 合并规则写死：两边各取**全量** → 按 updatedAt 倒序 → 同一时间戳按 source、再按 id 稳定排序 → 最后分页。
-    // 禁止"各自分页再归并"，否则会出现"第 2 页比第 1 页新"。
-    if (request.method === "GET" && url.pathname === "/api/admin/adjudication/queue") {
-      const bookId = url.searchParams.get("bookId") || "all";
-      const sourceFilter = url.searchParams.get("source") || "all";
-      const statusFilter = url.searchParams.get("status") || "all";
-      const query = String(url.searchParams.get("query") || "").trim().toLowerCase();
-      const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get("pageSize")) || 20));
-      const requestedPage = Math.max(1, Number(url.searchParams.get("page")) || 1);
+    // DEC-105: old cached pages must not recreate the removed queue.
+    if (url.pathname === "/api/admin/adjudication/queue") {
+      sendJson(response, 410, { success: false, error: "adjudication_retired", message: "裁决台已删除，请在完善题目中处理建议；原审核记录保留。" });
+      return;
+    }
 
-      const questionById = new Map(questionStore.list({ library: "official", status: "all" }).questions
-        .map((question) => [question.id, question]));
-
-      // 来源标签与筛选项都由数据推导：将来第三条产线接入时这里只多一项，界面结构不变（设计第十三节第四节）。
-      const sourceLabels = {
-        [SUGGESTION_SOURCES.QUESTION_ENRICHMENT]: "题目完善",
-        [SUGGESTION_SOURCES.KNOWLEDGE_INSPECTION]: "AI 巡检",
+    // 归属判断的准确率（DEC-098：产品负责人 2026-09-24 同意"可以设置目标"）：
+    // 目标值只在 exam-project-registry.js 一处维护，这里连同实测计数一起下发——
+    // 「科目/教材建议被人工采纳的比例」是唯一能把这些 AI 判断变成可度量数字的口径。
+    if (request.method === "GET" && url.pathname === "/api/admin/question-enrichment/accuracy") {
+      const suggestions = questionEnrichmentStore.suggestions();
+      // 只统计"记录里能核对"的建议：建议生成时会把当时的科目/教材基线写进 `subjectIdFrom/bookIdFrom`，
+      // 有基线才知道这条建议当时算不算"改归属"。本轮之前生成的旧建议没有基线，单独报
+      // `unmeasured`——宁可说"这条量不了"，也不用题目当前值倒推、把数字算得好看。
+      const measurable = suggestions.filter((suggestion) => suggestion.subjectIdFrom || suggestion.bookIdFrom);
+      const levelOf = (key) => ({
+        suggested: measurable.filter((suggestion) => suggestion[`${key}Id`]
+          && suggestion[`${key}Id`] !== String(suggestion[`${key}IdFrom`] || "")).length,
+        accepted: measurable.filter((suggestion) => suggestion.appliedFields.includes(key)).length,
+        reverted: measurable.filter((suggestion) => suggestion.status === "reverted"
+          && suggestion.appliedFields.includes(key)).length,
+      });
+      const subject = levelOf("subject");
+      const textbook = levelOf("textbook");
+      const rate = (level) => {
+        const decided = level.accepted + level.reverted;
+        return decided ? Number((level.accepted / decided).toFixed(4)) : null;
       };
-      const sourceLabelOf = (value) => sourceLabels[value] || value;
-      const statusLabels = { recommended: "待处理", applied: "已采纳", rejected: "已驳回" };
-      const lifecycleOf = (value) => (["recommended", "applied", "rejected"].includes(value) ? value : "other");
-      const enrichmentFieldLabels = { chapter: "目录位置", knowledgePoints: "知识点", scoringPoints: "结构化得分点" };
-      const inspectionFieldLabels = {
-        primaryNodeId: "作答核心",
-        primaryNodeRole: "核心角色",
-        requiredNodeIds: "最小充分知识集",
-        problemKnowledgeRangeNodeIds: "问题知识范围",
-        knowledgeThemeRangeAnchorNodeId: "主题范围锚点",
-        familyMemberships: "题族归属",
-        createCandidateFamily: "新建候选题族",
-      };
-      // 巡检采纳是一条"整套指纹"裁决，所以未采纳时展示的就是这套字段
-      const INSPECTION_ADOPTED_FIELDS = [
-        "primaryNodeId",
-        "primaryNodeRole",
-        "requiredNodeIds",
-        "problemKnowledgeRangeNodeIds",
-        "knowledgeThemeRangeAnchorNodeId",
-      ];
-      const entries = [];
-
-      if (sourceFilter === "all" || sourceFilter === SUGGESTION_SOURCES.QUESTION_ENRICHMENT) {
-        questionEnrichmentStore.suggestions().forEach((suggestion) => {
-          const question = questionById.get(suggestion.questionId);
-          if (bookId !== "all" && question?.bookId !== bookId) return;
-          const status = lifecycleOf(suggestion.status);
-          const fieldKeys = [];
-          if (suggestion.chapterNodeId) fieldKeys.push("chapter");
-          if ((suggestion.knowledgePoints || []).length) fieldKeys.push("knowledgePoints");
-          if ((suggestion.scoringPoints || []).length) fieldKeys.push("scoringPoints");
-          entries.push({
-            id: suggestion.id,
-            source: suggestion.source,
-            sourceLabel: sourceLabelOf(suggestion.source),
-            questionId: suggestion.questionId,
-            questionStem: question?.stem || "",
-            bookId: question?.bookId || "",
-            status,
-            statusLabel: status === "other" ? String(suggestion.status || "其他") : statusLabels[status],
-            statusRaw: String(suggestion.status || ""),
-            targetType: "question",
-            fieldKeys,
-            fieldLabels: fieldKeys.map((key) => enrichmentFieldLabels[key] || key),
-            reviewedBy: "",
-            reviewedAt: Number(suggestion.appliedAt) || null,
-            updatedAt: Number(suggestion.updatedAt) || 0,
-            appliedFields: Array.isArray(suggestion.appliedFields) ? suggestion.appliedFields : [],
-            appliedVersion: Number(suggestion.appliedVersion) || 0,
-          });
-        });
-      }
-
-      if (sourceFilter === "all" || sourceFilter === SUGGESTION_SOURCES.KNOWLEDGE_INSPECTION) {
-        knowledgeClassificationStore.allResults().forEach((result) => {
-          if (bookId !== "all" && result.bookId !== bookId) return;
-          const question = questionById.get(result.questionId);
-          const status = lifecycleOf(result.reviewStatus);
-          const appliedFields = Array.isArray(result.appliedFields) ? result.appliedFields : [];
-          const fieldKeys = appliedFields.length ? appliedFields : INSPECTION_ADOPTED_FIELDS;
-          entries.push({
-            id: result.id,
-            source: result.source,
-            sourceLabel: sourceLabelOf(result.source),
-            questionId: result.questionId,
-            questionStem: question?.stem || "",
-            bookId: result.bookId,
-            status,
-            statusLabel: status === "other" ? String(result.reviewStatus || "其他") : statusLabels[status],
-            statusRaw: String(result.reviewStatus || ""),
-            targetType: "fingerprint",
-            fieldKeys,
-            fieldLabels: fieldKeys.map((key) => inspectionFieldLabels[key] || key),
-            reviewedBy: result.reviewedBy || "",
-            reviewedAt: Number(result.reviewedAt) || null,
-            updatedAt: Number(result.updatedAt) || 0,
-            appliedFields,
-            appliedVersion: Number(result.appliedVersion) || 0,
-          });
-        });
-      }
-
-      // 同一道题在同一条产线上只保留"最新一条"：更早的巡检结果属于历史记录，
-      // 不该混进待裁决队列（与题目完善页 / 巡检页的"最新建议"口径一致）；看历史请去各自产线页。
-      const latestBySourceQuestion = new Map();
-      entries.forEach((entry) => {
-        const key = `${entry.source}\u0000${entry.questionId}`;
-        const current = latestBySourceQuestion.get(key);
-        if (!current || entry.updatedAt > current.updatedAt) latestBySourceQuestion.set(key, entry);
-      });
-      const deduped = [...latestBySourceQuestion.values()];
-
-      deduped.sort((left, right) => {
-        if (right.updatedAt !== left.updatedAt) return right.updatedAt - left.updatedAt;
-        if (left.source !== right.source) return left.source < right.source ? -1 : 1;
-        return left.id < right.id ? -1 : (left.id > right.id ? 1 : 0);
-      });
-
-      const sourceOptions = [...deduped.reduce((map, entry) => {
-        map.set(entry.source, (map.get(entry.source) || 0) + 1);
-        return map;
-      }, new Map()).entries()]
-        .map(([value, count]) => ({ value, label: sourceLabelOf(value), count }))
-        .sort((left, right) => (left.value < right.value ? -1 : 1));
-
-      const filtered = deduped.filter((entry) => {
-        if (statusFilter !== "all" && entry.status !== statusFilter) return false;
-        if (query && ![entry.questionStem, entry.questionId, entry.id, entry.sourceLabel]
-          .filter(Boolean).join(" ").toLowerCase().includes(query)) return false;
-        return true;
-      });
-
-      const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-      const page = Math.min(pageCount, requestedPage);
       sendJson(response, 200, {
         success: true,
-        bookId,
-        page,
-        pageSize,
-        pageCount,
-        total: filtered.length,
-        summary: {
-          total: filtered.length,
-          recommended: filtered.filter((entry) => entry.status === "recommended").length,
-          applied: filtered.filter((entry) => entry.status === "applied").length,
-          rejected: filtered.filter((entry) => entry.status === "rejected").length,
-          other: filtered.filter((entry) => entry.status === "other").length,
-          bySource: sourceOptions.reduce((map, option) => { map[option.value] = option.count; return map; }, {}),
+        projectId: DEFAULT_EXAM_PROJECT_ID,
+        // 项目一级的"候选数"今天恒为 1；多项目形态下这里会变成真正的第一级判断统计。
+        projectCount: listExamProjects().length,
+        levels: { subject, textbook },
+        rates: { subject: rate(subject), textbook: rate(textbook) },
+        targets: { ...CLASSIFICATION_ACCURACY_TARGETS },
+        // 量不了的旧建议如实报出：本轮之前生成的建议没有归属基线。
+        unmeasured: suggestions.length - measurable.length,
+        suggestions: {
+          total: suggestions.length,
+          recommended: suggestions.filter((suggestion) => suggestion.status === "recommended").length,
+          applied: suggestions.filter((suggestion) => suggestion.status === "applied").length,
+          reverted: suggestions.filter((suggestion) => suggestion.status === "reverted").length,
+          rejected: suggestions.filter((suggestion) => suggestion.status === "rejected").length,
+          failed: suggestions.filter((suggestion) => suggestion.status === "failed").length,
+          stale: suggestions.filter((suggestion) => suggestion.status === "stale").length,
         },
-        sourceOptions,
-        statusOptions: [
-          { value: "all", label: "全部状态" },
-          { value: "recommended", label: "待处理" },
-          { value: "applied", label: "已采纳" },
-          { value: "rejected", label: "已驳回" },
-        ],
-        items: filtered.slice((page - 1) * pageSize, page * pageSize),
+        note: "rate = 该级的采纳数 /（采纳数 + 撤回数）；只统计记录了归属基线的建议，旧建议计入 unmeasured；拒绝按整条建议计（suggestions.rejected），目标值定义见 exam-project-registry.js",
       });
       return;
     }
 
     if (request.method === "GET" && url.pathname === "/api/admin/question-enrichment") {
       const filters = {
-        bookId: url.searchParams.get("bookId") || "all",
-        subjectId: url.searchParams.get("subjectId") || "all",
-        importBatchId: url.searchParams.get("importBatchId") || "all",
-        type: url.searchParams.get("type") || "all",
-        need: url.searchParams.get("need") || "all",
-        suggestionStatus: url.searchParams.get("suggestionStatus") || "all",
+        // 多选筛选：重复参数（?need=a&need=b）经唯一出处归一化；单值与 "all" 仍然兼容。
+        ...normalizeQuestionEnrichmentFilters({
+          subjectIds: url.searchParams.getAll("subjectId"),
+          bookIds: url.searchParams.getAll("bookId"),
+          importBatchIds: url.searchParams.getAll("importBatchId"),
+          types: url.searchParams.getAll("type"),
+          needs: url.searchParams.getAll("need"),
+          suggestionStatuses: url.searchParams.getAll("suggestionStatus"),
+        }),
+        classification: url.searchParams.get("classification") || "all",
         query: String(url.searchParams.get("query") || "").trim().toLowerCase(),
+        questionId: String(url.searchParams.get("questionId") || "").trim(),
       };
       const suggestions = questionEnrichmentStore.suggestions();
       const latestByQuestion = new Map();
@@ -13042,26 +15026,50 @@ function createServer(options = {}) {
       });
       const allQuestions = questionStore.list({ library: "official", status: "all" }).questions;
       const baseQuestions = allQuestions.filter((question) => {
-        if (filters.bookId !== "all" && question.bookId !== filters.bookId) return false;
-        if (filters.subjectId !== "all" && question.subjectId !== filters.subjectId) return false;
-        if (filters.importBatchId !== "all" && question.importBatchId !== filters.importBatchId) return false;
-        if (filters.type !== "all" && question.type !== filters.type) return false;
+        if (filters.questionId && question.id !== filters.questionId) return false;
+        // 教材多选（含旧哨兵值 __unassigned__ ＝"教材为空"）：判定与 Store 共用一处。
+        if (!matchesBookSelection(question, filters.bookIds)) return false;
+        if (filters.subjectIds.length && !filters.subjectIds.includes(question.subjectId)) return false;
+        if (filters.importBatchIds.length && !filters.importBatchIds.includes(question.importBatchId)) return false;
+        if (filters.types.length && !filters.types.map(normalizeQuestionType).includes(question.type)) return false;
+        // 归类状态按缺失字段实时派生（不落库）：pending＝教材/章节/知识点任一缺失。
+        if (filters.classification !== "all" && questionNeedsClassification(question) !== (filters.classification === "pending")) return false;
         if (filters.query && ![question.stem, question.chapter, ...(question.knowledgePoints || []), question.id]
           .join(" ").toLowerCase().includes(filters.query)) return false;
         return true;
       });
+      const derivedNeedsByQuestion = new Map();
+      {
+        const idsByBook = new Map();
+        baseQuestions.forEach((question) => {
+          const bookId = String(question.bookId || "").trim();
+          if (!bookId) return;
+          if (!idsByBook.has(bookId)) idsByBook.set(bookId, []);
+          idsByBook.get(bookId).push(question.id);
+        });
+        idsByBook.forEach((ids, bookId) => {
+          enrichmentDerivedNeedsForBook(bookId, ids).forEach((value, key) => derivedNeedsByQuestion.set(key, value));
+        });
+      }
       const itemForQuestion = (question) => {
-        const needs = questionEnrichmentNeeds(question);
+        const needs = questionEnrichmentNeeds(question, derivedNeedsByQuestion.get(String(question.id)) || {});
         let suggestion = latestByQuestion.get(question.id) || null;
         if (suggestion && suggestion.status === "recommended" && Number(suggestion.questionVersion) !== Number(question.version)) {
           suggestion = { ...suggestion, status: "stale" };
         }
-        return { question, needs, suggestion };
+        return { question: withQuestionClassification(question), needs, suggestion,
+          hasActionableSuggestion: questionEnrichmentSuggestionChanges({ question, suggestion }).length > 0 };
       };
       const allItems = baseQuestions.map(itemForQuestion);
       const filteredItems = allItems.filter((item) => {
-        if (filters.need !== "all" && !item.needs.needs.includes(filters.need)) return false;
-        if (filters.suggestionStatus !== "all" && (item.suggestion ? item.suggestion.status : "none") !== filters.suggestionStatus) return false;
+        // 多选＝命中任一（同一字段内 OR）；单选时与旧口径逐行等价。
+        if (!questionEnrichmentMatchesNeeds(item.needs.needs, filters.needs)) return false;
+        if (filters.suggestionStatuses.length) {
+          const status = item.suggestion ? item.suggestion.status : "none";
+          if (!filters.suggestionStatuses.includes(status)) return false;
+          // 「AI 已推荐」另有一层口径：状态是 recommended 但没有任何可采纳改动的不算（旧口径原样保留）。
+          if (status === "recommended" && !item.hasActionableSuggestion) return false;
+        }
         return true;
       });
       const pageSize = Math.min(100, Math.max(20, Number(url.searchParams.get("pageSize")) || 80));
@@ -13071,12 +15079,21 @@ function createServer(options = {}) {
       const summary = {
         total: allItems.length,
         pending: allItems.filter((item) => !item.needs.complete).length,
+        textbook: allItems.filter((item) => item.needs.needsTextbook).length,
+        // 「建议换科目」＝AI 认为这道题属于另一个科目（DEC-098 第二级）。科目是人工在导入时选过的，
+        // 但选错时整棵树都挂错了，所以这一项要单独计数、单独走逐条复核，不进批量采纳。
+        subject: allItems.filter((item) => item.hasActionableSuggestion && item.suggestion.subjectId
+          && item.suggestion.subjectId !== String(item.question.subjectId || "")).length,
         chapter: allItems.filter((item) => item.needs.needsChapter).length,
         knowledgePoints: allItems.filter((item) => item.needs.needsKnowledgePoints).length,
         scoringPoints: allItems.filter((item) => item.needs.needsScoringPoints).length,
-        recommended: allItems.filter((item) => item.suggestion && item.suggestion.status === "recommended").length,
+        // 2026-09-26：知识指纹与题族归属也进「待完善」统计；两项都由批量确定性动作补齐（不调 AI）。
+        knowledgeFingerprint: allItems.filter((item) => item.needs.needsFingerprint).length,
+        family: allItems.filter((item) => item.needs.needsFamily).length,
+        recommended: allItems.filter((item) => item.hasActionableSuggestion).length,
         failed: allItems.filter((item) => item.suggestion && item.suggestion.status === "failed").length,
         completed: allItems.filter((item) => item.needs.complete).length,
+        pendingClassification: allItems.filter((item) => questionNeedsClassification(item.question)).length,
       };
       sendJson(response, 200, {
         success: true,
@@ -13085,52 +15102,26 @@ function createServer(options = {}) {
         page,
         pageSize,
         pageCount,
-        items: filteredItems.slice(offset, offset + pageSize),
+        items: (() => {
+          const pageItems = filteredItems.slice(offset, offset + pageSize);
+          const decorated = withQuestionFamilyMemberships(pageItems.map(item => item.question));
+          return pageItems.map((item, index) => ({ ...item, question: decorated[index] }));
+        })(),
         jobs: questionEnrichmentStore.jobs(10),
       });
+      return;
+    }
+
+    if (url.pathname === "/api/admin/question-enrichment/deterministic-impact") {
+      sendJson(response, 410, { success: false, error: "completion_preview_required", message: "旧重建预览已删除，请使用补齐缺失预览。" });
       return;
     }
 
     if (request.method === "POST" && url.pathname === "/api/admin/question-enrichment/jobs") {
       try {
         const payload = await readJsonBody(request, 512 * 1024);
-        const config = aiConfigStore.load();
-        if (!configuredScene(config, "question_enrichment")) throw new Error("question_enrichment_route_unavailable");
-        const requestedIds = [...new Set((Array.isArray(payload.questionIds) ? payload.questionIds : []).map(String).filter(Boolean))];
-        let questions = questionStore.list({
-          library: "official",
-          status: "all",
-          subjectId: payload.subjectId || "all",
-          bookId: payload.bookId || "all",
-          type: payload.type || "all",
-          importBatchId: payload.importBatchId || "all",
-          query: payload.query || "",
-        }).questions;
-        if (requestedIds.length) {
-          const requestedSet = new Set(requestedIds);
-          questions = questions.filter((question) => requestedSet.has(question.id));
-        }
-        if (payload.need && payload.need !== "all") {
-          questions = questions.filter((question) => questionEnrichmentNeeds(question).needs.includes(payload.need));
-        } else {
-          questions = questions.filter((question) => !questionEnrichmentNeeds(question).complete);
-        }
-        const runningIds = new Set(questionEnrichmentStore.jobs(100)
-          .filter((job) => ["queued", "running"].includes(job.status))
-          .flatMap((job) => job.questionIds));
-        const limit = Math.min(50, Math.max(1, Number(payload.limit) || 50));
-        const questionIds = questions.map((question) => question.id).filter((id) => !runningIds.has(id)).slice(0, limit);
-        if (!questionIds.length) throw new Error("question_enrichment_questions_required");
-        const job = questionEnrichmentStore.createJob(questionIds);
-        logOperation({
-          action: "question.enrichment_job_create",
-          category: "question",
-          targetType: "question_enrichment_job",
-          targetId: job.id,
-          summary: `创建 ${job.total} 道题目的 AI 完善任务`,
-          metadata: { questionIds, bookId: payload.bookId || "all", need: payload.need || "all" },
-        });
-        setImmediate(() => runQuestionEnrichmentJob(job.id));
+        // 产线本体在 createQuestionEnrichmentJob（AI 巡检的「送去完善题目」复用同一份，见 §4.6.12 / DEC-100）。
+        const job = createQuestionEnrichmentJob(payload);
         sendJson(response, 202, { success: true, job });
       } catch (error) {
         sendJson(response, error.message === "question_enrichment_route_unavailable" ? 503 : 422, { success: false, error: error.message });
@@ -13177,16 +15168,28 @@ function createServer(options = {}) {
         const payload = await readJsonBody(request, 512 * 1024);
         const threshold = Math.min(1, Math.max(0, Number(payload.confidenceThreshold) || 0.85));
         const requested = new Set((Array.isArray(payload.questionIds) ? payload.questionIds : []).map(String).filter(Boolean));
+        if (!requested.size) throw new Error("question_enrichment_selection_required");
+        if (requested.size > 100) throw new Error("question_enrichment_selection_limit");
         const latest = new Map();
         questionEnrichmentStore.suggestions().forEach((suggestion) => {
           if (!latest.has(suggestion.questionId)) latest.set(suggestion.questionId, suggestion);
         });
         const candidates = [...latest.values()].filter((suggestion) => suggestion.status === "recommended"
           && suggestion.confidence >= threshold
-          && (!requested.size || requested.has(suggestion.questionId)))
-          .slice(0, 100);
+          && questionEnrichmentSuggestionChanges({ question: questionStore.get(suggestion.questionId), suggestion }).length > 0
+          && requested.has(suggestion.questionId));
         if (!candidates.length) throw new Error("question_enrichment_suggestions_required");
-        const results = candidates.map((suggestion) => {
+        // 批量采纳**不换科目**（DEC-098）：换科目等于把题目从一棵知识树搬到另一棵，
+        // 必须逐条人工看理由与证据，不能被一次"批量采纳"顺手带走。这里直接跳过并如实报数。
+        const subjectChangeIds = new Set(candidates
+          .filter((suggestion) => {
+            const question = questionStore.get(suggestion.questionId);
+            return question && suggestion.subjectId && suggestion.subjectId !== String(question.subjectId || "");
+          })
+          .map((suggestion) => suggestion.questionId));
+        const batchCandidates = candidates.filter((suggestion) => !subjectChangeIds.has(suggestion.questionId));
+        if (!batchCandidates.length) throw new Error("question_enrichment_subject_change_requires_review");
+        const results = batchCandidates.map((suggestion) => {
           try {
             const result = applyQuestionEnrichmentSuggestion(suggestion.questionId, { suggestionId: suggestion.id, fields: payload.fields });
             return { questionId: suggestion.questionId, success: true, version: result.question.version };
@@ -13198,6 +15201,8 @@ function createServer(options = {}) {
           success: true,
           appliedCount: results.filter((item) => item.success).length,
           failedCount: results.filter((item) => !item.success).length,
+          // 「建议换科目」的那些没有参与批量采纳，界面要如实说出跳过几道，别让数字对不上。
+          skippedSubjectChangeCount: subjectChangeIds.size,
           results,
         });
       } catch (error) {
@@ -13206,8 +15211,40 @@ function createServer(options = {}) {
       return;
     }
 
+    // ——— 材料题组分值分配（DEC-099 / 产品手册 §4.6.7）———
+    // 粒度＝题组（沿用 questionGroupId，DEC-099 ③）：取数与采纳都按整组来，不按单题。
+    const materialGroupReadMatch = url.pathname.match(/^\/api\/admin\/question-enrichment\/material-groups\/([^/]+)$/);
+    if (request.method === "GET" && materialGroupReadMatch) {
+      try {
+        const { plan, defaultGroupTotal } = materialGroupScoreContext(decodeURIComponent(materialGroupReadMatch[1]), {
+          library: url.searchParams.get("library"),
+          groupTotal: url.searchParams.get("groupTotal"),
+          step: url.searchParams.get("step"),
+        });
+        if (!plan.memberCount) throw new Error("material_group_not_found");
+        sendJson(response, 200, { success: true, ...materialGroupScorePayload(plan, defaultGroupTotal) });
+      } catch (error) {
+        sendJson(response, error.message === "material_group_not_found" ? 404 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    const materialGroupApplyMatch = url.pathname.match(/^\/api\/admin\/question-enrichment\/material-groups\/([^/]+)\/apply$/);
+    if (request.method === "POST" && materialGroupApplyMatch) {
+      const groupId = decodeURIComponent(materialGroupApplyMatch[1]);
+      try {
+        const payload = await readJsonBody(request, 512 * 1024);
+        sendJson(response, 200, { success: true, ...applyMaterialGroupScores(groupId, payload) });
+      } catch (error) {
+        const notFound = ["material_group_not_found"].includes(error.message);
+        sendJson(response, notFound ? 404 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/admin/questions") {
       const bookId = url.searchParams.get("bookId") || "all";
+      const sourceDirectory = url.searchParams.get("directory") === "source";
       const knowledgeNodeId = url.searchParams.get("knowledgeNodeId") || "";
       const result = questionStore.list({
         library: url.searchParams.get("library") || "official",
@@ -13216,19 +15253,29 @@ function createServer(options = {}) {
         bookId,
         type: url.searchParams.get("type") || "all",
         importBatchId: url.searchParams.get("importBatchId") || "all",
+        // 「待归类」筛选由缺失字段现场派生（教材/章节/知识点），不是存储状态位。
+        classification: url.searchParams.get("classification") || "all",
         query: url.searchParams.get("query") || "",
       });
       // Reuse the request's knowledge structure while decorating every row.
       // Loading the file once per question made a 300+ row catalog take
       // several seconds after an edit/save refresh.
-      const requestStructure = bookId !== "all" ? knowledgeStructureStore.get(bookId) : null;
-      const questions = bookId !== "all"
-        ? knowledgeStructureStore.decorateQuestions(result.questions, bookId, knowledgeNodeId)
+      const requestStructure = bookId !== "all" && bookId !== UNASSIGNED_BOOK_FILTER ? knowledgeStructureStore.get(bookId) : null;
+      const questions = bookId !== "all" && bookId !== UNASSIGNED_BOOK_FILTER
+        ? knowledgeStructureStore.decorateQuestions(result.questions, bookId, sourceDirectory ? "" : knowledgeNodeId)
         : result.questions;
+      const decoratedQuestions = withQuestionFamilyMemberships(questions, requestStructure).map(withQuestionClassification);
+      const workspaceStatus = url.searchParams.get("workspaceStatus") || "all";
+      const workspaceQuestions = decoratedQuestions.filter(question => matchesWorkspaceStatus(question, workspaceStatus, question.familyMemberships));
+      const sourceResult = sourceDirectory && bookId !== "all" && bookId !== UNASSIGNED_BOOK_FILTER
+        ? questionSourceDirectory(workspaceQuestions, libraryDirectories.read(bookId), url.searchParams.get("sourceNodeId") || "")
+        : null;
       sendJson(response, 200, {
         success: true,
         ...result,
-        questions: withQuestionFamilyMemberships(questions, requestStructure),
+        questions: sourceResult ? sourceResult.questions : workspaceQuestions,
+        ...(sourceDirectory ? { treeSummary: sourceResult?.treeSummary || null } : {}),
+        pendingClassificationCount: result.questions.filter((question) => questionNeedsClassification(question)).length,
       });
       return;
     }
@@ -13300,12 +15347,15 @@ function createServer(options = {}) {
           category: "question",
           targetType: "question_batch",
           targetId: batchId,
-          summary: `统一修改导入批次 ${result.updated.length} 道题目的科目与教材`,
+          summary: `统一修改导入批次 ${result.updated.length} 道题目的科目、教材与归属`,
           metadata: {
             batchId,
             updatedCount: result.updated.length,
             subjectId: payload.subjectId,
             bookId: payload.bookId,
+            chapter: payload.chapter,
+            knowledgePoints: payload.knowledgePoints,
+            pendingClassificationCount: result.pendingClassificationCount,
             affectedFamilyIds: familyResult.affectedFamilyIds || [],
             detachedQuestionIds: familyResult.detachedQuestionIds || [],
           },
@@ -13313,6 +15363,7 @@ function createServer(options = {}) {
         sendJson(response, 200, {
           success: true,
           updatedCount: result.updated.length,
+          pendingClassificationCount: result.pendingClassificationCount,
           batch: result.batch,
           affectedFamilyIds: familyResult.affectedFamilyIds || [],
           detachedQuestionIds: familyResult.detachedQuestionIds || [],
@@ -13321,6 +15372,109 @@ function createServer(options = {}) {
         const status = error.message === "question_import_batch_not_found" ? 404
           : (error.message === "question_merged_source_read_only" ? 409 : 422);
         sendJson(response, status, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 删除前影响面盘点（DEC-094 形态 A）：只读，不改任何数据。
+    // 回答"撤销这一批会发生什么"：会删多少（含材料题整组连带）、哪些模块引用了它们、有没有题阻止删除。
+    // 两个入口共用这一处聚合实现：按批次（GET，脚本/批次详情用）与按当前选中（POST，删除确认框用）。
+    const questionDeletionImpactPayload = (ids, batch = null) => {
+      const impact = questionStore.deletionImpact(ids);
+      const impacted = new Set(impact.ids);
+      const exams = examStore.list({}).exams
+        .map((exam) => ({ id: exam.id, title: exam.title, status: exam.status, questionIds: (exam.questionIds || []).filter((id) => impacted.has(id)) }))
+        .filter((exam) => exam.questionIds.length);
+      const packs = packStore.list({}).packs
+        .map((pack) => ({ id: pack.id, name: pack.name, visibility: pack.visibility, questionIds: (pack.questionIds || []).filter((id) => impacted.has(id)) }))
+        .filter((pack) => pack.questionIds.length);
+      const memberships = typeof questionFamilyStore.memberships === "function"
+        ? questionFamilyStore.memberships([...impacted], { status: "all" })
+        : {};
+      const familyNames = new Map(questionFamilyStore.list({ status: "all" }).families.map((family) => [family.id, family.name]));
+      const familyCounts = new Map();
+      Object.values(memberships).flat().forEach((membership) => {
+        const familyId = String(membership.familyId || membership.id || "");
+        if (!familyId) return;
+        familyCounts.set(familyId, (familyCounts.get(familyId) || 0) + 1);
+      });
+      const families = [...familyCounts].map(([familyId, count]) => ({ id: familyId, name: familyNames.get(familyId) || familyId, count }));
+      // 练习/复习痕迹：删题不会自动清这些记录，所以要在删之前告诉操作人（它们是历史数据，删完会变成悬空引用）。
+      let practiced = { questions: 0, attempts: 0, accounts: 0 };
+      if (learningStateStore && typeof learningStateStore.exportState === "function") {
+        const practicedQuestions = new Set();
+        let attempts = 0;
+        let accounts = 0;
+        (learningStateStore.exportState().accounts || []).forEach((account) => {
+          const hits = new Set();
+          (account.attempts || []).forEach((attempt) => {
+            if (!impacted.has(String(attempt.questionId || ""))) return;
+            attempts += 1;
+            hits.add(String(attempt.questionId));
+          });
+          Object.keys(account.reviewStates || {}).forEach((questionId) => {
+            if (impacted.has(questionId)) hits.add(questionId);
+          });
+          if (hits.size) accounts += 1;
+          hits.forEach((questionId) => practicedQuestions.add(questionId));
+        });
+        practiced = { questions: practicedQuestions.size, attempts, accounts };
+      }
+      return {
+        batch: batch ? { ...batch, confirmCode: String(batch.id).slice(-6) } : null,
+        impact: {
+          ...impact,
+          exams: exams.slice(0, 20),
+          packs: packs.slice(0, 20),
+          families: families.slice(0, 20),
+          practiced,
+          referenceSummary: {
+            examCount: exams.length,
+            packCount: packs.length,
+            familyCount: families.length,
+            referencedQuestionCount: new Set([...exams, ...packs].flatMap((item) => item.questionIds)).size,
+          },
+        },
+      };
+    };
+    const importBatchSummaryById = (batchId) => {
+      const batch = questionStore.importBatches().find((item) => item.id === batchId);
+      return batch ? {
+        id: batch.id,
+        label: batch.label,
+        createdAt: batch.createdAt,
+        subjectId: batch.subjectId,
+        bookId: batch.bookId,
+        count: batch.count,
+      } : null;
+    };
+
+    const adminQuestionImportBatchImpactMatch = url.pathname.match(/^\/api\/admin\/questions\/import-batches\/([^/]+)\/impact$/);
+    if (request.method === "GET" && adminQuestionImportBatchImpactMatch) {
+      try {
+        const batchId = decodeURIComponent(adminQuestionImportBatchImpactMatch[1]);
+        const batch = importBatchSummaryById(batchId);
+        if (!batch) {
+          sendJson(response, 404, { success: false, error: "question_import_batch_not_found" });
+          return;
+        }
+        const batchQuestions = questionStore.list({ library: "official", status: "all", importBatchId: batchId }).questions;
+        sendJson(response, 200, { success: true, ...questionDeletionImpactPayload(batchQuestions.map((question) => question.id), batch) });
+      } catch (error) {
+        sendJson(response, error.message === "question_delete_empty" ? 422 : 500, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 删除确认框用的按选中盘点：提交的就是即将删除的 id（不按批次取全量，避免"只想删 3 道却按整批报警"）。
+    if (request.method === "POST" && url.pathname === "/api/admin/questions/deletion-impact") {
+      try {
+        const payload = await readJsonBody(request, 512 * 1024);
+        const batchId = String(payload.importBatchId || "").trim();
+        const batch = batchId && batchId !== "all" ? importBatchSummaryById(batchId) : null;
+        sendJson(response, 200, { success: true, ...questionDeletionImpactPayload(payload.ids, batch) });
+      } catch (error) {
+        sendJson(response, error.message === "question_delete_empty" ? 422 : 500, { success: false, error: error.message });
       }
       return;
     }
@@ -13591,7 +15745,7 @@ function createServer(options = {}) {
           if (node.bookId !== bookId) throw new Error("knowledge_assignment_book_mismatch");
           if (node.kind !== "knowledge") throw new Error("knowledge_assignment_node_required");
         });
-        if (knowledgeThemeRangeAnchorNodeId) {
+        if (hasExplicitThemeAnchor && knowledgeThemeRangeAnchorNodeId) {
           const anchor = nodeMap.get(knowledgeThemeRangeAnchorNodeId);
           if (!anchor) throw new Error("knowledge_node_not_found");
           if (anchor.bookId !== bookId) throw new Error("knowledge_assignment_book_mismatch");
@@ -13673,7 +15827,7 @@ function createServer(options = {}) {
             reviewedBy: currentAdminDisplayName() || "超级管理员",
             reviewedAt,
             source: action === "accept_candidate" ? "manual_candidate_acceptance" : "manual_question_editor",
-          }]);
+          }], { preserveExistingThemeAnchor: !hasExplicitThemeAnchor });
           const familyResult = typeof questionFamilyStore.markPendingForQuestions === "function"
             ? questionFamilyStore.markPendingForQuestions([questionId], "question_knowledge_updated", currentAdminDisplayName() || "超级管理员")
             : { affectedFamilyIds: [] };
@@ -13727,7 +15881,7 @@ function createServer(options = {}) {
     const adminQuestionMatch = url.pathname.match(/^\/api\/admin\/questions\/([^/]+)$/);
     if (request.method === "GET" && adminQuestionMatch) {
       const question = questionStore.get(decodeURIComponent(adminQuestionMatch[1]));
-      const decorated = question ? withQuestionFamilyMemberships([question])[0] : null;
+      const decorated = question ? withQuestionClassification(withQuestionFamilyMemberships([question])[0]) : null;
       sendJson(response, decorated ? 200 : 404, decorated ? { success: true, question: decorated } : { success: false, error: "question_not_found" });
       return;
     }
@@ -13752,6 +15906,10 @@ function createServer(options = {}) {
             type: question.type,
             typeLabel: question.typeLabel,
             stem: question.stem,
+            // 材料与归属是"择优补充"重新核对完整指纹、重建题目所必需的字段（DEC-094 ③）
+            material: question.material,
+            subjectId: question.subjectId,
+            bookId: question.bookId,
             options: question.options,
             correctAnswer: question.correctAnswer,
             referenceAnswer: question.referenceAnswer,
@@ -13761,14 +15919,33 @@ function createServer(options = {}) {
             sourceLabel: question.sourceLabel,
             sourcePage: question.sourcePage,
           }) : null;
+          // 疑似重复的"可比性"（2026-09-22 产品负责人要求"疑似重复要给比较"）：疑似行也要能打开
+          // 逐字段对比弹窗，因此像"事实相同"那样下发对照双方的内容。**故意不带 `mergeable`**：
+          // 疑似重复不提供择优补充（产品手册 §4.6.4 ③），没有这个标记，前端按钮就不会出现。
+          const previewQuestionById = new Map(
+            preview.filter((item) => item.question).map((item) => [item.question.id, item.question]),
+          );
+          const suspicionComparison = (suspicion, incomingQuestion) => {
+            if (!suspicion) return null;
+            // 本批内的相似行直接取本批那一行的题目对象；题库已有的按 id 读一次（只读）。
+            const counterpart = suspicion.scope === "batch"
+              ? previewQuestionById.get(suspicion.questionId)
+              : questionStore.get(suspicion.questionId);
+            const existing = comparisonQuestion(counterpart);
+            if (!incomingQuestion || !existing) return null;
+            return { incoming: comparisonQuestion(incomingQuestion), existing };
+          };
           sendJson(response, 200, {
             success: true,
             total: preview.length,
             validCount: preview.filter((item) => item.valid).length,
+            pendingClassificationCount: preview.filter((item) => item.valid && item.needsClassification).length,
             duplicateCount: preview.filter((item) => item.duplicate).length,
             storedDuplicateCount: preview.filter((item) => item.duplicate && item.duplicateScope === "stored").length,
             batchDuplicateCount: preview.filter((item) => item.duplicate && item.duplicateScope === "batch").length,
             errorCount: preview.filter((item) => !item.valid && !item.duplicate).length,
+            // 疑似重复：相似度达标但未达「事实相同」——只提示、不阻断（DEC-094 ②）
+            suspectedCount: preview.filter((item) => item.suspicion).length,
             items: preview.map((item) => (item.valid ? {
               index: item.index,
               valid: true,
@@ -13779,6 +15956,13 @@ function createServer(options = {}) {
               maxScore: item.question.maxScore,
               scoringPointStatus: item.question.scoringPointStatus,
               scoringPointCandidateCount: item.question.scoringPointCandidates?.length || 0,
+              needsClassification: Boolean(item.needsClassification),
+              classification: item.classification || null,
+              suspicion: item.suspicion || null,
+              // 疑似行同样下发"可与谁逐字段对比"（2026-09-22 产品负责人要求"疑似重复要给比较"）。
+              // 与判重行共用同一个 `comparison` 槽位，前端一套弹窗逻辑；区别在**没有** `mergeable`，
+              // 所以「择优补充到既有题」按钮不会出现（产品手册 §4.6.4 ③：疑似重复不提供择优补充）。
+              comparison: item.suspicion ? suspicionComparison(item.suspicion, item.question) : null,
               sourceRange: item.sourceRange,
             } : (item.duplicate ? {
               index: item.index,
@@ -13793,36 +15977,173 @@ function createServer(options = {}) {
               comparison: {
                 incoming: comparisonQuestion(item.question),
                 existing: comparisonQuestion(item.existingQuestion),
+                // 「能不能择优补充到既有题」的判据唯一在服务端：完整指纹（题型＋材料＋题干＋选项，
+                // 归一化后）一致才允许。界面不得自己另写一套字段比较——实测过不一致：
+                // 既有题题干不带「（　）。」、导入稿带，归一化后其实同题，界面却判成"有差异"→按钮该显示却隐藏。
+                mergeable: Boolean(item.question && item.existingQuestion
+                  && questionFingerprint(item.question) === questionFingerprint(item.existingQuestion)),
               },
             } : item))),
           });
         } else {
-          const result = questionStore.importMany(candidates, currentAdminDisplayName() || "超级管理员");
+          // 人工裁决（产品负责人 2026-09-22 定稿）：疑似重复只是提示，操作者可以在对比弹窗里逐行定夺。
+          // 裁决必须随"导入"这一次请求一起送上来——因为导入接口是按**文本**重新解析的，前端本地的
+          // "不导入"标记服务端看不见；服务端只认自己标过疑似的行（下标对不上就忽略），见 importMany。
+          const decisions = payload.decisions && typeof payload.decisions === "object" ? payload.decisions : {};
+          const actor = currentAdminDisplayName() || "超级管理员";
+          const result = questionStore.importMany(candidates, actor, { decisions });
           if (result.created.length) logOperation({
             action: "question.import",
             category: "question",
             targetType: "question_batch",
             targetId: result.batchId,
             summary: `批量导入 ${result.created.length} 道平台题目`,
-            metadata: { batchId: result.batchId, total: result.total, createdCount: result.created.length, duplicateCount: result.duplicates.length, errorCount: result.errors.length },
+            metadata: {
+              batchId: result.batchId,
+              total: result.total,
+              createdCount: result.created.length,
+              duplicateCount: result.duplicates.length,
+              errorCount: result.errors.length,
+              confirmedDuplicateCount: result.confirmedDuplicates.length,
+              dismissedSuspicionCount: result.dismissedSuspicions.length,
+            },
           });
+          // 人工裁决单独留痕（谁、什么时候、把哪一行判成了什么），便于日后回看"这次导入为什么少了一道"。
+          // 注意 `admin-operation-store#sanitizeMetadata` 只保留两层、更深的字段会被清成 null，
+          // 所以这里全部用**扁平标量数组**记录，不放嵌套对象。
+          if (result.confirmedDuplicates.length || result.dismissedSuspicions.length) {
+            logOperation({
+              action: "question.suspicion_verdict",
+              category: "question",
+              targetType: "question_batch",
+              targetId: result.batchId,
+              summary: `人工裁决疑似重复：确认重复 ${result.confirmedDuplicates.length} 道（未入库）、确认不是重复 ${result.dismissedSuspicions.length} 道`,
+              metadata: {
+                batchId: result.batchId,
+                confirmedIndexes: result.confirmedDuplicates.map((item) => item.index),
+                confirmedQuestionIds: result.confirmedDuplicates.map((item) => item.questionId),
+                confirmedStems: result.confirmedDuplicates.map((item) => item.stem),
+                confirmedScores: result.confirmedDuplicates.map((item) => Number(item.score) || 0),
+                confirmedReasons: result.confirmedDuplicates.map((item) => String(item.reason || "")),
+                confirmedCommonRuns: result.confirmedDuplicates.map((item) => Number(item.commonRun) || 0),
+                dismissedIndexes: result.dismissedSuspicions.map((item) => item.index),
+                dismissedStems: result.dismissedSuspicions.map((item) => item.stem),
+                dismissedScores: result.dismissedSuspicions.map((item) => Number(item.score) || 0),
+                ignoredDecisionIndexes: result.ignoredDecisionIndexes,
+              },
+            });
+          }
           sendJson(response, 201, {
             success: true,
             total: result.total,
             createdCount: result.created.length,
+            pendingClassificationCount: result.pendingClassification.length,
             duplicateCount: result.duplicates.length,
             storedDuplicateCount: result.duplicates.filter((item) => item.duplicateScope === "stored").length,
             batchDuplicateCount: result.duplicates.filter((item) => item.duplicateScope === "batch").length,
             errorCount: result.errors.length,
+            suspectedCount: result.suspected.length,
+            suspected: result.suspected,
+            confirmedDuplicateCount: result.confirmedDuplicates.length,
+            confirmedDuplicates: result.confirmedDuplicates,
+            dismissedSuspicionCount: result.dismissedSuspicions.length,
+            dismissedSuspicions: result.dismissedSuspicions,
+            ignoredDecisionIndexes: result.ignoredDecisionIndexes,
             createdIds: result.created.map((question) => question.id),
             batchId: result.batchId,
             errors: result.errors,
             duplicates: result.duplicates,
+            pendingClassification: result.pendingClassification,
           });
         }
       } catch (error) {
         sendJson(response, error.message === "payload_too_large" ? 413 : 422, { success: false, error: error.message });
       }
+      return;
+    }
+
+    // 择优补充（DEC-094 ③ / 产品手册 §4.6.2）：事实相同的重复稿不新建题，只把既有题
+    // 「空缺」的字段补进同一道题——新增版本、保留答案分层与审核记录、不覆盖任何非空字段。
+    // 同一路由支持 `mode: "absorb"`（产品负责人 2026-09-22 定稿）：对比后发现导入稿那版更好时，
+    // 由操作者逐字段点名覆盖（或合并两版参考答案）——这是"覆盖非空字段"的唯一入口，边界见
+    // question-store.js#absorbComparisonFields 的注释（事实相同才可用、动答案即降级待核对）。
+    if (request.method === "POST" && url.pathname === "/api/admin/questions/merge-duplicate") {
+      try {
+        const payload = await readJsonBody(request, 2 * 1024 * 1024);
+        const existingQuestionId = String(payload.existingQuestionId || "").trim();
+        if (!existingQuestionId) throw new Error("question_not_found");
+        if (!payload.question || typeof payload.question !== "object") throw new Error("question_required_fields_missing");
+        const actor = currentAdminDisplayName() || "超级管理员";
+        const absorbMode = String(payload.mode || "") === "absorb";
+        // 人工确认（产品负责人 2026-09-22 定稿 + 同日第五次口径修订）：疑似行被操作者点过
+        // 「确认是同一道题」后，两条路都开放——「择优补充」只补空缺（fillMissingFields），
+        // 「用导入稿替换所选 / 参考答案合并两版」可覆盖非空字段（absorbComparisonFields）。
+        // 两条路都**不接受**前端的布尔标记本身作为依据：Store 会用同一个 strongEvidenceBetween()
+        // 重新独立判定这条强证据（absorbComparisonFields 自己重算指纹 + 独立复核），不复核通过一律 422。
+        const operatorConfirmedSuspicion = payload.operatorConfirmedSuspicion && typeof payload.operatorConfirmedSuspicion === "object"
+          ? payload.operatorConfirmedSuspicion
+          : null;
+        const result = absorbMode
+          ? questionStore.absorbComparisonFields(existingQuestionId, payload.question, {
+            fields: payload.fields,
+            mergeReferenceAnswer: payload.mergeReferenceAnswer === true,
+            operatorConfirmedSuspicion,
+          }, actor)
+          : questionStore.fillMissingFields(existingQuestionId, payload.question, actor, { operatorConfirmedSuspicion });
+        if (result.updated) {
+          const absorbSummary = `导入对比处置：用导入稿覆盖 ${[...(result.overwritten || []), ...(result.filled || [])].join("、") || "无"}`;
+          logOperation({
+            action: absorbMode ? "question.absorb_comparison" : "question.fill_missing",
+            category: "question",
+            targetType: "question",
+            targetId: existingQuestionId,
+            summary: absorbMode
+              ? (result.authorization === "operator_confirmed_suspicion" ? `${absorbSummary}（依据：人工确认的疑似重复）` : absorbSummary)
+              : `导入择优补充 ${result.filled.length} 个空缺字段（事实相同的重复稿）`,
+            metadata: {
+              filled: result.filled,
+              overwritten: result.overwritten || [],
+              conflicts: result.conflicts,
+              version: result.version,
+              answerReviewStatus: result.answerReviewStatus,
+              authorization: result.authorization || "",
+            },
+          });
+        }
+        sendJson(response, 200, {
+          success: true,
+          questionId: existingQuestionId,
+          mode: absorbMode ? "absorb" : "fill",
+          updated: result.updated,
+          // 授权来源（服务端自己算的，不是前端传的）：identical_fingerprint ＝ 两版事实相同；
+          // operator_confirmed_suspicion ＝ 人工确认的疑似重复（第五次口径修订后，这条既可用于
+          // "只补空缺"，也可用于"逐字段点名覆盖/合并"，前提是 Store 的 strongEvidenceBetween 复核通过）。
+          authorization: result.authorization || "identical_fingerprint",
+          filled: result.filled,
+          overwritten: result.overwritten || [],
+          unchanged: result.unchanged || [],
+          conflicts: result.conflicts,
+          answerReviewStatus: result.answerReviewStatus,
+          version: result.version,
+        });
+      } catch (error) {
+        sendJson(response, error.message === "payload_too_large" ? 413 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 单题详情（只读）：DEC-094 ② 要求"疑似重复"行给出**可定位到既有题的入口**，
+    // 而标题里那个既有题 id 往往不在当前列表筛选范围内，前端只能靠这个接口取到它。
+    // 注意：必须放在下面所有 /api/admin/questions/* 精确路由**之后**，否则会抢走
+    // import-batches / deletion-impact 这些子路径。
+    if (request.method === "GET" && url.pathname.startsWith("/api/admin/questions/")) {
+      const rawId = decodeURIComponent(url.pathname.slice("/api/admin/questions/".length));
+      const question = rawId ? questionStore.get(rawId) : null;
+      if (!question) {
+        sendJson(response, 404, { success: false, error: "question_not_found" });
+        return;
+      }
+      sendJson(response, 200, { success: true, question: withQuestionClassification(question) });
       return;
     }
 
@@ -13833,7 +16154,7 @@ function createServer(options = {}) {
         const assignment = hasMemberships
           ? resolveQuestionFamilyAssignment(payload.bookId, payload.familyMemberships)
           : null;
-        const questionPayload = { ...payload, ...(assignment?.knowledgePatch || {}) };
+        const questionPayload = resolveQuestionCatalogAnchor({ ...payload, ...(assignment?.knowledgePatch || {}) }, String(payload.bookId || ""));
         delete questionPayload.familyMemberships;
         const question = questionStore.create(questionPayload, currentAdminDisplayName() || "超级管理员");
         const membershipResult = assignment && typeof questionFamilyStore.setMemberships === "function"
@@ -13842,7 +16163,7 @@ function createServer(options = {}) {
         logOperation({ action: "question.create", category: "question", targetType: "question", targetId: question.id, summary: `录入平台题目：${question.stem}`, metadata: { subjectId: question.subjectId, bookId: question.bookId, type: question.type } });
         sendJson(response, 201, {
           success: true,
-          question: { ...question, familyMemberships: membershipResult.memberships },
+          question: withQuestionClassification({ ...question, familyMemberships: membershipResult.memberships }),
           affectedFamilyIds: membershipResult.affectedFamilyIds,
         });
       } catch (error) {
@@ -13857,12 +16178,16 @@ function createServer(options = {}) {
         const questionId = decodeURIComponent(adminQuestionMatch[1]);
         const previous = questionStore.get(questionId);
         if (!previous) throw new Error("question_not_found");
+        if (Object.prototype.hasOwnProperty.call(payload, "expectedQuestionVersion")
+          && (!Number.isInteger(payload.expectedQuestionVersion) || payload.expectedQuestionVersion !== Number(previous.version))) {
+          throw new Error("question_version_conflict");
+        }
         const hasMemberships = Object.prototype.hasOwnProperty.call(payload, "familyMemberships");
-        const targetBookId = String(payload.bookId || previous.bookId || "");
+        const targetBookId = payload.bookId === undefined ? String(previous.bookId || "") : String(payload.bookId || "");
         const assignment = hasMemberships
           ? resolveQuestionFamilyAssignment(targetBookId, payload.familyMemberships)
           : null;
-        const questionPayload = { ...payload, ...(assignment?.knowledgePatch || {}) };
+        const questionPayload = resolveQuestionCatalogAnchor({ ...payload, ...(assignment?.knowledgePatch || {}) }, targetBookId);
         delete questionPayload.familyMemberships;
         const stores = [questionStore, questionFamilyStore];
         const beforeState = stores.map((store) => store.exportState());
@@ -13895,12 +16220,12 @@ function createServer(options = {}) {
         logOperation({ action: "question.update", category: "question", targetType: "question", targetId: question.id, summary: `更新题目至 v${question.version}：${question.stem}`, metadata: { version: question.version, changeNote: payload.changeNote, affectedFamilyIds } });
         sendJson(response, 200, {
           success: true,
-          question: { ...question, familyMemberships: membershipResult.memberships },
+          question: withQuestionClassification({ ...question, familyMemberships: membershipResult.memberships }),
           affectedFamilyIds,
         });
       } catch (error) {
         const status = error.message === "question_not_found" ? 404
-          : (error.message === "question_merged_source_read_only" ? 409 : 422);
+          : (["question_merged_source_read_only", "question_version_conflict", "question_catalog_anchor_changed"].includes(error.message) ? 409 : 422);
         sendJson(response, status, { success: false, error: error.message });
       }
       return;
@@ -14040,9 +16365,51 @@ function createServer(options = {}) {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/admin/billing/users") {
+      const query = String(url.searchParams.get("query") || "").trim().toLowerCase();
+      const page = Math.max(1, Number.parseInt(url.searchParams.get("page"), 10) || 1);
+      const pageSize = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get("pageSize"), 10) || 20));
+      const summaries = new Map(billingStore.listAccountSummaries().map((item) => [item.userId, item]));
+      const users = userAuthStore.listUsers().filter((user) =>
+        !query || [user.publicId, user.id, user.nickname].some((value) => String(value || "").toLowerCase().includes(query)));
+      const rows = users.slice((page - 1) * pageSize, page * pageSize).map((user) => ({
+        userId: user.id,
+        publicId: user.publicId,
+        nickname: user.nickname,
+        beanBalance: summaries.get(user.id)?.beanBalance || 0,
+        orderCount: summaries.get(user.id)?.orderCount || 0,
+        subscriptions: summaries.get(user.id)?.subscriptions || [],
+      }));
+      sendJson(response, 200, { success: true, users: rows, total: users.length, page, pageSize });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/billing/orders") {
+      const query = String(url.searchParams.get("query") || "").trim().toLowerCase();
+      const status = String(url.searchParams.get("status") || "").trim();
+      const page = Math.max(1, Number.parseInt(url.searchParams.get("page"), 10) || 1);
+      const pageSize = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get("pageSize"), 10) || 20));
+      const users = new Map(userAuthStore.listUsers().map((user) => [user.id, user]));
+      const orders = billingStore.listAllOrders().map((order) => ({
+        ...order,
+        publicId: users.get(order.userId)?.publicId || "",
+        nickname: users.get(order.userId)?.nickname || "",
+      })).filter((order) => (!status || order.status === status)
+        && (!query || [order.id, order.productName, order.userId, order.publicId, order.nickname]
+          .some((value) => String(value || "").toLowerCase().includes(query))));
+      sendJson(response, 200, { success: true, orders: orders.slice((page - 1) * pageSize, page * pageSize), total: orders.length, page, pageSize });
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/admin/billing") {
-      const userId = url.searchParams.get("userId") || "test-user";
-      sendJson(response, 200, { success: true, ...billingStore.dashboard(userId) });
+      const identifier = url.searchParams.get("userId") || "test-user";
+      const userId = resolveBillingUserId(identifier);
+      if (!userId) { sendJson(response, 404, { success: false, error: "user_not_found" }); return; }
+      const account = billingStore.dashboard(userId);
+      const user = userAuthStore.listUsers().find((item) => item.id === userId);
+      account.account.publicId = user?.publicId || "";
+      if (user) account.account.nickname = user.nickname;
+      sendJson(response, 200, { success: true, ...account });
       return;
     }
 
@@ -14054,6 +16421,19 @@ function createServer(options = {}) {
         sendJson(response, 200, { success: true, product });
       } catch (error) {
         sendJson(response, 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    const billingPackageMatch = url.pathname.match(/^\/api\/admin\/billing\/packages\/([^/]+)$/);
+    if (request.method === "POST" && billingPackageMatch) {
+      try {
+        const packageKey = decodeURIComponent(billingPackageMatch[1]);
+        const products = billingStore.updatePackageGroup(packageKey, await readJsonBody(request));
+        logOperation({ action: "billing.package_update", category: "billing", targetType: "package", targetId: packageKey, summary: `更新套餐组：${products[0].packageName}`, metadata: { productIds: products.map((item) => item.id) } });
+        sendJson(response, 200, { success: true, products });
+      } catch (error) {
+        sendJson(response, error.message === "billing_package_not_found" ? 404 : 422, { success: false, error: error.message });
       }
       return;
     }
@@ -14076,34 +16456,107 @@ function createServer(options = {}) {
     if (request.method === "POST" && billingGrantProductMatch) {
       try {
         const payload = await readJsonBody(request);
-        const userId = decodeURIComponent(billingGrantProductMatch[1]);
-        const result = billingStore.grantProduct(userId, String(payload.productId || ""), "admin_simulation");
-        logOperation({ action: "billing.product_grant", category: "billing", targetType: "user", targetId: userId, summary: `为 ${userId} 模拟开通：${result.product.name}`, metadata: { productId: result.product.id, expiresAt: result.entitlement && result.entitlement.expiresAt, creditAmount: result.creditGrant && result.creditGrant.lot.grantedAmount } });
+        const userId = resolveBillingUserId(decodeURIComponent(billingGrantProductMatch[1]));
+        if (!userId) throw new Error("user_not_found");
+        const result = billingStore.purchaseProduct(userId, String(payload.productId || ""), { channel: "admin_simulation" });
+        logOperation({ action: "billing.product_grant", category: "billing", targetType: "user", targetId: userId, summary: `为 ${userId} 模拟开通：${result.product.name}`, metadata: { productId: result.product.id, orderId: result.order && result.order.id, expiresAt: result.entitlement && result.entitlement.expiresAt, beanAmount: result.beanGrant && result.beanGrant.lot.grantedAmount } });
         sendJson(response, 200, { success: true, ...result });
       } catch (error) {
-        sendJson(response, error.message === "billing_product_not_found" ? 404 : 422, { success: false, error: error.message });
+        sendJson(response, ["billing_product_not_found", "user_not_found"].includes(error.message) ? 404 : 422, { success: false, error: error.message });
       }
       return;
     }
 
+    const billingGrantBeansMatch = url.pathname.match(/^\/api\/admin\/billing\/users\/([^/]+)\/grant-beans$/);
+    if (request.method === "POST" && billingGrantBeansMatch) {
+      try {
+        const payload = await readJsonBody(request);
+        const userId = resolveBillingUserId(decodeURIComponent(billingGrantBeansMatch[1]));
+        if (!userId) throw new Error("user_not_found");
+        const expiresAt = Number(payload.validityDays) > 0 ? Date.now() + Number(payload.validityDays) * 24 * 60 * 60 * 1000 : null;
+        const result = billingStore.grantBeans(userId, {
+          amount: payload.amount,
+          source: String(payload.source || "admin_adjustment"),
+          sourceLabel: String(payload.description || "管理员发放"),
+          description: String(payload.description || "管理员发放"),
+          expiresAt,
+          referenceId: `admin-bean-${Date.now()}`,
+        });
+        logOperation({ action: "billing.bean_grant", category: "billing", targetType: "user", targetId: userId, summary: `为 ${userId} 发放 ${result.lot.grantedAmount} 豆币`, metadata: { source: result.lot.source, expiresAt: result.lot.expiresAt, balanceAfter: result.balanceAfter } });
+        sendJson(response, 200, { success: true, ...result });
+      } catch (error) {
+        sendJson(response, error.message === "user_not_found" ? 404 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 兼容旧后台页签：这条路径的语义**不变**，仍是「发放 AI 额度」，按 1 点 = 0.1 豆币折算入账。
     const billingGrantCreditsMatch = url.pathname.match(/^\/api\/admin\/billing\/users\/([^/]+)\/grant-credits$/);
     if (request.method === "POST" && billingGrantCreditsMatch) {
       try {
         const payload = await readJsonBody(request);
-        const userId = decodeURIComponent(billingGrantCreditsMatch[1]);
+        const userId = resolveBillingUserId(decodeURIComponent(billingGrantCreditsMatch[1]));
+        if (!userId) throw new Error("user_not_found");
         const expiresAt = Number(payload.validityDays) > 0 ? Date.now() + Number(payload.validityDays) * 24 * 60 * 60 * 1000 : null;
-        const result = billingStore.grantCredits(userId, {
-          amount: payload.amount,
+        const result = billingStore.grantBeans(userId, {
+          amount: roundBeans(Number(payload.amount) * BEANS_PER_CREDIT),
           source: String(payload.source || "admin_adjustment"),
           sourceLabel: String(payload.description || "管理员发放"),
           description: String(payload.description || "管理员发放"),
           expiresAt,
           referenceId: `admin-credit-${Date.now()}`,
         });
-        logOperation({ action: "billing.credit_grant", category: "billing", targetType: "user", targetId: userId, summary: `为 ${userId} 发放 ${result.lot.grantedAmount} 点 AI 额度`, metadata: { source: result.lot.source, expiresAt: result.lot.expiresAt, balanceAfter: result.balanceAfter } });
+        logOperation({ action: "billing.bean_grant", category: "billing", targetType: "user", targetId: userId, summary: `为 ${userId} 发放 ${result.lot.grantedAmount} 豆币（旧额度接口 ${payload.amount} 点折算）`, metadata: { source: result.lot.source, expiresAt: result.lot.expiresAt, balanceAfter: result.balanceAfter } });
+        sendJson(response, 200, { success: true, ...result, deprecatedPath: "/api/admin/billing/users/:id/grant-credits" });
+      } catch (error) {
+        sendJson(response, error.message === "user_not_found" ? 404 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 退款扣回：按订单扣回**未消费**的赠币/充值批次（DEC-107「套餐订单与赠币流水分开记账，以便退款时扣回赠币」）。
+    const billingOrderRefundMatch = url.pathname.match(/^\/api\/admin\/billing\/orders\/([^/]+)\/refund$/);
+    if (request.method === "POST" && billingOrderRefundMatch) {
+      try {
+        const payload = await readJsonBody(request);
+        const orderId = decodeURIComponent(billingOrderRefundMatch[1]);
+        // mode: "revoke"（默认，一般情况：退款即收回订阅权 + 扣回未消费赠币）
+        //       "refund_only"（仅退款：不收回订阅权、不扣回赠币）
+        const result = billingStore.refundOrder(orderId, { mode: String(payload.mode || "revoke"), reason: String(payload.reason || "") });
+        const modeLabel = result.mode === "refund_only" ? "仅退款（不收回权益与赠币）" : "退款（收回订阅权 + 扣回赠币）";
+        logOperation({ action: "billing.order_refund", category: "billing", targetType: "order", targetId: orderId, summary: `订单${modeLabel}${result.duplicated ? "（重复请求，未重复执行）" : `：扣回 ${result.clawedBackBeans} 豆币${result.revokedEntitlement ? "、订阅权已收回" : ""}`}`, metadata: { duplicated: result.duplicated, mode: result.mode, clawedBackBeans: result.clawedBackBeans, revokedEntitlementId: result.revokedEntitlement && result.revokedEntitlement.id } });
         sendJson(response, 200, { success: true, ...result });
       } catch (error) {
-        sendJson(response, 422, { success: false, error: error.message });
+        sendJson(response, error.message === "billing_order_not_found" ? 404 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 两件独立操作（退款之外也可单独执行，产品负责人 2026-10-03：收回订阅权与扣回赠币是分开的事）
+    const billingEntitlementRevokeMatch = url.pathname.match(/^\/api\/admin\/billing\/orders\/([^/]+)\/revoke-entitlement$/);
+    if (request.method === "POST" && billingEntitlementRevokeMatch) {
+      try {
+        const payload = await readJsonBody(request);
+        const orderId = decodeURIComponent(billingEntitlementRevokeMatch[1]);
+        const result = billingStore.revokeOrderEntitlement(orderId, String(payload.reason || ""));
+        logOperation({ action: "billing.entitlement_revoke", category: "billing", targetType: "order", targetId: orderId, summary: `收回订单订阅权${result.duplicated ? "（已收回，未重复执行）" : ""}`, metadata: { duplicated: result.duplicated, entitlementId: result.revokedEntitlement && result.revokedEntitlement.id } });
+        sendJson(response, 200, { success: true, ...result });
+      } catch (error) {
+        sendJson(response, error.message === "billing_order_not_found" ? 404 : 422, { success: false, error: error.message });
+      }
+      return;
+    }
+
+    const billingBeansClawBackMatch = url.pathname.match(/^\/api\/admin\/billing\/orders\/([^/]+)\/claw-back-beans$/);
+    if (request.method === "POST" && billingBeansClawBackMatch) {
+      try {
+        const payload = await readJsonBody(request);
+        const orderId = decodeURIComponent(billingBeansClawBackMatch[1]);
+        const result = billingStore.clawBackOrderBeans(orderId, String(payload.reason || ""));
+        logOperation({ action: "billing.beans_claw_back", category: "billing", targetType: "order", targetId: orderId, summary: `扣回订单未消费赠币 ${result.clawedBackBeans} 豆币`, metadata: { duplicated: result.duplicated, clawedBackBeans: result.clawedBackBeans } });
+        sendJson(response, 200, { success: true, ...result });
+      } catch (error) {
+        sendJson(response, error.message === "billing_order_not_found" ? 404 : 422, { success: false, error: error.message });
       }
       return;
     }
@@ -14241,6 +16694,7 @@ function createServer(options = {}) {
         }));
         if (!provider || !provider.enabled) throw new Error("provider_not_found_or_disabled");
         if (!provider.models.includes(model)) throw new Error("provider_model_not_found");
+        const notConversational = !isConversationalProtocol(provider.protocol);
         const result = await testProvider(provider, model, {
           systemPrompt: testPrompt.systemPrompt,
           userPrompt: renderPromptTemplate(testPrompt.userPromptTemplate || "", { providerName: provider.name, model }),
@@ -14255,12 +16709,84 @@ function createServer(options = {}) {
         });
         sendJson(response, 200, {
           success: true,
-          result: { ...result, providerId: provider.id, providerName: provider.name, viaTestRoute },
+          result: { ...result, providerId: provider.id, providerName: provider.name, viaTestRoute, protocol: provider.protocol, notConversational },
         });
       } catch (error) {
         if (task) aiTaskStore.finish(task.id, { status: "failed", errorCode: error.message, failureStage: "connection_test" });
         sendJson(response, 502, { success: false, error: error.message });
       }
+      return;
+    }
+
+    // 供应商批量接入 ① 解析文档（只读、不联网、不写库）：清单文档 → 候选供应商列表（密钥一律掩码）
+    if (request.method === "POST" && url.pathname === "/api/admin/ai/provider-batch/parse") {
+      try {
+        const payload = await readJsonBody(request, MAX_BATCH_TEXT_LENGTH + 64 * 1024);
+        const parsed = parseProviderBatchDocument(payload.text, providerBatchDefaults(payload));
+        sendJson(response, 200, {
+          success: true,
+          summary: parsed.summary,
+          warnings: parsed.warnings,
+          candidates: parsed.candidates.map(publicProviderBatchCandidate),
+        });
+      } catch (error) {
+        sendJson(response, providerBatchErrorStatus(error), { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 供应商批量接入 ② 开始批量测试（异步任务）：逐条测试，只把测试通过的写进供应商配置。
+    if (request.method === "POST" && url.pathname === "/api/admin/ai/provider-batch") {
+      try {
+        const payload = await readJsonBody(request, MAX_BATCH_TEXT_LENGTH + 64 * 1024);
+        const parsed = parseProviderBatchDocument(payload.text, providerBatchDefaults(payload));
+        const job = startProviderBatchJob({
+          candidates: parsed.candidates,
+          warnings: parsed.warnings,
+          savePassed: payload.savePassed !== false,
+          concurrency: payload.concurrency,
+          timeoutMs: payload.timeoutMs,
+          operator: (adminActorContext.getStore() || {}).username || "",
+        });
+        logOperation({
+          action: "ai_provider.batch_test",
+          category: "ai_config",
+          targetType: "ai_provider_batch",
+          targetId: job.id,
+          summary: `批量测试模型接口：${job.total} 条候选（测试通过后${job.savePassed ? "自动写入供应商列表" : "不写库"}）`,
+          metadata: { jobId: job.id, candidates: job.total, invalid: parsed.summary.invalid, duplicates: parsed.summary.duplicates, savePassed: job.savePassed, concurrency: job.concurrency },
+        });
+        sendJson(response, 200, { success: true, job: publicProviderBatchJob(job) });
+      } catch (error) {
+        sendJson(response, providerBatchErrorStatus(error), { success: false, error: error.message });
+      }
+      return;
+    }
+
+    // 供应商批量接入 ③ 轮询进度 / ④ 取消任务（结果只含掩码后的密钥）
+    const providerBatchMatch = url.pathname.match(/^\/api\/admin\/ai\/provider-batch\/([^/]+)$/);
+    if (providerBatchMatch && (request.method === "GET" || request.method === "DELETE")) {
+      const job = providerBatchRegistry.get(decodeURIComponent(providerBatchMatch[1]));
+      if (!job) {
+        sendJson(response, 404, { success: false, error: "provider_batch_job_not_found" });
+        return;
+      }
+      if (request.method === "DELETE") {
+        if (job.status === "running") {
+          job.cancelled = true;
+          logOperation({
+            action: "ai_provider.batch_cancel",
+            category: "ai_config",
+            targetType: "ai_provider_batch",
+            targetId: job.id,
+            summary: `取消批量测试模型接口：${job.id}`,
+            metadata: { jobId: job.id, done: job.results.length, total: job.total },
+          });
+        }
+        sendJson(response, 200, { success: true, job: publicProviderBatchJob(job) });
+        return;
+      }
+      sendJson(response, 200, { success: true, job: publicProviderBatchJob(job) });
       return;
     }
 
@@ -14275,8 +16801,11 @@ function createServer(options = {}) {
         return;
       }
 
-      // 封禁账号不能用付费 AI 功能（也会消耗额度）。
+      // 封禁账号不能用付费 AI 功能（也会消耗豆币）。
       if (guardBannedUser(response, request, payload.userId)) return;
+      const aiIdentity = resolveRequestIdentity(request, payload.userId, userAuthStore);
+      const aiUserId = aiIdentity.userId
+        || (developmentIdentityAllowed() ? String(payload.userId || "test-user") : "");
       const requestedFeature = String(payload.requestedFeature || "").trim();
       const question = typeof payload.question === "string" ? payload.question : "";
       if ((requestedFeature === "cloze" || requestedFeature === "highlight") && !question.trim()) {
@@ -14311,10 +16840,8 @@ function createServer(options = {}) {
         });
         return;
       }
-      const authenticated = userAuthStore.authenticate(bearerToken(request));
       // 缓存作用域：有会话用会话身份；匿名只在非正式环境沿用 test-user，正式环境归入 anonymous，避免冒名污染他人缓存。
-      const userScope = String(authenticated && authenticated.user && authenticated.user.id
-        || (developmentIdentityAllowed() ? payload.userId || "test-user" : "anonymous")).slice(0, 160);
+      const userScope = String(aiUserId || (developmentIdentityAllowed() ? "test-user" : "anonymous")).slice(0, 160);
       const cacheKey = cardAssistanceCacheKey(source, scene, userScope);
       const requestId = String(payload.requestId || `card-memory-${Date.now()}`);
       const resultForResponse = (result) => ({ ...result, requestId });
@@ -14352,6 +16879,7 @@ function createServer(options = {}) {
       }
 
       const task = aiTaskStore.start(aiTaskMetadata(config, "card_memory_assistance", { ...payload, requestId }, {
+        userId: aiUserId,
         providerId: scene.provider.id,
         providerName: scene.provider.name,
         protocol: scene.provider.protocol,
@@ -14478,6 +17006,9 @@ function createServer(options = {}) {
         return;
       }
       if (guardBannedUser(response, request, payload.userId)) return;
+      const aiIdentity = resolveRequestIdentity(request, payload.userId, userAuthStore);
+      const aiUserId = aiIdentity.userId
+        || (developmentIdentityAllowed() ? String(payload.userId || "test-user") : "");
       const config = aiConfigStore.load();
       const route = config.routes.learning_diagnosis;
       const provider = route && route.mode === "provider"
@@ -14493,6 +17024,7 @@ function createServer(options = {}) {
         return;
       }
       const task = aiTaskStore.start(aiTaskMetadata(config, "learning_diagnosis", payload, {
+        userId: aiUserId,
         inputSummary: {
           subject,
           unitCount: Array.isArray(payload.unitProfile) ? payload.unitProfile.length : 0,
@@ -14545,8 +17077,12 @@ function createServer(options = {}) {
         return;
       }
       if (guardBannedUser(response, request, payload.userId)) return;
+      const aiIdentity = resolveRequestIdentity(request, payload.userId, userAuthStore);
+      const aiUserId = aiIdentity.userId
+        || (developmentIdentityAllowed() ? String(payload.userId || "test-user") : "");
       const config = aiConfigStore.load();
       const task = aiTaskStore.start(aiTaskMetadata(config, "explanation_chat", payload, {
+        userId: aiUserId,
         streaming: true,
         inputSummary: {
           questionId: String(payload.questionId || ""),
@@ -14567,6 +17103,7 @@ function createServer(options = {}) {
       let contextMs = 0;
       try {
         const storedQuestion = questionStore.get(payload.questionId);
+        if (!isUserVisibleQuestion(storedQuestion)) throw new Error("question_not_found");
         const retrievalStartedAt = Date.now();
         const evidenceChunks = retrieveQuestionEvidence(storedQuestion, payload.userMessage, 4);
         retrievalMs = Date.now() - retrievalStartedAt;
@@ -14701,8 +17238,12 @@ function createServer(options = {}) {
         return;
       }
       if (guardBannedUser(response, request, payload.userId)) return;
+      const aiIdentity = resolveRequestIdentity(request, payload.userId, userAuthStore);
+      const aiUserId = aiIdentity.userId
+        || (developmentIdentityAllowed() ? String(payload.userId || "test-user") : "");
       const config = aiConfigStore.load();
       const task = aiTaskStore.start(aiTaskMetadata(config, "explanation_chat", payload, {
+        userId: aiUserId,
         streaming: false,
         inputSummary: {
           questionId: String(payload.questionId || ""),
@@ -14716,6 +17257,7 @@ function createServer(options = {}) {
       let contextMs = 0;
       try {
         const storedQuestion = questionStore.get(payload.questionId);
+        if (!isUserVisibleQuestion(storedQuestion)) throw new Error("question_not_found");
         const retrievalStartedAt = Date.now();
         const evidenceChunks = retrieveQuestionEvidence(storedQuestion, payload.userMessage, 4);
         retrievalMs = Date.now() - retrievalStartedAt;
@@ -14789,10 +17331,14 @@ function createServer(options = {}) {
         return;
       }
       if (guardBannedUser(response, request, payload.userId)) return;
+      const aiIdentity = resolveRequestIdentity(request, payload.userId, userAuthStore);
+      const aiUserId = aiIdentity.userId
+        || (developmentIdentityAllowed() ? String(payload.userId || "test-user") : "");
       const config = aiConfigStore.load();
       const isRescore = payload.rescore === true;
       const route = config.routes.subjective_scoring;
       const task = aiTaskStore.start(aiTaskMetadata(config, "subjective_scoring", payload, {
+        userId: aiUserId,
         model: isRescore && route.reviewModel ? route.reviewModel : route.model,
         inputSummary: {
           questionId: String(payload.questionId || ""),
@@ -14800,8 +17346,9 @@ function createServer(options = {}) {
           rescore: isRescore,
         },
       }));
-      const question = clientQuestionPayload(questionStore.get(payload.questionId));
-      if (!question || question.answerMode !== "text" || typeof payload.answer !== "string") {
+      const storedQuestion = questionStore.get(payload.questionId);
+      const question = clientQuestionPayload(storedQuestion);
+      if (!question || !isUserVisibleQuestion(storedQuestion) || question.answerMode !== "text" || typeof payload.answer !== "string") {
         aiTaskStore.finish(task.id, { status: "failed", errorCode: "invalid_scoring_request", failureStage: "request_validation" });
         sendJson(response, 400, { success: false, chargeable: false, error: "invalid_scoring_request" });
         return;
@@ -14965,9 +17512,42 @@ function createServer(options = {}) {
   // 每个请求独立一份操作人上下文，避免并发请求串号。
   const server = http.createServer((request, response) => {
     const adminActor = { username: "", displayName: "", role: "", accountId: "" };
-    return adminActorContext.run(adminActor, () => handleRequest(request, response));
+    // 2026-10-09：请求处理里任何未捕获异常都只应毁掉这一个请求，不能带走整个后台。
+    // （历史实例：2026-10-03 一个计费看板的 TypeError 让进程直接退出，随后页面上所有操作都变成
+    //  「Failed to fetch」，看不出真因。）这里统一兜住：写一条 stderr，再回 500 JSON。
+    return adminActorContext.run(adminActor, () => handleRequest(request, response)).catch((error) => {
+      const message = String((error && error.stack) || error || "unknown_error");
+      process.stderr.write(`[薯考 API] 请求处理未捕获异常 ${request.method} ${request.url}：${message}\n`);
+      try {
+        if (!response.headersSent) sendJson(response, 500, { success: false, error: "internal_error" });
+        else response.end();
+      } catch (sendError) {
+        try { response.destroy(); } catch (destroyError) { /* 连接已断，忽略 */ }
+      }
+    });
   });
+  const sweepAccountRetention = () => {
+    try {
+      if (typeof moderationStore.sweepExpired === "function") moderationStore.sweepExpired();
+      if (typeof userRestrictionStore.sweep === "function") userRestrictionStore.sweep();
+    } catch (error) {
+      // 留存清理失败不能影响正常请求；下一次启动或定时周期会重试。
+    }
+  };
+  sweepAccountRetention();
+  const retentionTimer = setInterval(sweepAccountRetention, 24 * 60 * 60 * 1000);
+  if (typeof retentionTimer.unref === "function") retentionTimer.unref();
+  server.once("close", () => clearInterval(retentionTimer));
   server.once("listening", () => {
+    // 出站代理状态：只在真正以本文件为入口启动时打一行日志（测试里创建的内存服务器不打，免得刷屏）。
+    if (require.main === module) {
+      const proxyStatus = outboundProxyStatus();
+      if (proxyStatus.mode === "env_active") {
+        process.stdout.write(`[薯考 API] 出站走代理 ${proxyStatus.url}（${proxyStatus.source}）\n`);
+      } else if (proxyStatus.url) {
+        process.stdout.write(`[薯考 API] 提示：出站未走代理，但检测到系统代理 ${proxyStatus.url}；Node 的 fetch 默认不读系统代理，上游按地区限制时会返回 451。重启方式：${proxyStatus.hint}\n`);
+      }
+    }
     if (options.recoverExamImportJobs !== true) return;
     const address = server.address();
     const baseUrl = `http://127.0.0.1:${address && typeof address === "object" ? address.port : 3212}`;

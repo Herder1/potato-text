@@ -1,68 +1,232 @@
-<view class="favorites-page">
-  <view class="favorites-head">
-    <view>
-      <view class="page-title">我的收藏</view>
-      <view class="page-subtitle">收藏的公开内容是引用关系，取消收藏不会影响原作者的内容</view>
+<!-- 「我的收藏」新版（DEC-096 + 2026-09-23 04:0x 修订，2026-09-23）
+     目录入口在**自绘导航栏左上角**（← 返回 之后那颗图标），替代原来的整行目录卡片（产品负责人当天用箭头指出）。
+     这一页没有底部导航；导航栏自绘（navigationStyle: custom），必须让开状态栏与右上角胶囊。
+     显隐一律走 wx:if（AGENTS §6：小程序不用 hidden + 作者 display 的组合）。
+     2026-09-23 04:7x：产品负责人把导航栏中间那行「我的收藏」框成绿框、原话「去掉绿框中的文字」——中间不再画标题
+     （页面身份靠左上角的返回 + 目录两颗图标与页面内容本身；`app.json` 的 `navigationBarTitleText` 只是页面注册名，自绘导航栏下不渲染）。 -->
+<view class="fav-nav" style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;">
+  <view class="fav-nav-leading">
+    <view class="fav-nav-button" bindtap="goBack" role="button" aria-label="返回">
+      <image src="/assets/icons/arrow-left.svg" mode="aspectFit"/>
+    </view>
+    <view class="fav-nav-button" bindtap="openDirectory" role="button" aria-label="收藏目录">
+      <image src="/assets/icons/list.svg" mode="aspectFit"/>
+    </view>
+  </view>
+</view>
+<view style="height: {{navTotalHeight}}px;"></view>
+
+<view class="page">
+  <!-- 搜索 + 筛选 + 排序（产品负责人 2026-09-23 04:4x：「可在图2全部收藏上面加个搜索框，搜索框右边是筛选，筛选右边是排序」）。
+       排序那颗沿用原来那颗图标（⇅），但不带圆框了；筛选是漏斗标。 -->
+  <view class="search-row">
+    <view class="search-box">
+      <image class="search-icon" src="/assets/icons/search.svg" mode="aspectFit"/>
+      <input
+        class="search-input"
+        value="{{keyword}}"
+        placeholder="搜索收藏"
+        placeholder-class="search-placeholder"
+        confirm-type="search"
+        bindinput="onKeyword"
+      />
+      <view wx:if="{{keyword}}" class="search-clear" bindtap="clearKeyword" role="button" aria-label="清空搜索">
+        <image src="/assets/icons/x.svg" mode="aspectFit"/>
+      </view>
+    </view>
+    <view class="search-tool {{view.typeFilter ? 'search-tool-active' : ''}}" bindtap="openFilter" role="button" aria-label="筛选">
+      <image src="/assets/icons/filter.svg" mode="aspectFit"/>
+    </view>
+    <view class="search-tool" bindtap="toggleSort" role="button" aria-label="切换排序">
+      <image src="/assets/icons/sort.svg" mode="aspectFit"/>
     </view>
   </view>
 
-  <view class="favorites-section">
-    <view class="favorites-section-head">
-      <view class="favorites-section-title">收藏的公开内容</view>
-      <text class="favorites-section-count">{{communityItems.length}} 项</text>
+  <!-- 当前文件夹 -->
+  <view class="folder-head">
+    <view class="folder-head-icon"><image src="/assets/icons/bookmark.svg" mode="aspectFit"/></view>
+    <view class="folder-head-text">
+      <text class="folder-head-title">{{view.folderTitle}}</text>
+      <text class="folder-head-sub">{{view.folderCountLabel}}</text>
     </view>
+  </view>
 
-    <view class="favorites-login" wx:if="{{!loggedIn}}">
-      <text>{{communityError || '登录后可查看你在社区收藏的公开内容'}}</text>
-      <button class="favorites-action" bindtap="goLogin">去登录</button>
+  <!-- 子文件夹标签：选中文件夹后才出现（「全部 n」+ 各子文件夹） -->
+  <scroll-view wx:if="{{view.activeFolderId && view.chips.length > 1}}" class="chip-row" scroll-x enable-flex>
+    <view
+      wx:for="{{view.chips}}"
+      wx:key="id"
+      class="chip {{item.active ? 'chip-active' : ''}}"
+      data-id="{{item.id}}"
+      bindtap="selectChip"
+    >
+      <text class="chip-label">{{item.label}}</text>
+      <text class="chip-count">{{item.count}}</text>
     </view>
+  </scroll-view>
 
-    <view class="favorites-tip" wx:elif="{{loadingCommunity}}">正在加载…</view>
+  <!-- 未登录提示（题目收藏是本机书签，未登录也能看） -->
+  <view wx:if="{{!loggedIn}}" class="notice">
+    <text class="notice-text">登录后可以在同一张列表里看到收藏的公开内容，并为收藏建文件夹。</text>
+    <view class="notice-action" bindtap="goLogin">去登录</view>
+  </view>
 
-    <view class="favorites-login" wx:elif="{{communityError}}">
-      <text>{{communityError}}</text>
-      <button class="favorites-action" bindtap="retryCommunity">重试</button>
-    </view>
+  <!-- 收藏加载失败提示（可下拉重试） -->
+  <view wx:if="{{loggedIn && communityError}}" class="notice notice-warn">
+    <text class="notice-text">{{communityError}}</text>
+    <view class="notice-action" bindtap="retryCommunity">重试</view>
+  </view>
 
-    <view class="favorites-empty" wx:elif="{{!communityItems.length}}">
-      <text>还没有收藏公开内容</text>
-      <button class="favorites-action" bindtap="browseCommunity">去知识库看看</button>
-    </view>
+  <!-- 收藏目录（文件夹/置顶）加载失败：与上面那条是两件事，分开提示、各自重试 -->
+  <view wx:if="{{loggedIn && organizationError}}" class="notice notice-warn">
+    <text class="notice-text">{{organizationError}}</text>
+    <view class="notice-action" bindtap="retryOrganization">重试</view>
+  </view>
 
-    <view class="favorites-list" wx:else>
-      <view class="favorite-card" wx:for="{{communityItems}}" wx:key="id">
-        <view class="favorite-card-head">
-          <text class="favorite-type">{{item.typeLabel}}</text>
-          <text class="favorite-status" wx:if="{{item.statusLabel}}">{{item.statusLabel}}</text>
-          <text class="favorite-count">{{item.favoriteCount}} 人收藏</text>
-        </view>
-        <view class="favorite-title">{{item.title}}</view>
-        <view class="favorite-excerpt" wx:if="{{item.excerpt}}">{{item.excerpt}}</view>
-        <view class="favorite-card-foot">
-          <text class="favorite-contributor">{{item.contributor}}</text>
-          <button class="favorites-action" data-id="{{item.id}}" catchtap="removeCommunityFavorite">取消收藏</button>
-        </view>
+  <!-- 收藏列表（社区收藏 + 题目收藏合并，置顶恒在最前） -->
+  <view class="favorite-list">
+    <view
+      wx:for="{{view.items}}"
+      wx:key="key"
+      class="favorite-card"
+      data-key="{{item.key}}"
+      data-kind="{{item.kind}}"
+      data-id="{{item.refId}}"
+      data-type="{{item.type}}"
+      bindtap="openItem"
+      bindlongpress="openSheet"
+    >
+      <view class="favorite-card-head">
+        <text class="favorite-tag">{{item.tag}}</text>
+        <text class="favorite-title">{{item.title}}</text>
+        <text wx:if="{{item.statusLabel}}" class="favorite-status">{{item.statusLabel}}</text>
+        <text wx:if="{{item.pinned}}" class="favorite-pin">置顶</text>
+        <text class="favorite-arrow">›</text>
+      </view>
+      <view wx:if="{{item.excerpt}}" class="favorite-excerpt">{{item.excerpt}}</view>
+      <view class="favorite-card-foot">
+        <text class="favorite-source">{{item.sourceLine}}</text>
+        <text class="favorite-date">{{item.dateLabel}}</text>
       </view>
     </view>
   </view>
 
-  <view class="favorites-section">
-    <view class="favorites-section-head">
-      <view class="favorites-section-title">收藏的题目</view>
-      <text class="favorites-section-count">{{questionItems.length}} 项</text>
+  <!-- 空态 -->
+  <view wx:if="{{!view.items.length && !loading}}" class="empty">
+    <text class="empty-title">{{view.emptyLabel}}</text>
+    <!-- 列表是"加载失败"而不是"真的空"时，不引导去逛知识库（那会让人以为自己的收藏没了）；
+         是"筛出来没有"时给一键清空，而不是把人晾在空列表前。 -->
+    <view wx:if="{{view.listLoaded && view.hasFilter}}" class="empty-action" bindtap="clearFilters">清空筛选条件</view>
+    <view wx:elif="{{view.listLoaded}}" class="empty-action" bindtap="browseCommunity">去逛逛知识库</view>
+  </view>
+
+  <!-- 筛选面板（类型） -->
+  <view wx:if="{{filterOpen}}" class="sheet-mask" bindtap="closeFilter"></view>
+  <view wx:if="{{filterOpen}}" class="action-sheet">
+    <view class="sheet-grabber"></view>
+    <view class="sheet-title">按类型筛选</view>
+    <view class="sheet-sub">{{view.folderTitle}} · {{view.scopedCount}} 条</view>
+    <view class="picker">
+      <view
+        wx:for="{{view.typeOptions}}"
+        wx:key="value"
+        class="picker-row {{item.active ? 'picker-row-active' : ''}}"
+        data-value="{{item.value}}"
+        bindtap="selectFilterType"
+      >
+        <text>{{item.label}}</text>
+        <text class="picker-count">{{item.count}}</text>
+        <text wx:if="{{item.active}}" class="picker-check">✓</text>
+      </view>
+    </view>
+    <view class="sheet-cancel" bindtap="closeFilter">完成</view>
+  </view>
+
+  <!-- 长按操作面板 -->
+  <view wx:if="{{sheet}}" class="sheet-mask" bindtap="closeSheet"></view>
+  <view wx:if="{{sheet}}" class="action-sheet">
+    <view class="sheet-grabber"></view>
+    <view class="sheet-title">{{sheet.title}}</view>
+    <view class="sheet-sub">{{sheet.sourceLine}}</view>
+
+    <!-- 移到文件夹（文件夹选择器） -->
+    <view wx:if="{{pickerOpen}}" class="picker">
+      <view
+        wx:for="{{pickerOptions}}"
+        wx:key="id"
+        class="picker-row {{item.indent ? 'picker-row-child' : ''}} {{sheet.folderId === item.id ? 'picker-row-active' : ''}}"
+        data-id="{{item.id}}"
+        bindtap="selectFolderOption"
+      >
+        <text>{{item.name}}</text>
+        <text wx:if="{{sheet.folderId === item.id}}" class="picker-check">✓</text>
+      </view>
+      <view class="picker-cancel" bindtap="closeSheet">返回</view>
     </view>
 
-    <view class="favorites-empty" wx:if="{{!questionItems.length}}">
-      <text>还没有收藏题目</text>
+    <view wx:if="{{!pickerOpen}}" class="sheet-actions">
+      <view class="sheet-row" bindtap="togglePin">
+        <view class="sheet-row-icon sheet-row-icon-teal"><image src="/assets/icons/pin.svg" mode="aspectFit"/></view>
+        <text class="sheet-row-label">{{sheet.pinned ? '取消置顶' : '置顶收藏'}}</text>
+      </view>
+      <view class="sheet-row" bindtap="openFolderPicker">
+        <view class="sheet-row-icon sheet-row-icon-teal"><image src="/assets/icons/card-move.svg" mode="aspectFit"/></view>
+        <text class="sheet-row-label">移到文件夹…</text>
+      </view>
+      <view class="sheet-row" bindtap="deleteFavorite">
+        <view class="sheet-row-icon sheet-row-icon-red"><image src="/assets/icons/card-delete.svg" mode="aspectFit"/></view>
+        <text class="sheet-row-label sheet-row-label-danger">删除收藏</text>
+      </view>
+      <view class="sheet-cancel" bindtap="closeSheet">取消</view>
+    </view>
+  </view>
+
+  <!-- 收藏目录抽屉 -->
+  <view wx:if="{{directoryOpen}}" class="directory-mask" bindtap="closeDirectory"></view>
+  <view wx:if="{{directoryOpen}}" class="directory-drawer" style="padding-top: {{drawerPaddingTop}}px;">
+    <view class="drawer-head">
+      <view class="drawer-head-text">
+        <text class="drawer-title">收藏目录</text>
+        <text class="drawer-sub">{{view.directorySubtitle}}</text>
+      </view>
+      <view class="drawer-close" bindtap="closeDirectory" role="button" aria-label="关闭目录">
+        <image src="/assets/icons/x.svg" mode="aspectFit"/>
+      </view>
     </view>
 
-    <view class="favorites-list" wx:else>
-      <view class="favorite-question" wx:for="{{questionItems}}" wx:key="id">
-        <view class="favorite-question-main" data-id="{{item.id}}" bindtap="openQuestion">
-          <view class="favorite-title">{{item.stem}}</view>
-          <view class="favorite-breadcrumb" wx:if="{{item.breadcrumb}}">{{item.breadcrumb}}</view>
+    <scroll-view class="drawer-list" scroll-y>
+      <view
+        class="drawer-row {{view.allFolder.active ? 'drawer-row-active' : ''}}"
+        data-id=""
+        bindtap="selectFolder"
+      >
+        <view class="drawer-row-icon"><image src="/assets/icons/bookmark.svg" mode="aspectFit"/></view>
+        <text class="drawer-row-name">全部收藏</text>
+        <text class="drawer-row-count">{{view.allFolder.count}}</text>
+      </view>
+      <view
+        wx:for="{{view.folders}}"
+        wx:key="id"
+        class="drawer-row {{item.active ? 'drawer-row-active' : ''}}"
+        data-id="{{item.id}}"
+        bindtap="selectFolder"
+      >
+        <view class="drawer-row-icon"><image src="/assets/icons/folder.svg" mode="aspectFit"/></view>
+        <text class="drawer-row-name">{{item.name}}</text>
+        <text class="drawer-row-count">{{item.count}}</text>
+        <text wx:if="{{item.active}}" class="drawer-row-arrow">›</text>
+      </view>
+      <view wx:if="{{!view.folders.length}}" class="drawer-empty">{{view.directoryLoaded ? '还没有文件夹，点下面的「分类管理」新建。' : '目录暂不可用，下拉可重试。'}}</view>
+    </scroll-view>
+
+    <view class="drawer-foot">
+      <view class="drawer-manage" bindtap="openManage" role="button" aria-label="打开分类管理">
+        <view class="drawer-manage-icon"><image src="/assets/icons/pack-folder.svg" mode="aspectFit"/></view>
+        <view class="drawer-manage-text">
+          <text class="drawer-manage-title">分类管理</text>
+          <text class="drawer-manage-sub">管理与新建文件夹</text>
         </view>
-        <button class="favorites-action" data-id="{{item.id}}" catchtap="removeQuestionFavorite">取消收藏</button>
+        <text class="drawer-manage-arrow">›</text>
       </view>
     </view>
   </view>

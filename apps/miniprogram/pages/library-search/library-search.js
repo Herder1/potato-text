@@ -148,7 +148,7 @@ Page({
       return;
     }
     if (result.scope === "pack" && result.sourceKind === "private") {
-      wx.navigateTo({ url: `/pages/pack-collection/pack-collection?id=${encodeURIComponent(result.id)}` });
+      wx.navigateTo({ url: `/pages/pack-collection/pack-collection?id=${encodeURIComponent(result.id)}&source=private` });
       return;
     }
     if (result.scope === "pack") {

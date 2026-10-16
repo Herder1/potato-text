@@ -87,7 +87,7 @@ test("knowledge page switches public card channels without creation controls", (
   assert.equal(page.data.selectedLibraryAsset.questions.length, 1);
   page.setData({ selectedLibraryAsset: { ...page.data.selectedLibraryAsset, importedPackId: "local-pack" } });
   page.openSelectedPack();
-  assert.equal(navigatedUrl, "/pages/pack-collection/pack-collection?id=local-pack");
+  assert.equal(navigatedUrl, "/pages/pack-collection/pack-collection?id=local-pack&source=private");
   page.closeLibraryAsset();
 
   page.showRecommendation();

@@ -736,96 +736,6 @@
   flex: 1;
 }
 
-.annotation-response {
-  margin-top: 24rpx;
-}
-
-.annotation-toolbar {
-  display: flex;
-  margin-bottom: 14rpx;
-  gap: 8rpx;
-  overflow-x: auto;
-}
-
-.annotation-toolbar button {
-  display: flex;
-  min-width: 108rpx;
-  height: 58rpx;
-  margin: 0;
-  padding: 0 16rpx;
-  align-items: center;
-  justify-content: center;
-  color: #687069;
-  background: #eeeeec;
-  border-radius: 6rpx;
-  font-size: 19rpx;
-  line-height: 1;
-}
-
-.annotation-toolbar .annotation-tool-active {
-  color: #ffffff;
-  background: #343a36;
-}
-
-.annotation-paper {
-  display: flex;
-  min-height: 180rpx;
-  padding: 24rpx;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  background: #fbfbfa;
-  border: 1rpx solid #dedfdb;
-  border-radius: 8rpx;
-  line-height: 1.9;
-}
-
-.annotation-character {
-  position: relative;
-  display: inline-flex;
-  min-width: 1em;
-  min-height: 1.9em;
-  align-items: center;
-  justify-content: center;
-}
-
-.annotation-underline {
-  border-bottom: 3rpx solid #3f6fca;
-}
-
-.annotation-wave {
-  text-decoration-color: #c45148;
-  text-decoration-line: underline;
-  text-decoration-style: wavy;
-}
-
-.annotation-symbol {
-  position: absolute;
-  right: 0;
-  bottom: -13rpx;
-  left: 0;
-  color: #b94b43;
-  font-size: 20rpx;
-  line-height: 1;
-  text-align: center;
-}
-
-.annotation-subscript .annotation-symbol {
-  color: #4f6c9d;
-  font-size: 18rpx;
-}
-
-.annotation-response textarea {
-  width: 100%;
-  min-height: 120rpx;
-  margin-top: 14rpx;
-  padding: 18rpx;
-  background: #f5f5f3;
-  border-radius: 8rpx;
-  box-sizing: border-box;
-  color: #444944;
-  font-size: 24rpx;
-}
-
 .answer-variant {
   margin-top: 14rpx;
   padding-top: 14rpx;
@@ -1606,6 +1516,16 @@
   font-weight: 500;
 }
 
+/* 综合训练里科目行左侧的"待归组"提示：与正式投影题数分开命名、分开计数（不是正式题数的一部分），
+   用更弱的字重和颜色，避免被读成"这一科有这么多题"。 */
+.catalog-pending {
+  margin-left: 12rpx;
+  flex: 0 0 auto;
+  color: #b3925f;
+  font-size: 19rpx;
+  font-weight: 500;
+}
+
 .catalog-sections {
   margin-left: 42rpx;
   padding-left: 18rpx;
@@ -1635,6 +1555,28 @@
 .catalog-level-3 {
   padding-left: 34rpx;
   font-size: 22rpx;
+}
+
+/* 综合训练的目录是「科目 → 章/编/单元 → 节 → 小点」：三级往下要继续缩进，否则浅层和深层看起来一样平。 */
+.catalog-level-4 {
+  padding-left: 58rpx;
+  font-size: 21rpx;
+}
+
+.catalog-level-5 {
+  padding-left: 82rpx;
+  font-size: 20rpx;
+}
+
+/* 科目行是综合训练目录的根：比册内章标题再重一点，和下面的章/编区分开。 */
+.catalog-subject {
+  color: #171717;
+  font-weight: 800;
+}
+
+.catalog-subject .catalog-question-count {
+  color: #2e745b;
+  font-weight: 600;
 }
 
 .catalog-section-title {
@@ -2573,7 +2515,15 @@
   -webkit-line-clamp: 2;
 }
 
+.ai-history-delete {
+  flex-shrink: 0;
+  padding: 8rpx;
+  color: #a13f39;
+}
+
 .ai-history-item-meta {
+  flex-wrap: wrap;
+  gap: 10rpx;
   display: flex;
   margin-top: 10rpx;
   color: #989c99;
@@ -2671,31 +2621,247 @@
 }
 
 .exam-submit-action {
-  height: 80rpx;
-  margin-top: 30rpx;
-  line-height: 80rpx;
-}
-
-.exam-result-summary {
   display: flex;
-  margin-top: 24rpx;
-  padding: 22rpx 24rpx;
-  align-items: flex-end;
-  justify-content: space-between;
-  color: #66706a;
-  background: #eef3f0;
-  border-radius: 8rpx;
-  font-size: 21rpx;
+  width: 320rpx;
+  max-width: 100%;
+  height: 88rpx;
+  margin: 30rpx auto 0;
+  padding: 0 20rpx;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
 }
 
-.exam-result-summary > view:first-child {
+.exam-submit-action-pressed {
+  background: #444444;
+}
+
+.exam-result-entry {
+  min-width: 112rpx;
+  height: 52rpx;
+  margin: 0;
+  padding: 0 8rpx;
+  color: #ad4240;
+  background: transparent;
+  font-size: 22rpx;
+  line-height: 52rpx;
+}
+
+.exam-result-page {
+  position: fixed;
+  z-index: 2200;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  background: #f7f7f5;
+}
+
+.exam-result-nav {
+  position: relative;
+  display: flex;
+  width: 100%;
+  flex: 0 0 auto;
+  align-items: center;
+  background: #fbfbfa;
+  border-bottom: 1rpx solid #e5e5e2;
+  box-sizing: border-box;
   color: #303330;
+}
+
+.exam-result-back {
+  display: flex;
+  width: 88rpx;
+  height: 88rpx;
+  margin-left: 14rpx;
+  flex: 0 0 88rpx;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8rpx;
+}
+
+.exam-result-nav-title {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  max-width: 240rpx;
+  overflow: hidden;
+  font-size: 30rpx;
+  font-weight: 700;
+  text-align: center;
+  text-overflow: ellipsis;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.exam-result-scroll {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+}
+
+.exam-score-panel {
+  padding: 52rpx 36rpx 40rpx;
+  background: #ffffff;
+  text-align: center;
+}
+
+.exam-score-caption {
+  color: #68716b;
+  font-size: 24rpx;
+}
+
+.exam-score-value {
+  margin: 12rpx 0;
+  color: #303330;
+  font-size: 88rpx;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.exam-score-value text {
+  color: #68716b;
+  font-size: 30rpx;
+  font-weight: 400;
+}
+
+.exam-score-meta,
+.exam-score-note {
+  color: #68716b;
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+
+.exam-score-note {
+  margin-top: 16rpx;
+  color: #9a6700;
+}
+
+.exam-review-heading {
+  display: flex;
+  padding: 36rpx 30rpx 18rpx;
+  justify-content: space-between;
+  color: #303330;
+  font-size: 30rpx;
   font-weight: 700;
 }
 
-.exam-result-summary text {
-  font-size: 42rpx;
-  font-weight: 900;
+.exam-review-heading text:last-child {
+  color: #68716b;
+  font-size: 24rpx;
+  font-weight: 400;
+}
+
+.exam-review-empty {
+  padding: 48rpx 30rpx;
+  color: #68716b;
+  background: #ffffff;
+  font-size: 26rpx;
+  text-align: center;
+}
+
+.exam-review-list {
+  width: 100%;
+  padding: 0 20rpx;
+  box-sizing: border-box;
+}
+
+.exam-review-item {
+  display: block;
+  width: 100%;
+  min-height: 160rpx;
+  margin: 0 0 16rpx;
+  padding: 24rpx;
+  background: #ffffff;
+  border: 1rpx solid #e5e5e2;
+  border-radius: 16rpx;
+  box-sizing: border-box;
+  text-align: left;
+  white-space: normal;
+}
+
+.exam-review-item-pressed {
+  background: #f2f5f2;
+}
+
+.exam-review-item-head {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  color: #303330;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+.exam-review-status {
+  color: #ad4240;
+}
+
+.exam-review-status-partial,
+.exam-review-status-pending {
+  color: #9a6700;
+}
+
+.exam-review-status-empty {
+  color: #68716b;
+}
+
+.exam-review-points {
+  margin-left: auto;
+  color: #68716b;
+  font-size: 22rpx;
+  font-weight: 400;
+}
+
+.exam-review-stem {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 14rpx 0;
+  color: #303330;
+  font-size: 27rpx;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.exam-review-answer,
+.exam-review-correct {
+  overflow-wrap: anywhere;
+  color: #68716b;
+  font-size: 23rpx;
+  line-height: 1.5;
+}
+
+.exam-review-correct {
+  color: #33805e;
+}
+
+.exam-result-actions {
+  display: flex;
+  min-height: calc(120rpx + env(safe-area-inset-bottom));
+  padding: 0 24rpx env(safe-area-inset-bottom);
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border-top: 1rpx solid #e5e5e2;
+  box-sizing: border-box;
+}
+
+.exam-result-action {
+  display: flex;
+  width: 320rpx;
+  max-width: 100%;
+  height: 88rpx;
+  padding: 0 20rpx;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+}
+
+.exam-result-action-pressed {
+  background: #444444;
 }
 
 .utility-context-title {
@@ -3106,4 +3272,16 @@
 
 .chapter-scope-active .chapter-scope-count {
   color: #d7d9d7;
+}
+
+/* 反馈提交按钮：按钮内文字上下左右居中（产品负责人 2026-10-01）──────────────
+   只改"居中方式"，不动按钮宽度/位置/弹层布局：用 flex 双向居中，并把 line-height 归 1
+   （原来靠 height 与 line-height 相等来对垂直，字体度量不同就会看着偏）。
+   与仓库既有的 .submit-button 写法一致（display:flex + align-items/justify-content + line-height:1）。 */
+.feedback-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  text-align: center;
 }

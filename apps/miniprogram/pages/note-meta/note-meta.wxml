@@ -8,7 +8,7 @@
   </view>
 
   <view class="section-head"><view>推荐目录</view><text>{{recommendationLevel}}</text></view>
-  <view class="recommendation-note"><text>本地推荐 · 不扣 AI 额度</text><view>{{recommendationReason}}</view></view>
+  <view class="recommendation-note"><text>本地推荐 · 不扣豆币</text><view>{{recommendationReason}}</view></view>
   <view class="directory-panel">
     <picker range="{{subjects}}" range-key="name" value="{{subjectIndex}}" bindchange="chooseSubject"><view class="directory-row"><text>科目</text><view>{{catalogResolved.subject ? subjects[subjectIndex].name : '请选择科目'}} ›</view></view></picker>
     <picker disabled="{{!catalogResolved.subject}}" range="{{books}}" range-key="title" value="{{bookIndex}}" bindchange="chooseBook"><view class="directory-row {{!catalogResolved.subject ? 'directory-row-disabled' : ''}}"><text>教材</text><view>{{catalogResolved.book ? (books[bookIndex].title + ' ' + books[bookIndex].volume) : '请选择教材'}} ›</view></view></picker>

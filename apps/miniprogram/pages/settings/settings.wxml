@@ -1,0 +1,49 @@
+<view class="page-shell settings-page">
+  <view class="sync-actions">
+    <button class="sync-button" bindtap="retryPersonalAssets" disabled="{{cloudBusy || !loggedIn}}" loading="{{cloudBusy}}">
+      <text class="sync-icon">⟳</text><text>重试同步</text>
+    </button>
+    <button class="sync-button" bindtap="exportPersonalAssets" disabled="{{cloudBusy || !loggedIn}}">
+      <text class="sync-icon">⤓</text><text>导出我的数据</text>
+    </button>
+  </view>
+  <view class="sync-status">{{personalSyncLabel}}</view>
+  <view class="cloud-warning" wx:if="{{blockedCount}}">{{blockedCount}} 条内容含本机附件或超过同步大小限制，尚未上传。附件云存储未接通，请勿清除本机缓存。</view>
+  <view class="cloud-warning" wx:if="{{draftCount}}">{{draftCount}} 篇笔记草稿仅保留在本机，完成保存后才会同步。</view>
+  <view class="cloud-warning" wx:if="{{unownedCount}}">本机有 {{unownedCount}} 项尚未归属账号的旧内容，暂不自动上传。原内容仍保留在未登录工作区。</view>
+
+  <view class="cloud-conflict" wx:for="{{cloudConflicts}}" wx:key="id">
+    <view class="conflict-title">{{item.title}}</view>
+    <view class="conflict-label">云端当前版本</view>
+    <scroll-view class="cloud-version" scroll-y="true"><text selectable="true">{{item.currentText}}</text></scroll-view>
+    <view class="conflict-label">待确认版本</view>
+    <scroll-view class="cloud-version" scroll-y="true"><text selectable="true">{{item.incomingText}}</text></scroll-view>
+    <view class="conflict-actions">
+      <button class="secondary-button" data-id="{{item.id}}" data-choice="current" bindtap="resolvePersonalConflict" disabled="{{cloudBusy}}">保留云端版本</button>
+      <button class="secondary-button" data-id="{{item.id}}" data-choice="incoming" bindtap="resolvePersonalConflict" disabled="{{cloudBusy}}">采用待确认版本</button>
+    </view>
+  </view>
+
+  <view class="settings-list panel">
+    <view
+      class="settings-row {{item.danger ? 'settings-row-danger' : ''}}"
+      wx:for="{{rows}}"
+      wx:key="key"
+      data-key="{{item.key}}"
+      bindtap="openRow"
+      hover-class="settings-row-press"
+      role="button"
+      aria-label="{{item.title}}"
+    >
+      <view class="settings-copy">
+        <text class="settings-title">{{item.title}}</text>
+        <text class="settings-note">{{item.note}}</text>
+      </view>
+      <text class="settings-arrow">›</text>
+    </view>
+  </view>
+
+  <button class="logout-button" bindtap="logoutAccount" disabled="{{!loggedIn}}">{{loggedIn ? '退出登录' : '登录后可退出'}}</button>
+
+  <view class="version-line">当前版本 {{version}}</view>
+</view>

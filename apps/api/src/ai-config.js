@@ -7,6 +7,9 @@ const supportedProtocols = new Set([
   "openai_responses",
   "anthropic_messages",
   "google_gemini",
+  // Typesafe / Jev（System One）：POST /v1/systemone + state/questions，返回结构化判定，
+  // **不生成文本**，因此不能绑定到任何 AI 场景路由，只用于「连通性测试」与将来的结构化判定接入。
+  "typesafe_systemone",
 ]);
 
 const answerEmphasisInstruction = "referenceAnswer 字段中必须用 **短语** 标出核心概念、关键判断、得分点关键词和结论；每个分点加粗 1 至 3 个短语，不得整句或整段加粗，不得改变教材原意。JSON 外不得输出 Markdown。";
@@ -189,13 +192,13 @@ const sceneDefinitions = [
   },
   {
     id: "question_enrichment",
-    label: "题目目录与得分点完善",
-    description: "为待归类题目推荐已确认目录、知识点和结构化得分点",
-    variables: ["question", "confirmedCatalog", "textbookEvidence", "requiredOutput"],
+    label: "题目归属判断与得分点完善",
+    description: "按 考试项目 → 科目 → 教材 → 知识树 逐级判断待归类题目的归属，并推荐知识点与结构化得分点",
+    variables: ["question", "candidateProjects", "candidateSubjects", "candidateTextbooks", "confirmedCatalog", "textbookEvidence", "requiredOutput"],
     defaultRoute: { mode: "disabled", providerId: "", model: "", temperature: 0.1, maxTokens: 3000 },
     defaultPrompt: {
-      systemPrompt: "你是汉语言文学平台题库完善助手。教材正文证据是最高优先依据。目录归属只能选择输入中已确认的 catalogNodeId，不得创造目录或改写已核验答案。知识点应是可复习的学科概念，不得使用页码、题号或泛化词。仅主观题需要结构化得分点：已有分点时优先保留原意并检查，缺分值时分配分值，连续答案按独立判分要点拆分；得分点分值之和必须严格等于题目总分。教材页码必须来自正文证据或已确认目录范围，证据不足时留空并说明不确定性。结果只作为人工确认建议，不直接发布。只输出有效 JSON，不要 Markdown。",
-      userPromptTemplate: "待完善题目：\n{{question}}\n\n已确认目录（只能引用其中的 id）：\n{{confirmedCatalog}}\n\n检索到的教材正文证据：\n{{textbookEvidence}}\n\n严格按以下结构输出：\n{{requiredOutput}}",
+      systemPrompt: "你是汉语言文学平台题库完善助手，负责按「考试项目 → 科目 → 教材 → 知识树」逐级判断题目归属。教材正文证据是最高优先依据。科目与教材必须同源，目录归属只能选择输入中已确认的 catalogNodeId，不得创造目录或改写已核验答案。知识点应是可复习的学科概念，不得使用页码、题号或泛化词。仅主观题需要结构化得分点：已有分点时优先保留原意并检查，缺分值时分配分值，连续答案按独立判分要点拆分；得分点分值之和必须严格等于题目总分。教材页码必须来自正文证据或已确认目录范围，证据不足时留空并说明不确定性。结果只作为人工确认建议，不直接发布；换科目或换教材必须写明是哪条证据指向另一本。只输出有效 JSON，不要 Markdown。",
+      userPromptTemplate: "待完善题目：\n{{question}}\n\n候选考试项目（必须复述唯一项目 id）：\n{{candidateProjects}}\n\n候选科目（必须从中选一个；科目与教材必须同源）：\n{{candidateSubjects}}\n\n候选教材（题目未定教材时必须从中选一本；目录节点自带 bookId，须与所选教材一致）：\n{{candidateTextbooks}}\n\n已确认目录（只能引用其中的 id）：\n{{confirmedCatalog}}\n\n检索到的教材正文证据：\n{{textbookEvidence}}\n\n严格按以下结构输出：\n{{requiredOutput}}",
     },
   },
   {
@@ -612,6 +615,15 @@ function normalizeConfig(value) {
     );
   }
   const promptVariables = {
+    // 跨册批次（2026-09-24）：题目可能横跨上下册，候选教材必须显式递给模型，
+    // 否则它只看见"已确认目录"里两册混在一起的节点，却不知道有哪些册可以选。
+    question_enrichment: [
+      // 归属判断四级链（DEC-098，2026-09-24）：项目 → 科目 → 教材 → 知识树。
+      // 已保存的旧配置缺这两段，迁移时按标签顺序补在"严格按以下结构输出"之前。
+      ["candidateProjects", "候选考试项目（必须复述唯一项目 id）："],
+      ["candidateSubjects", "候选科目（必须从中选一个；科目与教材必须同源）："],
+      ["candidateTextbooks", "候选教材（题目未定教材时必须从中选一本；目录节点自带 bookId，须与所选教材一致）："],
+    ],
     knowledge_hierarchy_navigation: [
       ["questionFeatures", "Agent 1 已持久化的只读特征快照："],
       ["matchingStrategy", "当前规则/案例匹配策略："],
@@ -860,6 +872,9 @@ function updateRoute(config, sceneId, input) {
   const fastModel = sceneId === "explanation_chat" ? String(input.fastModel || "").trim() : "";
   if (mode === "provider") {
     if (!provider || !provider.enabled) throw new Error("route_provider_unavailable");
+    // 结构化判定上游（Typesafe/Jev 的 System One）不生成文本，绑定到任何场景都只会失败；
+    // 在配置时就拒掉，避免上线后才在运行期炸。
+    if (provider.protocol === "typesafe_systemone") throw new Error("route_provider_not_conversational");
     if (!provider.models.includes(model)) throw new Error("route_model_unavailable");
     if (sceneId === "subjective_scoring" && !provider.models.includes(reviewModel)) throw new Error("route_review_model_unavailable");
     if (sceneId === "explanation_chat" && fastModel && !provider.models.includes(fastModel)) throw new Error("route_fast_model_unavailable");

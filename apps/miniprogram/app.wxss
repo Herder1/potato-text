@@ -97,3 +97,41 @@ button::after {
   color: #b63636;
   background: #ffe1df;
 }
+
+/* 平台文本渲染（templates/platform-doc.wxml，DEC-110）：
+   法律页与个人信息收集清单页共用，所以样式放在全局而不是某一页的 wxss 里。 */
+.platform-doc-body {
+  padding: 30rpx 26rpx;
+}
+.platform-doc-paragraph {
+  color: #303832;
+  font-size: 26rpx;
+  line-height: 1.85;
+}
+.platform-doc-paragraph + .platform-doc-paragraph {
+  margin-top: 18rpx;
+}
+.platform-doc-state-title {
+  color: #232824;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+.platform-doc-note {
+  margin-top: 14rpx;
+  color: #4d574f;
+  font-size: 24rpx;
+  line-height: 1.75;
+}
+.platform-doc-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 62rpx;
+  margin-top: 22rpx;
+  padding: 0 28rpx;
+  color: #2d7b4b;
+  font-size: 24rpx;
+  background: #eef6f0;
+  border-radius: 8rpx;
+}
+

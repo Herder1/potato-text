@@ -1,0 +1,9 @@
+/* 「设备信息」页（2026-10-02）：只展示本机真实可读字段。 */
+.di-page { padding-bottom: calc(60rpx + env(safe-area-inset-bottom)); }
+.di-list { margin-top: 8rpx; overflow: hidden; }
+.di-row { display: flex; padding: 26rpx 24rpx; align-items: center; justify-content: space-between; border-bottom: 1rpx solid #f1f3f1; gap: 20rpx; }
+.di-row:last-child { border-bottom: 0; }
+.di-label { flex: 0 0 auto; color: #4d574f; font-size: 25rpx; }
+.di-value { min-width: 0; flex: 1; color: #232824; font-size: 25rpx; font-weight: 600; text-align: right; word-break: break-all; }
+.di-note { margin-top: 24rpx; padding: 22rpx; color: #8b938d; background: #f4f6f5; border-radius: 14rpx; font-size: 22rpx; line-height: 1.7; }
+.di-version { margin-top: 28rpx; color: #a3aaa6; font-size: 21rpx; text-align: center; }

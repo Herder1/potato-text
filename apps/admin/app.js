@@ -1,28 +1,50 @@
 const SCENE_GROUP_STORAGE_KEY = "shukao.admin.sceneRouteCollapsedGroups";
+const PROVIDER_GROUP_STORAGE_KEY = "shukao.admin.providerGroups";
+let assessmentModeController = null;
+function assessmentModeUi() {
+  if (!assessmentModeController) assessmentModeController = window.AssessmentModes.create({
+    request: requestJson, escapeHtml, getCatalog: loadQuestionCatalog, openQuestion: openQuestionReview,
+    questionState: () => ({ contentDirty: state.questionEditorContentDirty, busy: Boolean(questionReview?.busy) }),
+    setBusy: setQuestionReviewBusy, friendlyError,
+    setStandardsView: (shown) => {
+      if (state.questionLibraryTab === "rules") document.querySelector(".question-browser-section")?.classList.toggle("without-knowledge-tree", shown);
+    },
+  });
+  return assessmentModeController;
+}
 
 const state = {
   overview: null,
   aiConfig: null,
+  // 供应商批量接入（文档导入 → 批量测试 → 只保留通过项）：任务在服务端跑，这里只存进度快照。
+  providerBatch: { jobId: "", job: null, candidates: [], summary: null, warnings: [], results: [], running: false },
+  providerGroups: readProviderGroups(),
+  selectedProviderIds: new Set(),
+  // 出站代理事实（来自 /health）：只用于「检测到代理但服务端没走」的提示。
+  outboundProxy: null,
   // 场景分组折叠状态只影响后台展示，按浏览器本地记忆保存，不写入服务端配置。
   collapsedSceneGroups: readCollapsedSceneGroups(),
   aiTasks: null,
   questionCatalog: null,
   questions: [],
   questionCounts: null,
+  questionSourceTreeSummary: null,
+  questionSourceTreeError: "",
   questionLibrary: "official",
   questionSelectedIds: [],
   questionImportBatches: [],
   questionImportPreview: null,
+  // 导入预览的列表筛选："all" | "suspected"（只显示疑似重复的行）
+  questionImportPreviewFilter: "all",
   questionEnrichmentItems: [],
   questionEnrichmentSummary: null,
   questionEnrichmentJobs: [],
   questionEnrichmentSelectedIds: [],
   questionEnrichmentPage: 1,
-  // 裁决台（《链路职责矩阵》第十三节）
-  adjudicationItems: [],
-  adjudicationSummary: null,
-  adjudicationSourceOptions: [],
-  adjudicationPage: 1,
+  // 打开审核对话框时题目当时的科目/教材（DEC-098）：用来判断"这次采纳是不是在改归属"，
+  // 与建议稿里的值分开存，采纳前的改动都能看见。
+  questionEnrichmentReviewSubjectId: "",
+  questionEnrichmentReviewBookId: "",
   questionEnrichmentPageCount: 1,
   questionEnrichmentTotal: 0,
   questionFamilies: [],
@@ -30,6 +52,7 @@ const state = {
   ungroupedQuestions: [],
   questionFamilySummary: null,
   questionFamilyCatalogTreeSummary: null,
+  questionFamilyTreeError: "",
   questionFamilyPickerFamilyId: "",
   questionFamilyPickerQuestions: [],
   questionFamilyPickerSelectedIds: [],
@@ -68,6 +91,7 @@ const state = {
   questionFingerprintDraftAction: "",
   questionFingerprintDraftSource: "manual",
   questionEditorContentDirty: false,
+  questionEditorSectionTab: "training",
   knowledgeInspectionResults: [],
   knowledgeInspectionSummary: null,
   knowledgeInspectionJob: null,
@@ -124,6 +148,9 @@ const state = {
   knowledgeDossierRelationTargets: [],
   selectedKnowledgeDossierId: "",
   knowledgeStructure: null,
+  // 「归属确认」弹窗**自己**的知识树：按这道题自己的教材加载，与题库页那棵树（state.knowledgeStructure，
+  // 由「题库」标签页的教材筛选驱动）分开存放——否则在「完善题目」页翻别册的题时，候选池会是别册的树或空。
+  enrichmentClassificationStructure: null,
   questionKnowledgeAssignmentStructure: null,
   selectedKnowledgeNodeId: "",
   collapsedKnowledgeNodeIds: new Set(),
@@ -156,9 +183,20 @@ const state = {
   packCounts: null,
   announcements: [],
   announcementCounts: null,
+  // 平台设置（2026-10-05）：7 份平台文本的摘要 + 当前编辑文档的版本历史。
+  platformContent: { documents: [], definitions: [], history: [], activeKey: "" },
   billingProducts: [],
   billingAccount: null,
   billingCounts: null,
+  billingTab: "products",
+  billingUserId: "test-user",
+  billingLoadSequence: 0,
+  billingUsers: [],
+  billingUsersPage: 1,
+  billingUsersTotal: 0,
+  billingOrders: [],
+  billingOrdersPage: 1,
+  billingOrdersTotal: 0,
   questionPool: [],
   examSelectedIds: [],
   examSelectionRules: [],
@@ -209,9 +247,12 @@ const protocolLabels = {
   openai_responses: "OpenAI Responses",
   anthropic_messages: "Anthropic Messages",
   google_gemini: "Google Gemini",
+  typesafe_systemone: "Typesafe System One（结构化判定，不生成文本）",
 };
 
 const errorLabels = {
+  question_enrichment_selection_required: "请先勾选需要采纳建议的题目",
+  question_enrichment_selection_limit: "一次最多采纳 100 道题，请减少勾选数量",
   admin_password_change_required: "初始密码必须先修改才能继续操作后台",
   user_restricted: "该用户处于限制状态，这个操作已被拦截",
   user_account_banned: "该账号已被封禁",
@@ -292,6 +333,21 @@ const errorLabels = {
   question_family_set_members_unchanged: "所选内容已在当前题族集中",
   provider_not_found_or_disabled: "供应商不存在或已停用",
   provider_model_not_found: "所选模型不在供应商模型列表中",
+  // 结构化判定上游（Typesafe/Jev System One）不生成文本：能测连通性，但不能绑定场景。
+  provider_protocol_not_conversational: "该供应商是结构化判定上游（不生成文本），不能用于 AI 场景；请改用对话模型供应商",
+  route_provider_not_conversational: "该供应商是结构化判定上游（Typesafe/Jev System One），只做结构化判定，不能绑定到 AI 场景路由",
+  // 451 = 上游按地区/法务原因拒绝当前网络出口（2026-10-09 实例：服务端没走本机代理，浏览器/Codex++ 能连）。
+  provider_region_blocked: "上游按地区限制了这个网络出口（HTTP 451）：请让服务端也走本机代理后重启后台，详见「AI 配置」页头的代理提示与 /health 的 outboundProxy",
+  provider_batch_document_empty: "这份文档里没有可识别的接口条目",
+  provider_batch_text_too_large: "文档内容超过 256 KB，请拆分后再导入",
+  provider_batch_too_many_entries: "一次最多测试 60 条，请拆分文档后分批发",
+  provider_batch_too_many_jobs: "已有 3 个批量测试在跑，请等其中一个结束后再发起",
+  provider_batch_job_not_found: "这个批量测试任务已过期，请重新发起",
+  provider_batch_cancelled: "任务已取消，这条没有测试",
+  provider_batch_save_failed: "测试通过的接口没能写进供应商列表，请重试",
+  missing_provider_base_url: "这一行缺 Base URL：请写成 BaseURL,APIKey，或在上面填统一 Base URL",
+  provider_models_unavailable: "读不到上游模型列表，请在文档里写明模型 ID 后重试",
+  provider_models_empty: "上游没有返回可用的模型",
   route_provider_unavailable: "当前供应商不可用于该场景",
   route_model_unavailable: "当前模型不可用于该场景",
   unsupported_ai_scene: "不支持的 AI 场景",
@@ -300,8 +356,14 @@ const errorLabels = {
   provider_timeout: "连接超时，请检查地址、网络或超时设置",
   provider_invalid_json_response: "接口返回的不是有效 JSON",
   provider_empty_response: "模型返回了空内容",
+  provider_output_budget_exhausted: "模型输出额度已用完但未生成正文；请在 AI 模型路由中提高该模型的输出上限，或换用其他对话模型",
+  provider_reasoning_only_response: "上游只返回了思考内容、没有最终答案；请更换该路由的对话模型或检查上游兼容性",
+  provider_output_filtered: "上游拦截了模型输出，请检查该模型的内容策略或更换模型",
+  provider_empty_response_with_usage: "上游已消耗输出额度但未返回正文；请检查模型兼容性或改用其他对话模型",
   provider_temporarily_unavailable: "当前模型上游暂时不可用，请稍后重试",
   provider_output_format_error: "模型输出不符合结构化格式",
+  provider_output_literal_evidence_conflict: "AI 答案与共享材料原文冲突，本次结果未采用，请重试或人工核对",
+  answer_supplement_route_unavailable: "请先为「试卷答案补充」或「试卷文件识别」绑定可用模型，再使用 AI 补充答案",
   knowledge_classification_agent2_contract_failed: "Agent 2 连续两次未按候选约束返回，已停止并保留两次原始输出",
   knowledge_global_recovery_exhausted: "整树恢复与限时备用路线均未完成，本次属于执行失败，不计为归类错误",
   knowledge_global_recovery_fallback_unavailable: "整树恢复超时，当前没有满足条件的备用模型或足够小的候选范围",
@@ -315,8 +377,11 @@ const errorLabels = {
   explanation_route_unavailable: "补充解析场景尚未绑定可用模型",
   scoring_provider_unavailable: "主观题评分模型已停用或不可用",
   question_catalog_required: "请选择匹配的科目和书籍",
+  question_subject_required: "请选择有效科目",
+  question_book_invalid: "所选教材不属于该科目或已不存在，请重新选择或改为暂不指定教材",
+  question_classification_requires_book: "未指定教材时不能填章节或知识点，请先补教材",
   question_type_invalid: "请选择有效题型",
-  question_required_fields_missing: "章节、知识点、题干和参考答案均为必填",
+  question_required_fields_missing: "题干为必填项",
   question_content_too_large: "题目或参考答案内容过长",
   question_score_invalid: "总分必须在 1 到 100 之间",
   question_choice_answer_invalid: "选项或正确答案格式不正确",
@@ -326,6 +391,10 @@ const errorLabels = {
   question_scoring_not_ready: "得分点尚未结构化完成，暂时不能进行 AI 评分",
   question_import_batch_not_found: "该导入批次已不存在",
   question_not_found: "题目不存在或已被移除",
+  question_version_conflict: "题目已被其他操作更新，请重新打开后再保存，避免覆盖新内容",
+  question_catalog_anchor_invalid: "所选目录不属于当前教材的已确认目录，请重新打开并选择",
+  question_catalog_anchor_changed: "教材目录已更新，请重新打开题目并核对目录锚点",
+  question_catalog_anchor_unavailable: "请先成功读取教材目录，再选择有效的教材目录锚点",
   question_fingerprint_question_version_conflict: "题目已产生新版本，请重新打开后再修改知识指纹",
   question_fingerprint_revision_conflict: "知识指纹或 AI 候选已更新，请重新载入后再处理",
   question_fingerprint_candidate_changed: "AI 候选已经变化，请重新载入后再采纳",
@@ -338,6 +407,12 @@ const errorLabels = {
   question_import_json_invalid: "JSON 格式不正确，应为题目数组或 questions 数组",
   question_import_empty: "没有识别到可导入的题目",
   question_duplicate: "题库中已存在相同题目",
+  // 写入既有题被服务端独立复核拦下（2026-09-23）：这句必须告诉操作者"为什么"与"下一步怎么办"，
+  // 不能再把裸错误码 question_merge_requires_identical 弹给他（真机事故：只看到一行英文码，不知道
+  // 是两版根本不是同一道题、还是这类行不允许覆盖）。
+  question_merge_requires_identical: "服务端复核不通过：这两版不满足“覆盖既有题非空字段”的条件（需要两版的选项与答案完全一致，或题目的事实相同）。若它们在对比里标的是「选项与答案完全相同」，请重新打开对比再试；否则只能「择优补充」补空缺，不能覆盖非空字段。",
+  question_absorb_fields_required: "请先在表格里勾选要写入的字段",
+  question_absorb_field_invalid: "只能写正确答案、参考答案、来源（页码）这几个字段",
   question_delete_empty: "请先选择需要删除的题目",
   question_enrichment_route_unavailable: "请先在 AI 模型路由中配置“题目目录与得分点完善”模型",
   question_enrichment_questions_required: "当前筛选下没有可完善的题目，或这些题目已在任务中",
@@ -455,6 +530,21 @@ const errorLabels = {
   textbook_body_ocr_route_unavailable: "请为“教材正文 OCR”绑定视觉模型，或继续使用教材扫描页 OCR 模型",
   textbook_question_generation_route_unavailable: "请为“教材题目生成”绑定模型",
   catalog_confirmed_not_found: "请先确认教材目录，再构建正文知识库",
+  // 批量确定性动作（2026-09-27 DEC-101）：范围没选、要勾选却没勾、确认码不对——都给中文说法。
+  deterministic_rebuild_scope_required: "请先选择范围：一本教材或一个导入批次",
+  deterministic_selection_required: "请先勾选要补指纹与题族的题目",
+  deterministic_rebuild_confirm_code_mismatch: "确认码不对：请照抄弹窗里给出的确认码",
+  // 跨册批次（2026-09-24）：题目没定教材时 AI 在**整个科目**的目录里挑，这几条是它挑不动时的说法。
+  question_enrichment_subject_required: "这道题连科目都没有，请先定科目，再完善目录与知识点",
+  question_enrichment_book_invalid: "给出的教材不在本项目已确认目录里，请重新生成或换一本候选教材",
+  question_enrichment_catalog_node_book_mismatch: "目录节点与所选教材不是同一册，请换一个节点或重新生成",
+  question_enrichment_book_change_requires_classification: "换教材时必须同时采纳目录与知识点（章节和知识点挂在教材下面）",
+  // 归属判断第二级（DEC-098）：科目判错时整棵树都挂错，所以拒收/门禁的文案要说清"该做什么"，
+  // 而不是只丢一个错误码。
+  question_enrichment_subject_invalid: "给出的科目不在本项目候选里，请重新生成或选择一个候选科目",
+  question_enrichment_subject_book_mismatch: "科目与教材不是同一棵树（教材不属于该科目），请让两者一致后再采纳",
+  question_enrichment_subject_change_requires_classification: "换科目时必须同时采纳教材、目录与知识点（三样都挂在这棵树下面）",
+  question_enrichment_subject_change_requires_review: "这批建议里有「建议换科目」的题，换科目必须逐条人工复核，不能用批量采纳带走",
   textbook_knowledge_empty: "没有生成可用的教材正文片段",
   textbook_knowledge_evidence_not_found: "当前范围没有检索到教材正文证据",
   textbook_knowledge_query_required: "请输入需要检索的内容",
@@ -530,10 +620,28 @@ const errorLabels = {
   announcement_not_found: "公告不存在或已被删除",
   announcement_action_invalid: "不支持当前公告操作",
   announcement_offline_before_delete: "已发布公告需先下架再删除",
+  // 平台设置（2026-10-05）
+  platform_content_unknown_document: "没有这份平台文本，请刷新后重试",
+  platform_content_version_required: "请填写版本号",
+  platform_content_version_too_long: "版本号过长，最多 40 个字符",
+  platform_content_body_required: "请填写正文",
+  platform_content_body_too_long: "正文过长，请拆分或精简",
+  platform_content_version_conflict: "这个版本号已经存在。已发布版本不可改写，请换一个新版本号",
+  platform_content_effective_date_required: "发布前必须填写生效日期",
+  platform_content_effective_date_invalid: "生效日期格式不正确（应为 YYYY-MM-DD）",
+  platform_content_version_not_found: "这个版本不存在，可能已被下架或删除",
+  platform_content_not_published: "这份文本还没有已发布版本，不能发布或记录同意",
   billing_product_type_invalid: "请选择有效的商品类型",
   billing_product_name_required: "请填写商品名称",
   billing_product_price_invalid: "商品价格格式不正确",
-  billing_product_duration_invalid: "订阅天数必须在 1 到 1095 天之间",
+  billing_product_duration_invalid: "订阅天数必须在 0 到 1095 天之间，填写 0 表示永久",
+  billing_package_duration_duplicate: "该套餐组已有相同期限的规格",
+  billing_package_scope_conflict: "同一套餐组的课程范围必须一致",
+  billing_package_not_found: "套餐组不存在，请刷新后重试",
+  billing_bean_amount_invalid: "豆币数量必须是 0.1 的整数倍且不少于 0.1",
+  billing_bean_expiry_invalid: "豆币有效期必须晚于当前时间",
+  billing_bean_insufficient: "豆币不足",
+  // 兼容旧后台页签与历史错误码
   billing_credit_amount_invalid: "额度数量必须是正整数",
   billing_credit_expiry_invalid: "额度有效期必须晚于当前时间",
   billing_credit_insufficient: "AI 额度不足",
@@ -608,21 +716,229 @@ const questionFamilyDynamicRelationLabels = {
   shared_cases: "共同案例",
 };
 
+// DEC-100（产品手册 §4.6.12）：AI 巡检只诊断、不改库，因此巡检**不再有「已人工采纳／已拒绝」记录状态**。
+// 这里只保留「过程状态」的文案；人工处理进度一律走下面的四态（knowledgeInspectionAuditStateLabels）。
 const knowledgeInspectionStatusLabels = {
   queued: "等待分析",
-  running: "正在分析",
+  running: "正在巡检",
   agent1_running: "Agent 1 提取 / Agent 2 归类中",
   agent2_running: "Agent 3 核验中",
   processing: "等待 Agent 3 核验",
-  pending_review: "待人工确认",
-  recommended: "待人工确认",
-  completed: "待人工确认",
-  applied: "已人工采纳",
-  rejected: "已拒绝",
+  pending_review: "待复核",
+  recommended: "待复核",
+  completed: "待复核",
   stale: "建议已过期",
   failed: "巡检失败",
   interrupted: "巡检已中断",
 };
+
+// 巡检记录状态机（DEC-100 四态，取代原来的「已人工采纳／已拒绝」）：
+// 待复核＝还没人工确认；已复核＝人工确认过结论；已修复＝问题已被改库处理；已忽略＝确认无需处理（不是"通过"）。
+// 「正在巡检」「高风险」是过程与风险展示，**不是**记录状态；「归为通过」是结论，不改变记录状态。
+const knowledgeInspectionAuditStateLabels = {
+  pending_review: "待复核",
+  reviewed: "已复核",
+  repaired: "已修复",
+  ignored: "已忽略",
+};
+
+const knowledgeInspectionAuditStateHints = {
+  pending_review: "尚未人工确认",
+  reviewed: "人工确认过结论",
+  repaired: "问题已被改库处理",
+  ignored: "确认无需处理",
+};
+
+// 题目被改过时后端派生 auditReview.invalidated；界面必须看得见地提示旧结论作废。
+const knowledgeInspectionInvalidatedReasonLabels = {
+  question_changed: "题目被改过（知识／题族／答案／分值任一变更）",
+};
+
+// ── 确定性体检项（DEC-100，字段名由后端冻结：ruleFindings / ruleFindingsByCode / ruleFindingsPassed）──
+// 行内形状：ruleFindings: [{ code, title, source, severity, evidence, suggestion }]（只含规则项）。
+// 词汇表单点在 apps/api/src/question-audit-rules.js 的 AUDIT_ISSUE_LABELS，**前端不再写一份中文标题表**：
+// 标题一律显示后端给的 title，前端只认 code（用于「通过」判定与排序）与 source（用于标来源）。
+const knowledgeInspectionRuleSourceLabels = { rule: "规则", ai: "AI" };
+const knowledgeInspectionRuleSeverityLabels = { high: "高", medium: "中", low: "低", none: "无" };
+const KNOWLEDGE_INSPECTION_PASS_CODE = "confirmed";
+// 「跑过、没命中任何规则项」＝通过：文案只写一份，列表胶囊与弹窗共用。
+const KNOWLEDGE_INSPECTION_RULE_PASS_TITLE = "已留档 · 无问题";
+const KNOWLEDGE_INSPECTION_RULE_PASS_DETAIL = "这道题没有命中任何规则项，本次结论已留档（通过也是结论）。整册命中了哪些规则项看上方概括区的计数。";
+
+function knowledgeInspectionRuleFindings(result = {}) {
+  return knowledgeInspectionArray(result.ruleFindings).filter((finding) => finding && typeof finding === "object" && (finding.code || finding.title));
+}
+
+function knowledgeInspectionRuleFindingSource(finding = {}) {
+  const source = String(finding.source || "rule").toLowerCase();
+  return knowledgeInspectionRuleSourceLabels[source] ? source : "rule";
+}
+
+function knowledgeInspectionRuleFindingTitle(finding = {}) {
+  return String(finding.title || finding.code || "").trim();
+}
+
+function knowledgeInspectionRuleFindingIsPass(finding = {}) {
+  return String(finding.code || "") === KNOWLEDGE_INSPECTION_PASS_CODE;
+}
+
+// evidence／suggestion 的形态由后端决定（字符串或对象），这里只做"能读成一句话"的兜底，读不出就不显示。
+function knowledgeInspectionRuleFindingDetail(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) return value.map((item) => knowledgeInspectionRuleFindingDetail(item)).filter(Boolean).join("；");
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .map(([key, item]) => {
+        const text = knowledgeInspectionRuleFindingDetail(item);
+        return text ? `${key}：${text}` : "";
+      })
+      .filter(Boolean)
+      .join("；");
+  }
+  return String(value);
+}
+
+function knowledgeInspectionRuleFindingDetailText(finding = {}) {
+  return String(finding.detail || "").trim();
+}
+
+function knowledgeInspectionRuleFindingEvidence(finding = {}) {
+  return knowledgeInspectionRuleFindingDetail(finding.evidence);
+}
+
+function knowledgeInspectionRuleFindingSuggestion(finding = {}) {
+  return String(finding.suggestion || "").trim();
+}
+
+// 摘要卡只有 code 计数，标题从后端下发的词表里取（取不到就显示 code 本身，绝不写死中文）。
+function knowledgeInspectionRuleFindingTitleByCode(code) {
+  const labels = state.knowledgeInspectionIssueLabels || {};
+  const entry = labels[String(code || "")];
+  return entry && entry.title ? String(entry.title) : String(code || "");
+}
+
+function knowledgeInspectionRuleFindingLabel(finding = {}) {
+  const source = knowledgeInspectionRuleSourceLabels[knowledgeInspectionRuleFindingSource(finding)];
+  if (knowledgeInspectionRuleFindingIsPass(finding)) return `${source} · ${KNOWLEDGE_INSPECTION_RULE_PASS_TITLE}`;
+  return `${source} · ${knowledgeInspectionRuleFindingTitle(finding)}`;
+}
+
+function knowledgeInspectionRuleFindingTooltip(finding = {}) {
+  const parts = [
+    `来源：${knowledgeInspectionRuleSourceLabels[knowledgeInspectionRuleFindingSource(finding)]}`,
+    `体检项：${knowledgeInspectionRuleFindingTitle(finding) || finding.code || ""}`,
+    finding.severity ? `严重度：${knowledgeInspectionRuleSeverityLabels[String(finding.severity)] || finding.severity}` : "",
+    knowledgeInspectionRuleFindingDetailText(finding) ? `说明：${knowledgeInspectionRuleFindingDetailText(finding)}` : "",
+    knowledgeInspectionRuleFindingEvidence(finding) ? `证据：${knowledgeInspectionRuleFindingEvidence(finding)}` : "",
+    knowledgeInspectionRuleFindingSuggestion(finding) ? `建议：${knowledgeInspectionRuleFindingSuggestion(finding)}` : "",
+  ];
+  return parts.filter(Boolean).join("\n");
+}
+
+// 「跑过、没命中任何规则项」＝通过：按产品负责人要求，通过也要留档显示（不是"有问题才显示"）。
+// 第三种显示：字段缺失＝这道题**没体检成**（前置条件缺，如缺知识树／教材存储）→「未体检」，**不等于通过**。
+// 两种缺失要分开判：整份响应都没有体检能力（后端还没上这一版）＝什么都不渲染，不留空壳。
+const KNOWLEDGE_INSPECTION_RULE_NOT_AUDITED_CODE = "not_audited";
+const KNOWLEDGE_INSPECTION_RULE_NOT_AUDITED_TEXT = "未体检";
+
+function knowledgeInspectionRuleAuditCapability() {
+  const summary = state.knowledgeInspectionSummary || {};
+  return Boolean(
+    (summary.ruleFindingsByCode && typeof summary.ruleFindingsByCode === "object")
+    || summary.ruleFindingsPassed != null
+    // 整本书都没体检成时后端只给这一项：它同样说明"后端这一版有体检能力"，不能当成没有。
+    || (summary.ruleFindingsUnavailable && typeof summary.ruleFindingsUnavailable === "object"),
+  );
+}
+
+// 体检没跑成的原因（后端 `summary.ruleFindingsUnavailable = { reason, books }`）。
+function knowledgeInspectionRuleNotAuditedReason() {
+  const unavailable = (state.knowledgeInspectionSummary || {}).ruleFindingsUnavailable;
+  if (!unavailable || typeof unavailable !== "object") return "";
+  return String(unavailable.reason || "").trim();
+}
+
+function knowledgeInspectionRuleNotAuditedBooks() {
+  const unavailable = (state.knowledgeInspectionSummary || {}).ruleFindingsUnavailable;
+  if (!unavailable || typeof unavailable !== "object" || !Array.isArray(unavailable.books)) return [];
+  return unavailable.books.map((book) => String(book || "")).filter(Boolean);
+}
+
+function knowledgeInspectionRuleNotAuditedDetail() {
+  const reason = knowledgeInspectionRuleNotAuditedReason();
+  const books = knowledgeInspectionRuleNotAuditedBooks();
+  return `这道题没有体检成（前置条件缺失，如该教材还没有可检索的正文／知识结构）——「${KNOWLEDGE_INSPECTION_RULE_NOT_AUDITED_TEXT}」不等于通过。${books.length ? `涉及教材：${books.join("、")}。` : ""}${reason ? `后端给出的原因：${reason}` : ""}`;
+}
+
+function knowledgeInspectionRuleNotAuditedTooltip() {
+  return [`来源：${knowledgeInspectionRuleSourceLabels.rule}`, `体检项：${KNOWLEDGE_INSPECTION_RULE_NOT_AUDITED_TEXT}`, `说明：${knowledgeInspectionRuleNotAuditedDetail()}`].join("\n");
+}
+
+// 弹窗里的「通过／未体检」这一行（两种"没有命中项"的状态各写各的话，绝不含糊成一句）。
+function knowledgeInspectionRuleNoticeRow(kind) {
+  const isPass = kind === "pass";
+  const title = isPass ? KNOWLEDGE_INSPECTION_RULE_PASS_TITLE : KNOWLEDGE_INSPECTION_RULE_NOT_AUDITED_TEXT;
+  const detail = isPass ? KNOWLEDGE_INSPECTION_RULE_PASS_DETAIL : knowledgeInspectionRuleNotAuditedDetail();
+  return `<div class="knowledge-inspection-rule-finding ${isPass ? "is-pass" : "is-unaudited"} is-rule" data-rule-code="${isPass ? KNOWLEDGE_INSPECTION_PASS_CODE : KNOWLEDGE_INSPECTION_RULE_NOT_AUDITED_CODE}" data-rule-source="rule">
+      <div class="knowledge-inspection-rule-finding-head">
+        <span class="knowledge-inspection-rule-source is-rule">${escapeHtml(knowledgeInspectionRuleSourceLabels.rule)}</span>
+        <strong>${escapeHtml(title)}</strong>
+        ${isPass ? `<span class="knowledge-inspection-rule-pass">${escapeHtml(title)}</span>` : `<span class="knowledge-inspection-rule-severity is-none">未跑确定性体检</span>`}
+        <span class="knowledge-inspection-readonly-mark">只读展示</span>
+      </div>
+      <p class="knowledge-inspection-rule-finding-detail">说明：${escapeHtml(detail)}</p>
+    </div>`;
+}
+
+// 列表行内的「体检项」区：确定性规则项逐条显示 title（hover 看说明／证据／建议），通过项也显示。
+// 字段缺失时要分清两种情形：整份响应没有体检能力（后端还没上这一版）→ 空串，不留空壳；
+// 体检能力在、这道题却没体检成 → 显示「未体检」（**不能显示成通过**）。
+function knowledgeInspectionRuleFindingsHtml(result = {}) {
+  if (!Array.isArray(result.ruleFindings)) {
+    if (!knowledgeInspectionRuleAuditCapability()) return "";
+    return `<div class="knowledge-inspection-rule-findings-inline" data-rule-findings="true" data-rule-not-audited="true">
+      <span class="knowledge-inspection-rule-findings-count">体检项未跑</span>
+      <span class="knowledge-inspection-rule-chip is-unaudited is-rule" data-rule-code="${KNOWLEDGE_INSPECTION_RULE_NOT_AUDITED_CODE}" data-rule-source="rule" title="${escapeHtml(knowledgeInspectionRuleNotAuditedTooltip())}">${knowledgeInspectionRuleSourceLabels.rule} · ${KNOWLEDGE_INSPECTION_RULE_NOT_AUDITED_TEXT}</span>
+    </div>`;
+  }
+  const findings = knowledgeInspectionRuleFindings(result);
+  if (!findings.length) {
+    return `<div class="knowledge-inspection-rule-findings-inline" data-rule-findings="true" data-rule-pass="true">
+      <span class="knowledge-inspection-rule-findings-count">体检项 0 项 · 已留档通过</span>
+      <span class="knowledge-inspection-rule-chip is-pass is-rule" data-rule-code="${KNOWLEDGE_INSPECTION_PASS_CODE}" data-rule-source="rule" title="${escapeHtml([`来源：${knowledgeInspectionRuleSourceLabels.rule}`, `体检项：${KNOWLEDGE_INSPECTION_RULE_PASS_TITLE}`, `说明：${KNOWLEDGE_INSPECTION_RULE_PASS_DETAIL}`].join("\n"))}">${knowledgeInspectionRuleSourceLabels.rule} · ${KNOWLEDGE_INSPECTION_RULE_PASS_TITLE}</span>
+    </div>`;
+  }
+  const passCount = findings.filter(knowledgeInspectionRuleFindingIsPass).length;
+  return `<div class="knowledge-inspection-rule-findings-inline" data-rule-findings="true">
+    <span class="knowledge-inspection-rule-findings-count">体检项 ${escapeHtml(findings.length)} 项${passCount ? ` · 通过留档 ${escapeHtml(passCount)} 项` : ""}</span>
+    ${findings.map((finding) => `<span class="knowledge-inspection-rule-chip is-${escapeHtml(knowledgeInspectionRuleFindingIsPass(finding) ? "pass" : String(finding.severity || "medium"))} is-${escapeHtml(knowledgeInspectionRuleFindingSource(finding))}" data-rule-code="${escapeHtml(finding.code || "")}" data-rule-source="${escapeHtml(knowledgeInspectionRuleFindingSource(finding))}" title="${escapeHtml(knowledgeInspectionRuleFindingTooltip(finding))}">${escapeHtml(knowledgeInspectionRuleFindingLabel(finding))}</span>`).join("")}
+  </div>`;
+}
+
+function knowledgeInspectionAuditReview(result = {}) {
+  const review = result.auditReview || {};
+  const state = String(review.state || "pending_review");
+  return {
+    state: knowledgeInspectionAuditStateLabels[state] ? state : "pending_review",
+    note: String(review.note || ""),
+    actor: String(review.actor || ""),
+    // actor 是登录账号 username；actorLabel 是显示名（后端冻结字段名，优先显示 actorLabel）。
+    actorLabel: String(review.actorLabel || ""),
+    at: review.at || null,
+    invalidated: review.invalidated === true,
+    invalidatedReason: String(review.invalidatedReason || ""),
+    recordedState: String(review.recordedState || ""),
+  };
+}
+
+function knowledgeInspectionAuditActorLabel(audit = {}) {
+  return String(audit.actorLabel || audit.actor || "");
+}
+
+function knowledgeInspectionAuditState(result = {}) {
+  return knowledgeInspectionAuditReview(result).state;
+}
 
 const knowledgeInspectionRiskLabels = { high: "高风险", medium: "中风险", low: "低风险" };
 const blindGoldReviewResultLabels = {
@@ -724,17 +1040,33 @@ const blindGoldProvenanceLabels = {
 };
 const teachingRuleStatusLabels = { draft: "待审核", active: "已启用", inactive: "已停用" };
 const teachingRulePriorityLabels = { high: "高", medium: "中", low: "低" };
-const knowledgeInspectionIssueLabels = {
-  confirmed: "归类与核验一致",
-  moved: "建议调整归属",
-  cross_knowledge: "跨知识点题目",
-  answer_conflict: "答案与已核验依据冲突",
-  previous_level_wrong: "原层级判断错误",
-  missing_node: "缺少合适知识节点",
-  uncertain: "结论不确定",
-  failed: "巡检失败",
-  stale: "建议已过期",
-};
+// 巡检结论（issue）的中文标签：**唯一权威词表在后端** `apps/api/src/question-audit-rules.js` 的 AUDIT_ISSUE_LABELS，
+// 随列表接口 `issueLabels` 原样下发（AGENTS §5「一处维护、其余引用」）。前端不再维护第二份 map：
+// 取标签的顺序是 ① 下发的词表 → ② 该行自带的 issueLabel（后端同一份词表算出来的）→ ③ code 本身。
+function knowledgeInspectionIssueLabel(code, fallback = "") {
+  const key = String(code || "");
+  const entry = (state.knowledgeInspectionIssueLabels || {})[key];
+  if (entry && entry.title) return String(entry.title);
+  return String(fallback || key);
+}
+
+// 筛选器「问题」的选项同样来自这份词表（只列 AI 项：接口的 issue 参数就是这套码；规则项走体检项那一栏，
+// 不在这个筛选维度里）。词表没下发（后端还没重启到这一版）时保持现状，绝不清空筛选控件。
+function syncKnowledgeInspectionIssueOptions() {
+  const select = document.querySelector("#knowledge-inspection-issue");
+  if (!select) return;
+  const labels = state.knowledgeInspectionIssueLabels || {};
+  const codes = Object.entries(labels)
+    .filter(([, meta]) => meta && String(meta.source || "") === "ai")
+    .map(([code]) => code);
+  if (!codes.length) return;
+  const current = String(select.value || "all");
+  select.innerHTML = [
+    '<option value="all">全部问题</option>',
+    ...codes.map((code) => `<option value="${escapeHtml(code)}">${escapeHtml(String(labels[code].title || code))}</option>`),
+  ].join("");
+  select.value = ["all", ...codes].includes(current) ? current : "all";
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -839,6 +1171,13 @@ function displaySubNumber(value) {
 function friendlyError(error) {
   const message = String(error && error.message ? error.message : error || "unknown_error");
   if (errorLabels[message]) return errorLabels[message];
+  // 浏览器只在「请求根本没发出去/连接断开」时抛这个：最常见的原因是后端进程已经不在监听 3212。
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(message)) {
+    return "连不上后端（Failed to fetch）：后台进程可能已停止或正在重启。请确认 3212 在运行（页头红条与 /health），必要时在你自己的终端重新启动";
+  }
+  if (message.startsWith("provider_region_blocked:")) {
+    return `${errorLabels.provider_region_blocked}（上游原话：${message.slice("provider_region_blocked:".length)}）`;
+  }
   if (message.startsWith("provider_http_error:")) {
     const detail = message.slice("provider_http_error:".length);
     if (/auth_unavailable|no auth available/i.test(detail)) return "当前模型上游暂时无可用授权，请稍后重试；这通常不是本地 API Key 配置错误";
@@ -1054,8 +1393,8 @@ function taskDiagnostic(task) {
   if (task.status === "running") return "等待模型返回";
   if (task.status === "succeeded") {
     const retryCount = Number(task.inputSummary && task.inputSummary.retryCount) || 0;
-    if (retryCount > 0) return `上游临时故障后重试 ${retryCount} 次成功${task.chargeable ? "，已结算额度" : "，不计费"}`;
-    return task.chargeable ? "有效结果，已结算额度" : "测试任务，不计费";
+    if (retryCount > 0) return `上游临时故障后重试 ${retryCount} 次成功${task.chargeable ? "，已结算豆币" : "，不计费"}`;
+    return task.chargeable ? "有效结果，已结算豆币" : "测试任务，不计费";
   }
   const category = taskErrorCategoryLabels[task.errorCategory] || "生成失败";
   const detail = friendlyError(task.errorCode);
@@ -1120,7 +1459,7 @@ async function loadAiTasks() {
   }
 }
 
-const subjectiveQuestionTypes = new Set(["translation", "short_answer", "term_definition", "material_analysis", "appreciation", "essay"]);
+const subjectiveQuestionTypes = new Set(["translation", "short_answer", "term_definition", "material_analysis", "essay"]);
 const choiceQuestionTypes = new Set(["single_choice", "multiple_choice"]);
 const questionStatusLabels = {
   official: "平台",
@@ -1138,68 +1477,231 @@ async function loadQuestionCatalog() {
     .map((subject) => `<option value="${escapeHtml(subject.id)}">${escapeHtml(subject.name)}</option>`).join("");
   document.querySelector("#question-subject").innerHTML = subjectOptions;
   document.querySelector("#question-subject-filter").innerHTML = `<option value="all">全部科目</option>${subjectOptions}`;
-  document.querySelector("#question-enrichment-subject").innerHTML = `<option value="all">全部科目</option>${subjectOptions}`;
+  renderQuestionEnrichmentSubjectFilter();
   const typeOptions = state.questionCatalog.questionTypes
     .map((type) => `<option value="${escapeHtml(type.id)}">${escapeHtml(type.label)}</option>`).join("");
   document.querySelector("#question-type").innerHTML = typeOptions;
   document.querySelector("#question-type-filter").innerHTML = `<option value="all">全部题型</option>${typeOptions}`;
-  document.querySelector("#question-enrichment-type").innerHTML = `<option value="all">全部题型</option>${typeOptions}`;
+  renderQuestionEnrichmentTypeFilter();
   syncQuestionEnrichmentBooks();
   syncQuestionBooks();
-  syncQuestionFilterBooks("modern-chinese-7-1");
+  syncQuestionFilterBooks("all");
   syncQuestionTypeFields();
   return state.questionCatalog;
 }
 
-function syncQuestionBooks(selectedBookId = "") {
+// 上次同步到表单的教材 id：用来识别"教材真的换了"（含换科目导致教材跟着换）。
+// 换教材＝原教材的章节/知识点不再适用，必须当场清空——不能等保存时被服务端拦下，
+// 也不能让旧教材的下级关联跟着题目一起带到新教材上。
+let questionFormBookId = "";
+let questionCatalogAnchorTextbooks = [];
+let questionCatalogAnchorLoadState = "idle";
+let questionCatalogAnchorLoadSequence = 0;
+let questionCatalogAnchorOriginal = null;
+
+function renderQuestionCatalogAnchor() {
+  const select = document.querySelector("#question-catalog-anchor");
+  const bookId = document.querySelector("#question-book").value;
+  const current = document.querySelector("#question-chapter").value;
+  const nodes = enrichmentCatalogNodes(questionCatalogAnchorTextbooks.find(book => book.bookId === bookId));
+  const unmatched = current && !nodes.some(node => node.path === current);
+  select.innerHTML = '<option value="">（暂不指定目录）</option>'
+    + (unmatched ? `<option value="${escapeHtml(current)}">${escapeHtml(current)}（当前值，未匹配已确认教材目录）</option>` : "")
+    + nodes.map(node => `<option value="${escapeHtml(node.path)}" data-node-id="${escapeHtml(node.id)}">${escapeHtml(node.path)}</option>`).join("");
+  select.value = current;
+  select.disabled = !bookId || questionCatalogAnchorLoadState !== "ready";
+  document.querySelector("#retry-question-catalog-anchor").hidden = questionCatalogAnchorLoadState !== "error";
+  document.querySelector("#question-catalog-anchor-hint").textContent = !bookId
+    ? "请先选择教材，再选择该教材的目录锚点。"
+    : questionCatalogAnchorLoadState === "error"
+      ? "教材目录读取失败，原目录已保留；请重新读取后再选择。"
+      : questionCatalogAnchorLoadState !== "ready"
+        ? "正在读取已确认教材目录，原目录保持不变。"
+        : !nodes.length
+          ? "该教材暂无已确认目录，原值已保留；请先到教材与目录确认目录。"
+          : unmatched
+            ? "当前目录未匹配教材已确认目录，已保留原值；可手动重选后保存。"
+            : "随本题保存；只改目录不会自动改动知识点、指纹或题族。";
+  const hint = document.querySelector("#question-catalog-anchor-hint");
+  if (hint.dataset) hint.dataset.questionHelpInline = String(Boolean(bookId
+    && (questionCatalogAnchorLoadState !== "ready" || !nodes.length || unmatched)));
+}
+
+async function loadQuestionCatalogAnchors() {
+  const sequence = ++questionCatalogAnchorLoadSequence;
+  questionCatalogAnchorLoadState = "loading";
+  renderQuestionCatalogAnchor();
+  try {
+    const payload = await requestJson("/api/admin/textbooks");
+    if (sequence !== questionCatalogAnchorLoadSequence) return;
+    questionCatalogAnchorTextbooks = payload.textbooks || [];
+    questionCatalogAnchorLoadState = "ready";
+  } catch (error) {
+    if (sequence !== questionCatalogAnchorLoadSequence) return;
+    questionCatalogAnchorTextbooks = [];
+    questionCatalogAnchorLoadState = "error";
+  }
+  renderQuestionCatalogAnchor();
+}
+
+function useQuestionCatalogAnchorAsSource() {
+  const bookId = document.querySelector("#question-book").value;
+  const path = document.querySelector("#question-catalog-anchor").value.trim();
+  if (!bookId || !path) {
+    setSmallDialogStatus("#question-form-status", "请先选择教材目录位置", "error");
+    return;
+  }
+  document.querySelector("#question-source-label").value = `${questionBookName(bookId)} · ${path}`;
+  setSmallDialogStatus("#question-form-status", "已将当前教材目录位置填入来源文本；教材页码仍需单独填写", "success");
+}
+
+function questionCatalogAnchorPayload() {
+  const bookId = document.querySelector("#question-book").value;
+  const chapter = document.querySelector("#question-chapter").value;
+  const original = questionCatalogAnchorOriginal;
+  const changed = chapter !== String(original?.chapter || "") || bookId !== String(original?.bookId || "");
+  const nodeId = document.querySelector("#question-catalog-anchor").selectedOptions[0]?.dataset.nodeId || "";
+  if (changed && chapter && (!nodeId || questionCatalogAnchorLoadState !== "ready")) {
+    throw new Error("question_catalog_anchor_unavailable");
+  }
+  return {
+    ...(original?.version ? { expectedQuestionVersion: original.version } : {}),
+    ...(changed ? { textbookCatalogNodeId: nodeId } : {}),
+  };
+}
+
+// 录入表单的教材下拉：首项是「暂不指定教材」（值为空字符串）。
+// 科目必填，教材可以暂缺——只确定科目的题目允许先录入，之后再补归属；
+// 缺教材时章节/知识点必须留空（服务端 question_classification_requires_book 兜底）。
+function syncQuestionBooks(selectedBookId) {
   if (!state.questionCatalog) return;
   const subjectId = document.querySelector("#question-subject").value;
   const books = state.questionCatalog.books.filter((book) => book.subjectId === subjectId);
   const select = document.querySelector("#question-book");
-  select.innerHTML = books.map((book) => `<option value="${escapeHtml(book.id)}">${escapeHtml(`${book.title}${book.volume ? ` · ${book.volume}` : ""}`)}</option>`).join("");
-  if (books.some((book) => book.id === selectedBookId)) select.value = selectedBookId;
+  // 显式传入（载入某道题）时就照它来，包括""＝这道题本来就没有教材；
+  // 不传参数（首次打开 / 换科目）时沿用旧默认：落到该科目第一本真实教材。
+  const explicit = selectedBookId !== undefined;
+  const neverPopulated = select.options.length === 0;
+  const previous = explicit ? selectedBookId : (neverPopulated ? "" : select.value);
+  // 已保存、但不在当前科目目录里的教材（历史数据 / 已下架教材）保留成一个显式选项：
+  // 让管理员看见并主动改掉，而不是打开编辑器就被静默清空、保存时悄悄丢关联。
+  const orphan = explicit && previous && !books.some((book) => book.id === previous) ? previous : "";
+  select.innerHTML = [
+    '<option value="">暂不指定教材</option>',
+    orphan ? `<option value="${escapeHtml(orphan)}">${escapeHtml(orphan)}（不在当前科目目录中）</option>` : "",
+    ...books.map((book) => `<option value="${escapeHtml(book.id)}">${escapeHtml(`${book.title}${book.volume ? ` · ${book.volume}` : ""}`)}</option>`),
+  ].join("");
+  if (explicit) select.value = (previous === "" || books.some((book) => book.id === previous)) ? previous : "";
+  else if (previous && books.some((book) => book.id === previous)) select.value = previous;
+  else select.value = books[0]?.id || "";
+  // 教材换了（无论是用户改教材、换科目，还是编辑一道换了教材的题）：清掉旧教材的下级关联。
+  // 只在"原本就选着一本教材、现在换成了另一本"时清，避免首次填充目录时动到已填内容。
+  if (questionFormBookId && select.value !== questionFormBookId) {
+    ["#question-chapter", "#question-knowledge-points", "#question-primary-knowledge-point", "#question-sub-knowledge-points"]
+      .forEach((selector) => { document.querySelector(selector).value = ""; });
+  }
+  questionFormBookId = select.value;
+  syncQuestionClassificationFields();
 }
 
-// 教材下拉只列出真实教材，**不再提供"全部教材"**。
-// 原因（2026-09-19 实测）：「全部教材」既不参与筛选（题族卡 86 / 成员 369 与《现代汉语·上册》
-// 完全相同，而换成《古代汉语·第1册》立刻变成 4 / 36），又会把知识树整个清空；而工作区里
-// 依赖"当前教材"的功能有二十余处（知识树增删改与备份、题目列表、知识档案、AI 巡检、
-// 教研规则、题族生成/保存…），它们全都要一本具体的书。所以这是个半成品状态，直接取消。
-// 副作用（正向）：知识树不再有"被清空"的路径，指纹编辑器的锚点判据也不会再静默失效。
+// 分类字段（章节/知识点）跟着教材走：教材留空时它们必须为空、且不可填。
+// 这是"不伪造分类"的前端一半（另一半是服务端 question_classification_requires_book 兜底：
+// 教材为空却带着章节/知识点会被直接拒绝，不允许用假教材或空挂的下级关联绕过约束）。
+function syncQuestionClassificationFields() {
+  const bookSelected = Boolean(document.querySelector("#question-book").value);
+  ["#question-chapter", "#question-knowledge-points", "#question-primary-knowledge-point", "#question-sub-knowledge-points"]
+    .forEach((selector) => {
+      const field = document.querySelector(selector);
+      if (!field) return;
+      field.disabled = !bookSelected;
+      if (!bookSelected) field.value = "";
+    });
+  const hint = document.querySelector("#question-classification-hint");
+  if (hint) {
+    hint.textContent = bookSelected
+      ? "章节与知识点可暂缺；留空即「待归类」，保存后仍可在题目管理里补充归属。"
+      : "暂不指定教材：本题先按「待归类」录入，补上教材后再填章节与知识点。";
+  }
+  renderQuestionCatalogAnchor();
+}
+
+// 全部教材是只读浏览范围；需要目录写入的操作必须明确选择真实教材。
+// （2026-10-12：完善题目的教材筛选不再用这里的哨兵值——入口改成「缺什么 → 归属 → 待定教材」，
+//  接口层的 `bookId=__unassigned__` 仍由 apps/api/src/question-store.js 支持。）
+
 function syncQuestionFilterBooks(selectedBookId = "") {
   if (!state.questionCatalog) return;
   const subjectId = document.querySelector("#question-subject-filter").value;
   const books = state.questionCatalog.books.filter((book) => subjectId === "all" || book.subjectId === subjectId);
   const select = document.querySelector("#question-book-filter");
   const previous = selectedBookId || select.value;
-  select.innerHTML = books.map((book) => `<option value="${escapeHtml(book.id)}">${escapeHtml(`${book.title}${book.volume ? ` · ${book.volume}` : ""}`)}</option>`).join("");
-  // 选中顺序：沿用原选择 → 官方题库优先《现代汉语·上册》 → 该科目下的第一本。
-  // 必须落到一本具体的书上：落到空值等于又制造出"没有当前教材"的状态。
-  const next = books.some((book) => book.id === previous)
-    ? previous
-    : (books.some((book) => book.id === "modern-chinese-7-1") ? "modern-chinese-7-1" : (books[0]?.id || ""));
-  if (next) select.value = next;
+  const bookOptions = books.map((book) => `<option value="${escapeHtml(book.id)}">${escapeHtml(`${book.title}${book.volume ? ` · ${book.volume}` : ""}`)}</option>`).join("");
+  select.innerHTML = `<option value="all">全部教材</option>${bookOptions}`;
+  select.value = books.some((book) => book.id === previous) ? previous : "all";
+}
+
+function questionWorkspaceFilters() {
+  const selectedStatus = document.querySelector("#question-status-filter").value || "all";
+  return {
+    library: state.questionLibrary,
+    subjectId: document.querySelector("#question-subject-filter").value || "all",
+    bookId: document.querySelector("#question-book-filter").value || "all",
+    ...(state.questionWorkspaceMode === "questions"
+      ? { directory: "source", sourceNodeId: libraryWorkspace.dossierNodeId() }
+      : { knowledgeNodeId: state.selectedKnowledgeNodeId }),
+    type: document.querySelector("#question-type-filter").value || "all",
+    importBatchId: document.querySelector("#question-import-batch-filter").value || "all",
+    status: state.questionLibrary === "official" ? "all" : selectedStatus,
+    workspaceStatus: state.questionLibrary === "official" ? selectedStatus : "all",
+  };
 }
 
 function syncQuestionTypeFields() {
   const type = document.querySelector("#question-type").value;
   document.querySelector("#choice-answer-fields").hidden = !choiceQuestionTypes.has(type);
   document.querySelector("#scoring-point-fields").hidden = !subjectiveQuestionTypes.has(type);
-  const annotationField = document.querySelector("#question-annotation-text");
-  const annotationLabel = annotationField.closest("label").querySelector("span");
-  if (type === "classical_word_explanation") {
-    annotationLabel.textContent = "加点字词";
-    annotationField.placeholder = "例如：客；保存后会显示在题干下一行“客：”";
-  } else {
-    annotationLabel.textContent = "标记原文";
-    annotationField.placeholder = "仅原文标记题需要填写";
-  }
+  // 作答方式统一为「文字作答」（2026-10-10 产品负责人确认下线「原文标记」作答方式）。
+  // 这里只剩「加点字词解释」的加点字词输入框：它复用 annotationText 字段，
+  // 语义是题干下面那一行「客：」，与作答方式无关，因此保留。
+  document.querySelector("#question-annotation-text-field").hidden = type !== "classical_word_explanation";
   if (type === "single_choice" || type === "multiple_choice") {
     if (!document.querySelector("#question-options").value) {
       document.querySelector("#question-options").value = "A. \nB. \nC. \nD. ";
     }
     if (!document.querySelector("#question-max-score").value) document.querySelector("#question-max-score").value = "2";
   }
+  syncQuestionEditorFixedContext();
+}
+
+function syncQuestionEditorFixedContext() {
+  const context = document.querySelector("#question-editor-fixed-context");
+  const body = document.querySelector("#question-editor-fixed-context-body");
+  const typeLabel = document.querySelector("#question-type")?.selectedOptions?.[0]?.textContent
+    || document.querySelector("#question-type")?.value
+    || "题目";
+  if (!context || !body) return;
+  const type = String(document.querySelector("#question-type")?.value || "");
+  const stem = String(document.querySelector("#question-stem")?.value || "").trim();
+  const material = String(document.querySelector("#question-material")?.value || "").trim();
+  const options = choiceQuestionTypes.has(type) ? questionOptionTableRows().filter((row) => row.text) : [];
+  if (!stem && !material && !options.length) {
+    context.hidden = true;
+    body.innerHTML = "";
+    return;
+  }
+  const questionCopy = stem || "题干尚未填写";
+  body.innerHTML = `
+    <div class="question-editor-fixed-context-stem">
+      <span>题干</span>
+      <p>${escapeHtml(questionCopy)}</p>
+    </div>
+    ${choiceQuestionTypes.has(type) ? `<div class="question-editor-fixed-context-options">
+      <span>选项</span>
+      <ol>${options.map((option) => `<li><strong>${escapeHtml(option.key)}.</strong> ${escapeHtml(option.text || "未填写")}</li>`).join("")}</ol>
+    </div>` : ""}
+    ${type === "material_analysis" && material ? `<small class="question-editor-fixed-context-material">本题含材料，当前固定显示小题题干</small>` : ""}`;
+  document.querySelector("#question-editor-fixed-context-type").textContent = typeLabel;
+  context.hidden = false;
 }
 
 function questionSubjectName(subjectId) {
@@ -1218,7 +1720,7 @@ function renderQuestionSummary() {
       ["平台题目", counts.official || 0],
       ["待复核答案", counts.pendingOfficial || 0],
       ["其中存疑", counts.doubtful || 0],
-      ["当前筛选", questionTableUnits().length],
+      ["当前筛选", new Set(state.questions.map(question => question.id)).size],
     ]
     : [
       ["待审核", counts.pending || 0],
@@ -1234,7 +1736,7 @@ function renderQuestionStatusFilter() {
   const select = document.querySelector("#question-status-filter");
   const selected = select.value || "all";
   const statuses = state.questionLibrary === "official"
-    ? [["all", "全部状态"], ["pending_review", "待复核"], ["official", "已核对平台题"], ["offline", "已下架"]]
+    ? [["all", "全部状态"], ["checked", "已核对"], ["pending", "待审核"], ["unarchived", "未归档"]]
     : [["all", "全部状态"], ["pending_review", "待审核"], ["public", "公共"], ["featured", "精选"], ["offline", "已下架"]];
   select.innerHTML = statuses.map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
   if (statuses.some(([value]) => value === selected)) select.value = selected;
@@ -1255,7 +1757,7 @@ function questionImportBatchName(batch) {
 function renderQuestionImportBatchFilter() {
   const select = document.querySelector("#question-import-batch-filter");
   const selected = select.value || "all";
-  select.innerHTML = `<option value="all">全部导入批次</option>${state.questionImportBatches.map((batch) => `<option value="${escapeHtml(batch.id)}">${escapeHtml(questionImportBatchName(batch))}</option>`).join("")}`;
+  select.innerHTML = `<option value="all">全部批次</option>${state.questionImportBatches.map((batch) => `<option value="${escapeHtml(batch.id)}">${escapeHtml(questionImportBatchName(batch))}</option>`).join("")}`;
   select.value = state.questionImportBatches.some((batch) => batch.id === selected) ? selected : "all";
   document.querySelector("#edit-question-import-batch").disabled = select.value === "all";
 }
@@ -1328,7 +1830,21 @@ function expandKnowledgeNodeAncestors(nodeId) {
   }
 }
 
+const libraryWorkspace = window.LibraryWorkspace.create({
+  state, requestJson, escapeHtml, friendlyError,
+  reload: async () => {
+    await loadKnowledgeStructure();
+    await loadCurrentQuestionLibraryContent();
+    if (document.querySelector("#question-enrichment-classification-dialog")?.open) await loadEnrichmentFamilyCandidates();
+    if (questionReview) await refreshQuestionReviewAfterWrite("classification");
+  },
+  loadDossiers: loadKnowledgeDossiers,
+  loadContent: loadCurrentQuestionLibraryContent,
+});
+
 function renderKnowledgeTree() {
+  libraryWorkspace.renderDirectoryHeader();
+  if (libraryWorkspace.usesSourceDirectory()) return libraryWorkspace.renderDossierTree();
   const container = document.querySelector("#knowledge-tree");
   const structure = state.knowledgeStructure;
   const isDossierTab = state.questionLibraryTab === "dossiers";
@@ -1356,8 +1872,10 @@ function renderKnowledgeTree() {
     createFamilySetButton.title = selectedNode ? `在“${selectedNode.displayTitle || selectedNode.title}”下新建题族集` : "先在左侧选择章、节或知识点";
   }
   if (!structure?.nodes?.length) {
-    container.innerHTML = '<div class="knowledge-tree-empty">当前教材尚未生成知识结构</div>';
-    document.querySelector("#knowledge-tree-summary").textContent = "尚未生成";
+    const allBooks = document.querySelector("#question-book-filter").value === "all";
+    container.innerHTML = `<div class="knowledge-tree-empty">${allBooks ? "当前显示全部教材；选择一本教材后查看或编辑目录" : "当前教材尚未生成知识结构"}</div>`;
+    document.querySelector("#knowledge-tree-summary").textContent = allBooks ? "全部教材" : "尚未生成";
+    if (allBooks) libraryWorkspace.renderBookChoices();
     return;
   }
   const byParent = new Map();
@@ -1400,8 +1918,9 @@ function renderKnowledgeTree() {
       ? `${structure.summary.knowledgeNodeCount} 个知识点 · ${dossierTreeSummary.locatedDossierCount}/${dossierTreeSummary.dossierCount} 份档案已定位`
       : `${structure.summary.knowledgeNodeCount} 个知识点 · 正在读取档案数量`)
     : (isFamilyWorkspace
-      ? `${structure.summary.knowledgeNodeCount} 个知识点 · ${Number(familyTreeSummary?.questionCount || 0)} 道已确认主题族投影`
+      ? `${structure.summary.knowledgeNodeCount} 个知识点 · ${familyTreeSummary ? `${Number(familyTreeSummary.questionCount || 0)} 道已确认主题族投影` : (state.questionFamilyTreeError || (libraryWorkspace.needsDirectorySelection() ? "请选择映射节点" : "正在读取正式投影题数"))}`
       : `${structure.summary.knowledgeNodeCount} 个知识点 · ${structure.summary.mappedQuestionCount}/${structure.summary.questionCount} 道已映射`);
+  libraryWorkspace.markQuestionMatches();
 }
 
 function knowledgeTreeDropParentId(targetNode, placement) {
@@ -1817,27 +2336,78 @@ async function restoreKnowledgeStructureBackup(fileName) {
   }
 }
 
-// mode："" 读取（没有就按目录生成一份）、"fill-gaps" 只补目录新增的节点（界面默认）、
-// "generate" 完整重建（保留给脚本，界面不再暴露）。
+function setQuestionWorkspaceLoading(loading) {
+  const status = document.querySelector("#question-workspace-loading");
+  status.hidden = !loading || state.questionLibraryTab !== "library";
+  for (const selector of ["#question-list-panel", "#question-family-panel"]) {
+    const panel = document.querySelector(selector);
+    panel.setAttribute("aria-busy", String(loading));
+    panel.inert = loading;
+  }
+}
+
+function cancelQuestionWorkspaceLoad() {
+  state.questionWorkspaceAbortController?.abort();
+  state.questionWorkspaceAbortController = null;
+  state.questionFamilyLoadSequence = (state.questionFamilyLoadSequence || 0) + 1;
+  state.questionListLoadSequence = (state.questionListLoadSequence || 0) + 1;
+  setQuestionWorkspaceLoading(false);
+}
+
+function beginQuestionWorkspaceLoad() {
+  cancelQuestionWorkspaceLoad();
+  const controller = new AbortController();
+  state.questionWorkspaceAbortController = controller;
+  setQuestionWorkspaceLoading(true);
+  return controller;
+}
+
+async function reloadQuestionWorkspaceScope() {
+  const sequence = state.questionWorkspaceScopeSequence = (state.questionWorkspaceScopeSequence || 0) + 1;
+  cancelQuestionWorkspaceLoad();
+  state.selectedKnowledgeNodeId = "";
+  setQuestionWorkspaceLoading(true);
+  try {
+    await loadKnowledgeStructure();
+    if (sequence !== state.questionWorkspaceScopeSequence) return;
+    await loadCurrentQuestionLibraryContent();
+  } finally {
+    if (sequence === state.questionWorkspaceScopeSequence && !state.questionWorkspaceAbortController) setQuestionWorkspaceLoading(false);
+  }
+}
+
+// mode："" 只读；"fill-gaps" 由人工触发补目录新增的节点；
+// 完整重建已退役；读取页面不会重算任何指纹。
 async function loadKnowledgeStructure(mode = "") {
   const bookId = document.querySelector("#question-book-filter").value;
+  const sequence = state.knowledgeStructureLoadSequence = (state.knowledgeStructureLoadSequence || 0) + 1;
+  state.knowledgeStructureAbortController?.abort();
+  const controller = mode ? null : new AbortController();
+  state.knowledgeStructureAbortController = controller;
+  const isCurrentLoad = () => sequence === state.knowledgeStructureLoadSequence
+    && bookId === document.querySelector("#question-book-filter").value;
+  if (state.knowledgeStructure?.bookId !== bookId) state.knowledgeStructure = null;
   if (!bookId || bookId === "all") {
     state.knowledgeStructure = null;
     state.selectedKnowledgeNodeId = "";
+    await libraryWorkspace.loadDirectories("");
+    if (!isCurrentLoad()) return null;
     renderKnowledgeTree();
     return null;
   }
   try {
     const payload = mode === "fill-gaps"
       ? await requestJson("/api/admin/knowledge-structure/fill-gaps", { method: "POST", body: JSON.stringify({ bookId }) })
-      : (mode === "generate"
-        ? await requestJson("/api/admin/knowledge-structure/generate", { method: "POST", body: JSON.stringify({ bookId }) })
-        : await requestJson(`/api/admin/knowledge-structure?bookId=${encodeURIComponent(bookId)}&generate=true`));
+      : await requestJson(`/api/admin/knowledge-structure?bookId=${encodeURIComponent(bookId)}&optional=true`, { signal: controller.signal });
+    if (!isCurrentLoad()) return null;
     state.knowledgeStructure = payload.structure;
-    if (state.selectedKnowledgeNodeId && !payload.structure.nodes.some((node) => node.id === state.selectedKnowledgeNodeId)) state.selectedKnowledgeNodeId = "";
+    if (state.selectedKnowledgeNodeId && !payload.structure?.nodes?.some((node) => node.id === state.selectedKnowledgeNodeId)) state.selectedKnowledgeNodeId = "";
+    await libraryWorkspace.loadDirectories(bookId, controller ? { signal: controller.signal } : {});
+    if (!isCurrentLoad()) return null;
     renderKnowledgeTree();
     return payload;
   } catch (_error) {
+    if (!isCurrentLoad()) return null;
     state.knowledgeStructure = null;
     state.selectedKnowledgeNodeId = "";
     renderKnowledgeTree();
@@ -1849,7 +2419,6 @@ function loadCurrentQuestionLibraryContent() {
   if (state.questionLibraryTab === "dossiers") return loadKnowledgeDossiers();
   if (state.questionLibraryTab === "authoring") return prepareQuestionImportForm();
   if (state.questionLibraryTab === "enrichment") return loadQuestionEnrichment();
-  if (state.questionLibraryTab === "adjudication") return loadAdjudicationQueue();
   if (state.questionLibraryTab === "gold-review") return loadBlindGoldReviewSets();
   if (state.questionLibraryTab === "inspections") return loadKnowledgeInspections();
   if (state.questionLibraryTab === "rules") return loadTeachingRules();
@@ -1857,30 +2426,52 @@ function loadCurrentQuestionLibraryContent() {
 }
 
 function setQuestionWorkspaceMode(mode, shouldLoad = true) {
-  state.questionWorkspaceMode = state.questionLibrary === "official" ? "families" : "questions";
+  state.questionWorkspaceScopeSequence = (state.questionWorkspaceScopeSequence || 0) + 1;
+  cancelQuestionWorkspaceLoad();
+  // 2026-09-22（DEC-094 形态 A）：这里以前对平台题库**恒等于** families —— 而"按批次筛选 + 全选 + 删除所选"
+  // 所在的 #question-list-panel 只在 questions 模式渲染，批次相关控件（批次筛选/统一修改批次）又**只在平台题库显示**，
+  // 两者互相抵消，于是"撤销一整个导入批次"在界面上没有任何入口。
+  // 现在尊重调用方显式传入的模式（工具栏的「题族 / 题目列表」开关）：平台题库的默认视图仍是题族。
+  const previousMode = state.questionWorkspaceMode;
+  state.questionWorkspaceMode = ["questions", "families"].includes(mode)
+    ? mode
+    : (state.questionLibrary === "official" ? "families" : "questions");
+  libraryWorkspace.switchDirectory(state.questionLibraryTab, state.questionLibraryTab, previousMode, state.questionWorkspaceMode);
   const isLibrary = state.questionLibraryTab === "library";
   const familyWorkspace = isLibrary && state.questionWorkspaceMode === "families";
   document.querySelector("#question-list-panel").hidden = !isLibrary || state.questionWorkspaceMode !== "questions";
   document.querySelector("#question-family-panel").hidden = !familyWorkspace;
   document.querySelector("#question-library-summary").hidden = !isLibrary || state.questionWorkspaceMode !== "questions";
+  document.querySelector("#question-family-summary").hidden = !familyWorkspace;
+  document.querySelector("#question-workspace-filters").hidden = !isLibrary;
+  document.querySelector("#create-question-family-set").hidden = !familyWorkspace || state.questionLibrary !== "official";
+  document.querySelector("#create-empty-question-family").hidden = !familyWorkspace || state.questionLibrary !== "official";
   document.querySelector("#toggle-question-family-management").hidden = !familyWorkspace;
   if (!familyWorkspace) {
     state.questionFamilyManagementMode = false;
     clearQuestionFamilyManagementSelection();
   }
-  document.querySelector("#question-workspace-copy").textContent = state.questionWorkspaceMode === "families"
-    ? "在题族中直接查看、编辑和管理题目"
-    : "审核用户贡献题目，并管理公开状态";
+  const familiesModeButton = document.querySelector("#question-workspace-mode-families");
+  const questionsModeButton = document.querySelector("#question-workspace-mode-questions");
+  const inFamiliesMode = state.questionWorkspaceMode === "families";
+  familiesModeButton.setAttribute("aria-pressed", String(inFamiliesMode));
+  questionsModeButton.setAttribute("aria-pressed", String(!inFamiliesMode));
+  familiesModeButton.classList.toggle("is-active", inFamiliesMode);
+  questionsModeButton.classList.toggle("is-active", !inFamiliesMode);
   renderQuestionFamilyManagement();
+  renderKnowledgeTree();
   if (shouldLoad && isLibrary) loadCurrentQuestionLibraryContent();
 }
 
 function setQuestionLibraryTab(tab) {
+  const previousMode = state.questionWorkspaceMode;
   if (["questions", "families"].includes(tab)) {
     state.questionWorkspaceMode = tab;
     tab = "library";
   }
-  state.questionLibraryTab = ["library", "authoring", "dossiers", "enrichment", "inspections", "gold-review", "adjudication", "rules"].includes(tab) ? tab : "library";
+  const nextTab = ["library", "authoring", "dossiers", "enrichment", "inspections", "gold-review", "rules"].includes(tab) ? tab : "library";
+  libraryWorkspace.switchDirectory(state.questionLibraryTab, nextTab, previousMode, state.questionWorkspaceMode);
+  state.questionLibraryTab = nextTab;
   if (state.questionLibraryTab !== "inspections") stopKnowledgeInspectionPolling();
   document.querySelectorAll("[data-question-library-tab]").forEach((button) => button.classList.toggle("is-active", button.dataset.questionLibraryTab === state.questionLibraryTab));
   document.querySelector("#question-workspace-toolbar").hidden = state.questionLibraryTab !== "library";
@@ -1890,11 +2481,10 @@ function setQuestionLibraryTab(tab) {
   document.querySelector("#knowledge-dossier-panel").hidden = state.questionLibraryTab !== "dossiers";
   document.querySelector("#question-enrichment-panel").hidden = state.questionLibraryTab !== "enrichment";
   document.querySelector("#question-authoring-panel").hidden = state.questionLibraryTab !== "authoring";
-  document.querySelector("#adjudication-panel").hidden = state.questionLibraryTab !== "adjudication";
-  // 「题目录入」「完善题目」「AI 巡检」「盲测金标」「裁决台」都是工作流/基准面板，不使用左侧教材知识树：隐藏它并把内容区占满
+  // 「题目录入」「完善题目」「AI 巡检」「盲测金标」都是工作流/基准面板，不使用左侧教材知识树：隐藏它并把内容区占满
   document.querySelector(".question-browser-section")?.classList.toggle(
     "without-knowledge-tree",
-    ["inspections", "gold-review", "enrichment", "adjudication", "authoring"].includes(state.questionLibraryTab),
+    ["inspections", "gold-review", "enrichment", "authoring"].includes(state.questionLibraryTab),
   );
   renderKnowledgeTree();
   setQuestionWorkspaceMode(state.questionWorkspaceMode, false);
@@ -1932,9 +2522,27 @@ function questionGroupDetailHtml(unit) {
       <span>（${escapeHtml(displaySubNumber(question.subNumber) || question.groupOrder)}）</span>
       <strong>${escapeHtml(question.stem)}</strong>
       <label>${escapeHtml(question.typeLabel)} · ${escapeHtml(question.maxScore)} 分</label>
+      ${questionScoreReviewBadgeHtml(question)}
       <button type="button" data-question-action="edit" data-id="${escapeHtml(question.id)}">编辑</button>
       <button type="button" data-question-action="versions" data-id="${escapeHtml(question.id)}">版本</button>
     </div>`).join("")}</div></details>`;
+}
+
+// 「分值待核对」标记（DEC-099 / 产品手册 §4.6.7）：小问分值还是均分占位（或原稿根本没给分）时，
+// 后台必须看得见，否则人工核对无从下手。题目行按"几问待核对"汇总，组内明细逐问标。
+const SCORE_REVIEW_HINT = "材料题组的分值还没有依据（均分占位或缺分值）：完善得分点后重新分配，或人工确认分值";
+
+function questionScoreReviewBadgeHtml(question) {
+  if (!question || question.scoreNeedsReview !== true) return "";
+  return `<span class="score-review-badge" data-score-review="pending" title="${escapeHtml(SCORE_REVIEW_HINT)}">分值待核对</span>`;
+}
+
+function scoreReviewBadgeHtml(unit) {
+  const questions = (unit && unit.questions) || [];
+  const pendingCount = questions.filter((question) => question.scoreNeedsReview === true).length;
+  if (!pendingCount) return "";
+  const label = pendingCount > 1 ? `${pendingCount} 问分值待核对` : "分值待核对";
+  return `<span class="score-review-badge" data-score-review="pending" title="${escapeHtml(SCORE_REVIEW_HINT)}">${escapeHtml(label)}</span>`;
 }
 
 function renderQuestionTable() {
@@ -1949,15 +2557,18 @@ function renderQuestionTable() {
     const ids = unit.questions.map((item) => item.id);
     const selected = ids.every((id) => state.questionSelectedIds.includes(id));
     const isGroup = Boolean(unit.questionGroupId && unit.questions.length > 1);
+    // 「入库第 N 道」是服务端派生的批次内序号（question-serial.js）：老题序号不会因新增而变，
+    // 与「第 501 题」那种原卷题号区分开，避免检查的人把两者当同一个号。
+    const serialText = Number(question.batchSerial) > 0 ? `入库第 ${question.batchSerial} 道` : "";
     const title = isGroup ? (question.questionGroupTitle || `第${question.groupNumber || "—"}题 · 材料题组`) : question.stem;
     const typeText = isGroup ? `材料题组 · ${unit.questions.length} 小题` : question.typeLabel;
     const score = isGroup ? unit.questions.reduce((total, item) => total + Number(item.maxScore || 0), 0) : question.maxScore;
     return `
     <tr class="${selected ? "question-row-selected" : ""} ${isGroup ? "question-group-row" : ""}">
       <td class="question-select-cell"><input class="question-row-checkbox" type="checkbox" value="${escapeHtml(question.id)}" data-question-ids="${escapeHtml(ids.join(","))}" aria-label="${isGroup ? "选择整个材料题组" : "选择题目"}" ${selected ? "checked" : ""} /></td>
-      <td><div class="question-stem-cell"><strong>${escapeHtml(title)}</strong>${isGroup ? `<span class="question-group-badge">1 个题组 · ${unit.questions.length} 个作答项</span>${questionGroupDetailHtml(unit)}` : `${questionKnowledgeFingerprintHtml(question)}<span>${escapeHtml(question.id)} · ${escapeHtml(questionDifficultySummary(question))} · ${escapeHtml(questionExamTagsSummary(question))} · ${escapeHtml(questionFrequencySummary(question))}</span>`}</div></td>
+      <td><div class="question-stem-cell"><strong>${escapeHtml(title)}</strong>${isGroup ? `<span class="question-group-badge">1 个题组 · ${unit.questions.length} 个作答项</span>${serialText ? `<span class="task-stage">${escapeHtml(serialText)}（题组）· 题组 ID ${escapeHtml(question.questionGroupId || "—")}</span>` : ""}${questionGroupDetailHtml(unit)}` : `${questionKnowledgeFingerprintHtml(question)}<span>${serialText ? `${escapeHtml(serialText)} · ` : ""}${escapeHtml(question.id)} · ${escapeHtml(questionDifficultySummary(question))} · ${escapeHtml(questionExamTagsSummary(question))} · ${escapeHtml(questionFrequencySummary(question))}</span>`}</div></td>
       <td><div class="question-catalog-cell"><strong>${escapeHtml(questionSubjectName(question.subjectId))} · ${escapeHtml(question.chapter)}</strong><span>${escapeHtml(questionBookName(question.bookId))}${question.sourcePage ? ` · ${escapeHtml(question.sourcePage)}` : ""}</span></div></td>
-      <td>${escapeHtml(typeText)}<br /><span class="task-stage">${escapeHtml(score)} 分</span></td>
+      <td>${escapeHtml(typeText)}<br /><span class="task-stage">${escapeHtml(score)} 分</span>${scoreReviewBadgeHtml(unit)}</td>
       <td><span class="question-status-badge ${escapeHtml(question.status)}">${escapeHtml(questionStatusLabels[question.status] || question.status)}</span><br /><span class="task-stage">${escapeHtml(answerReviewStatusLabels[question.answerReviewStatus] || "已核对")}</span></td>
       <td><div class="question-version-cell"><strong>${isGroup ? `${unit.questions.length} 个版本链` : `v${escapeHtml(question.version)}`}</strong><span>${escapeHtml(formatTaskTime(Math.max(...unit.questions.map((item) => Number(item.updatedAt) || 0))))}<br />${escapeHtml(question.updatedBy || "")}</span></div></td>
       <td><div class="question-row-actions">${isGroup ? questionGroupActionButtons(unit) : questionActionButtons(question)}</div></td>
@@ -2085,34 +2696,58 @@ function clearQuestionSelection() {
 }
 
 async function loadQuestions() {
-  await loadQuestionCatalog();
-  const query = new URLSearchParams({
-    library: state.questionLibrary,
-    query: document.querySelector("#question-search").value.trim(),
-    subjectId: document.querySelector("#question-subject-filter").value,
-    bookId: document.querySelector("#question-book-filter").value,
-    knowledgeNodeId: state.selectedKnowledgeNodeId,
-    type: document.querySelector("#question-type-filter").value,
-    status: document.querySelector("#question-status-filter").value,
-    importBatchId: document.querySelector("#question-import-batch-filter").value,
-  });
+  const controller = beginQuestionWorkspaceLoad();
+  const sequence = state.questionListLoadSequence = (state.questionListLoadSequence || 0) + 1;
+  const isCurrentLoad = () => sequence === state.questionListLoadSequence && !controller.signal.aborted;
+  state.questionSourceTreeSummary = null;
+  state.questionSourceTreeError = "";
+  renderKnowledgeTree();
   try {
+    if (libraryWorkspace.needsDirectorySelection()) {
+      state.questions = []; state.questionSelectedIds = [];
+      renderQuestionSummary(); renderQuestionTable();
+      document.querySelector("#question-table-body").innerHTML = '<tr><td colspan="7" class="question-table-empty">请先选择左侧来源目录；多项映射已高亮，无映射可通过「映射编辑」设置。</td></tr>';
+      return;
+    }
+    await loadQuestionCatalog();
+    if (!isCurrentLoad()) return;
+    const query = new URLSearchParams({
+      ...questionWorkspaceFilters(),
+      query: document.querySelector("#question-search").value.trim(),
+    });
     const [payload, batchPayload] = await Promise.all([
-      requestJson(`/api/admin/questions?${query}`),
-      requestJson("/api/admin/questions/import-batches"),
+      requestJson(`/api/admin/questions?${query}`, { signal: controller.signal }),
+      requestJson("/api/admin/questions/import-batches", { signal: controller.signal }),
     ]);
+    if (!isCurrentLoad()) return;
+    if (query.get("directory") === "source" && !Object.prototype.hasOwnProperty.call(payload, "treeSummary")) {
+      throw new Error("请先重启后台，来源目录筛选尚未生效");
+    }
     state.questions = payload.questions;
     state.questionImportBatches = batchPayload.batches || [];
     const visibleIds = new Set(state.questions.map((question) => question.id));
     state.questionSelectedIds = state.questionSelectedIds.filter((id) => visibleIds.has(id));
     state.questionCounts = payload.counts;
+    state.questionSourceTreeSummary = payload.treeSummary || null;
+    if (!payload.treeSummary && query.get("bookId") !== "all") state.questionSourceTreeError = "未取得来源题数，请确认后端已重启";
+    renderKnowledgeTree();
     renderQuestionSummary();
     renderQuestionImportBatchFilter();
     renderQuestionTable();
   } catch (error) {
+    if (!isCurrentLoad()) return;
+    state.questionSourceTreeError = "题数读取失败，请刷新重试";
+    renderKnowledgeTree();
+    state.questions = [];
     state.questionSelectedIds = [];
+    renderQuestionSummary();
     document.querySelector("#question-table-body").innerHTML = `<tr><td colspan="7" class="question-table-empty">读取失败：${escapeHtml(friendlyError(error))}</td></tr>`;
     renderQuestionSelection();
+  } finally {
+    if (isCurrentLoad()) {
+      state.questionWorkspaceAbortController = null;
+      setQuestionWorkspaceLoading(false);
+    }
   }
 }
 
@@ -2141,9 +2776,14 @@ async function assessQuestionDifficulty() {
 }
 
 const questionEnrichmentNeedLabels = {
+  // 教材缺失也算一项待完善（跨册批次里"整批都没定教材"是常态，不是异常）：
+  // 不把它列出来，操作者看到的就是一堆"生成失败"，而真正该补的那一项根本没露面。
+  textbook: "待定教材",
   chapter: "待归类章节",
   knowledge_points: "待补知识点",
   scoring_points: "待结构化得分点",
+  knowledge_fingerprint: "待建知识指纹",
+  family: "无题族归属",
 };
 
 const questionEnrichmentStatusLabels = {
@@ -2156,36 +2796,228 @@ const questionEnrichmentStatusLabels = {
   stale: "建议已过期",
 };
 
+// ══════════ 勾选式筛选下拉（2026-10-12 产品负责人确认：筛选行一律改成"下拉勾选"、可多选） ══════════
+// 为什么是多选：这一行同时是「AI 生成建议（筛选结果）」的范围选择器（runQuestionEnrichment 把这些
+// 取值直接发给后端），单选时「待补章节 + 待补知识点」这类组合要来回切两次，勾选一次就能表达。
+// 四条契约（tests/admin-enrichment-filter-controls.test.js 锁着）：
+//   ① 未勾选任何项＝不筛（取代旧 <select> 的 value="all"，不勾就显示「全部X」）；
+//   ② 数据重渲染时失效取值被丢掉（等价于旧代码里 select.value 回落到 all 的兜底）；
+//   ③ 面板显隐走 hidden + 显式 `.filter-select-panel[hidden]{display:none}` 兜底——
+//      作者样式里的 display 会压过浏览器默认的 [hidden]{display:none}（AGENTS §6 的已知缺陷类）；
+//   ④ 选中值只从组件里读（filterSelectValues），不再有第二份"当前筛选"状态。
+const filterSelectState = new Map();
+
+function filterSelectValues(id) {
+  return [...(filterSelectState.get(id) || [])];
+}
+
+function filterSelectGroups(config = {}) {
+  if (Array.isArray(config.groups)) return config.groups;
+  return [{ label: "", options: config.options || [] }];
+}
+
+function filterSelectSummary(defaultLabel, groups, selected) {
+  const labels = groups
+    .flatMap((group) => group.options || [])
+    .filter((option) => selected.has(String(option.value)))
+    .map((option) => String(option.label));
+  return {
+    label: !labels.length ? defaultLabel : (labels.length === 1 ? labels[0] : `${labels[0]} +${labels.length - 1}`),
+    title: labels.length ? `${defaultLabel}：${labels.join("、")}` : `${defaultLabel}（不勾选＝不筛）`,
+  };
+}
+
+function closeFilterSelect(root) {
+  if (!root) return;
+  root.classList.remove("is-open");
+  const panel = root.querySelector(".filter-select-panel");
+  if (panel) panel.hidden = true;
+  const toggle = root.querySelector(".filter-select-toggle");
+  if (toggle) toggle.setAttribute("aria-expanded", "false");
+}
+
+function closeOpenFilterSelects() {
+  document.querySelectorAll(".filter-select.is-open").forEach((root) => closeFilterSelect(root));
+}
+
+// 渲染一个勾选下拉：config = { label, panelLabel, options | groups, onChange }
+function renderFilterSelect(id, config = {}) {
+  const root = document.getElementById(id);
+  if (!root) return;
+  const groups = filterSelectGroups(config);
+  const allowed = new Set(groups.flatMap((group) => group.options || []).map((option) => String(option.value)));
+  const selected = new Set(filterSelectValues(id).filter((value) => allowed.has(value)));
+  filterSelectState.set(id, selected);
+  const defaultLabel = config.label || root.dataset.label || "全部";
+  root.dataset.label = defaultLabel;
+  // 每次筛选变更都会重新 loadQuestionEnrichment，面板会被重渲染；
+  // 重渲染时保留展开态——否则勾第二项时面板会自己合上，多选就没法用了。
+  const wasOpen = root.classList.contains("is-open");
+  const summary = filterSelectSummary(defaultLabel, groups, selected);
+  const panelId = `${id}-panel`;
+  root.innerHTML = [
+    `<button type="button" class="filter-select-toggle" aria-haspopup="true" aria-expanded="false" aria-controls="${escapeHtml(panelId)}" title="${escapeHtml(summary.title)}"><span class="filter-select-value">${escapeHtml(summary.label)}</span><span class="filter-select-caret" aria-hidden="true">▾</span></button>`,
+    `<div class="filter-select-panel" id="${escapeHtml(panelId)}" hidden>`,
+    `<div class="filter-select-panel-head"><span>${escapeHtml(config.panelLabel || defaultLabel)}</span><button type="button" class="filter-select-clear" data-filter-select-clear>清空＝全部</button></div>`,
+    ...groups.map((group) => `<div class="filter-select-group">${group.label ? `<span class="filter-select-group-label">${escapeHtml(group.label)}</span>` : ""}${(group.options || []).map((option) => `<label class="filter-select-option"><input type="checkbox" value="${escapeHtml(String(option.value))}"${selected.has(String(option.value)) ? " checked" : ""} /><span>${escapeHtml(String(option.label))}</span></label>`).join("")}</div>`),
+    "</div>",
+  ].join("");
+  const toggle = root.querySelector(".filter-select-toggle");
+  const panel = root.querySelector(".filter-select-panel");
+  const publish = () => {
+    const next = filterSelectSummary(defaultLabel, groups, selected);
+    root.querySelector(".filter-select-value").textContent = next.label;
+    toggle.title = next.title;
+    if (typeof config.onChange === "function") config.onChange([...selected]);
+  };
+  toggle.addEventListener("click", () => {
+    const willOpen = !root.classList.contains("is-open");
+    closeOpenFilterSelects();
+    if (willOpen) {
+      root.classList.add("is-open");
+      panel.hidden = false;
+      toggle.setAttribute("aria-expanded", "true");
+    }
+  });
+  panel.addEventListener("change", (event) => {
+    if (!event.target.matches('input[type="checkbox"]')) return;
+    if (event.target.checked) selected.add(event.target.value);
+    else selected.delete(event.target.value);
+    publish();
+  });
+  root.querySelector("[data-filter-select-clear]").addEventListener("click", () => {
+    selected.clear();
+    panel.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = false; });
+    publish();
+  });
+  if (wasOpen) {
+    root.classList.add("is-open");
+    panel.hidden = false;
+    toggle.setAttribute("aria-expanded", "true");
+  }
+}
+
+// 「缺什么」面板分三组：归属组就是「待归类」这一派生状态（缺任一级即命中）；知识指纹/题族是按册
+// 派生的结构项、得分点是内容项，各成一组。原「归类状态」下拉的能力全部落在归属组里。
+const questionEnrichmentNeedGroups = [
+  { label: "归属（缺任一即为待归类）", needs: ["textbook", "chapter", "knowledge_points"] },
+  { label: "内容", needs: ["scoring_points"] },
+  { label: "结构", needs: ["knowledge_fingerprint", "family"] },
+];
+
+// 建议状态精简为四态（2026-10-12 产品负责人确认）：全部（不勾）／AI 已推荐／已采纳／生成失败。
+// 「尚未生成／已撤回／已拒绝／建议已过期」不再出现在筛选行（接口仍接受这些取值，历史链接不受影响）：
+// 它们在列表里要么恒为 0，要么只在单题详情里才有意义。
+const questionEnrichmentStatusOptions = ["recommended", "applied", "failed"]
+  .map((value) => ({ value, label: questionEnrichmentStatusLabels[value] }));
+
+function onQuestionEnrichmentFilterChange({ cascadeBooks = false } = {}) {
+  state.questionEnrichmentPage = 1;
+  if (cascadeBooks) syncQuestionEnrichmentBooks();
+  loadQuestionEnrichment();
+}
+
+function renderQuestionEnrichmentSubjectFilter() {
+  const subjects = state.questionCatalog ? state.questionCatalog.subjects : [];
+  renderFilterSelect("question-enrichment-subject", {
+    label: "全部科目",
+    panelLabel: "科目",
+    options: subjects.map((subject) => ({ value: subject.id, label: subject.name })),
+    // 科目变了教材候选跟着换：失效的教材取值由 renderFilterSelect 的兜底丢掉。
+    onChange: () => onQuestionEnrichmentFilterChange({ cascadeBooks: true }),
+  });
+}
+
+function renderQuestionEnrichmentTypeFilter() {
+  const types = state.questionCatalog ? state.questionCatalog.questionTypes : [];
+  renderFilterSelect("question-enrichment-type", {
+    label: "全部题型",
+    panelLabel: "题型",
+    options: types.map((type) => ({ value: type.id, label: type.label })),
+    onChange: () => onQuestionEnrichmentFilterChange(),
+  });
+}
+
+function renderQuestionEnrichmentNeedFilter() {
+  renderFilterSelect("question-enrichment-need", {
+    label: "全部待完善项",
+    panelLabel: "待完善项（命中任一）",
+    groups: questionEnrichmentNeedGroups.map((group) => ({
+      label: group.label,
+      options: group.needs.map((need) => ({ value: need, label: questionEnrichmentNeedLabels[need] })),
+    })),
+    onChange: () => onQuestionEnrichmentFilterChange(),
+  });
+}
+
+function renderQuestionEnrichmentStatusFilter() {
+  renderFilterSelect("question-enrichment-status", {
+    label: "全部建议状态",
+    panelLabel: "建议状态",
+    options: questionEnrichmentStatusOptions,
+    onChange: () => onQuestionEnrichmentFilterChange(),
+  });
+}
+
 function syncQuestionEnrichmentBooks() {
-  if (!state.questionCatalog) return;
-  const subjectId = document.querySelector("#question-enrichment-subject").value || "all";
-  const select = document.querySelector("#question-enrichment-book");
-  const selected = select.value || "all";
-  const books = state.questionCatalog.books.filter((book) => subjectId === "all" || book.subjectId === subjectId);
-  select.innerHTML = `<option value="all">全部教材</option>${books.map((book) => `<option value="${escapeHtml(book.id)}">${escapeHtml(`${book.title}${book.volume ? ` · ${book.volume}` : ""}`)}</option>`).join("")}`;
-  select.value = books.some((book) => book.id === selected) ? selected : "all";
+  // 目录还没读到也要先把控件画出来（空面板），否则这颗下拉会是个空白 div，看起来像坏了。
+  const subjectIds = filterSelectValues("question-enrichment-subject");
+  const books = (state.questionCatalog ? state.questionCatalog.books : [])
+    .filter((book) => !subjectIds.length || subjectIds.includes(book.subjectId));
+  // 教材筛选不再提供「未指定教材（待归类）」哨兵项（2026-10-12 产品负责人确认删除）：
+  // 「缺什么 → 归属 → 待定教材」筛的就是同一批题，两处表达同一件事只会让人怀疑口径不一致。
+  // 接口层的 `bookId=__unassigned__` 仍然接受（题库列表与历史链接在用，见 question-store.js）。
+  renderFilterSelect("question-enrichment-book", {
+    label: "全部教材",
+    panelLabel: "教材",
+    options: books.map((book) => ({ value: book.id, label: `${book.title}${book.volume ? ` · ${book.volume}` : ""}` })),
+    onChange: () => onQuestionEnrichmentFilterChange(),
+  });
 }
 
 function renderQuestionEnrichmentSummary() {
   const summary = state.questionEnrichmentSummary || {};
   const metrics = [
     ["待完善", summary.pending || 0],
-    ["待归类", summary.chapter || 0],
+    // 「待定教材」单列一张卡（2026-09-24 跨册批次）：这批题在列表里此前只显示成「生成失败」，
+    // 看不出真正缺的是"教材归属"——卡片按同一个口径给数字，点不开也不误导，但一眼能看出该补什么。
+    ["待定教材", summary.textbook || 0],
+    // 「建议换科目」单列一张卡（2026-09-24 DEC-098）：科目判错的题整棵树都挂错，
+    // 这一项不进批量采纳，必须逐条复核——所以它要在汇总里露面，不能被"AI 已推荐"淹没。
+    ["建议换科目", summary.subject || 0],
+    ["待补章节", summary.chapter || 0],
     ["待补知识点", summary.knowledgePoints || 0],
     ["待处理得分点", summary.scoringPoints || 0],
+    // 2026-09-26（产品负责人确认）：知识指纹与题族归属也属于「待完善」。
+    // 这两项走只补缺预览与人工确认，不随 AI 建议自动写入。
+    ["待建知识指纹", summary.knowledgeFingerprint || 0],
+    ["无题族归属", summary.family || 0],
+    ["待归类（缺归属）", summary.pendingClassification || 0],
     ["AI 已推荐", summary.recommended || 0],
     ["生成失败", summary.failed || 0],
     ["已完成", summary.completed || 0],
   ];
-  document.querySelector("#question-enrichment-summary").innerHTML = metrics.map(([label, value]) => `
-    <div class="question-summary-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
+  const host = document.querySelector("#question-enrichment-summary");
+  const expanded = Boolean(host.querySelector("details")?.open);
+  const mainLabels = new Set(["待完善", "AI 已推荐", "生成失败", "已完成"]);
+  // A proposed subject change requires individual review and must stay prominent.
+  if (summary.subject) mainLabels.add("建议换科目");
+  const main = metrics.filter(([label]) => mainLabels.has(label));
+  const details = metrics.filter(([label]) => !mainLabels.has(label));
+  host.innerHTML = `<div class="enrichment-summary-main">${main.map(([label, value]) => `
+    <div class="question-summary-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>
+    <details class="enrichment-summary-details"${expanded ? " open" : ""}><summary>查看缺失项统计</summary>
+      <div class="enrichment-summary-breakdown">${details.map(([label, value]) => `<div class="question-summary-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>
+    </details>`;
 }
 
 function renderQuestionEnrichmentBatchFilter() {
-  const select = document.querySelector("#question-enrichment-batch");
-  const selected = select.value || "all";
-  select.innerHTML = `<option value="all">全部导入批次</option>${state.questionImportBatches.map((batch) => `<option value="${escapeHtml(batch.id)}">${escapeHtml(questionImportBatchName(batch))}</option>`).join("")}`;
-  select.value = state.questionImportBatches.some((batch) => batch.id === selected) ? selected : "all";
+  renderFilterSelect("question-enrichment-batch", {
+    label: "全部导入批次",
+    panelLabel: "导入批次",
+    options: state.questionImportBatches.map((batch) => ({ value: batch.id, label: questionImportBatchName(batch) })),
+    onChange: () => onQuestionEnrichmentFilterChange(),
+  });
 }
 
 function renderQuestionEnrichmentJob() {
@@ -2210,29 +3042,267 @@ function renderQuestionEnrichmentSelection() {
   checkbox.disabled = ids.length === 0;
   document.querySelector("#question-enrichment-selection").hidden = state.questionEnrichmentSelectedIds.length === 0;
   document.querySelector("#question-enrichment-selected-count").textContent = `已选 ${state.questionEnrichmentSelectedIds.length} 道`;
+  const hasSelection = state.questionEnrichmentSelectedIds.length > 0;
+  document.querySelector("#run-selected-question-enrichment").disabled = !hasSelection || Boolean(state.questionEnrichmentSubmitting);
+  document.querySelector("#run-deterministic-selection").disabled = !hasSelection;
+  document.querySelector("#apply-question-enrichment-batch").disabled = !hasSelection || Boolean(state.questionEnrichmentApplying);
+  document.querySelector("#run-question-enrichment").disabled = Boolean(state.questionEnrichmentSubmitting);
 }
 
 function enrichmentScoringPointText(points) {
   return (Array.isArray(points) ? points : []).map((point) => `${point.score} 分 · ${point.description}${point.textbookPage ? ` · 教材 ${point.textbookPage} 页` : ""}`).join("\n");
 }
 
+let questionReview = null;
+let questionReviewOpening = false;
+
+function questionEnrichmentItem(questionId) {
+  if (questionReview?.id === String(questionId)) return questionReview.item;
+  return state.questionEnrichmentItems.find(item => String(item.question.id) === String(questionId));
+}
+
+async function readQuestionReviewItem(questionId) {
+  const payload = await requestJson(`/api/admin/question-enrichment?questionId=${encodeURIComponent(questionId)}&pageSize=20`);
+  const item = (payload.items || []).find(entry => String(entry.question.id) === String(questionId));
+  if (!item) throw new Error("未找到这道题，请刷新列表后重试。");
+  if (!Object.prototype.hasOwnProperty.call(item.question, "knowledgeFingerprintStatus")) throw new Error("后台版本尚未更新，请先重启后台，再刷新页面。");
+  return item;
+}
+
+function setQuestionReviewBusy(busy) {
+  if (!questionReview) return;
+  questionReview.busy = busy;
+  document.querySelectorAll("[data-question-review-tab], #close-question-editor").forEach(button => { button.disabled = busy; });
+  document.querySelectorAll(".question-review-pane").forEach(pane => { pane.inert = busy; });
+}
+
+function questionReviewDiscardChanges() {
+  if (!assessmentModeUi().discard()) return false;
+  if (!questionReview?.dirty) return true;
+  if (!window.confirm("当前页有未保存修改，是否放弃这些修改？")) return false;
+  questionReview.loaded.delete(questionReview.tab);
+  questionReview.dirty = false;
+  return true;
+}
+
+async function openQuestionReview(questionId) {
+  watchReviewHelpText();
+  if (questionReviewOpening || questionReview?.busy) return;
+  if (questionReview && !closeQuestionReview()) return;
+  questionReviewOpening = true;
+  try {
+    const item = await readQuestionReviewItem(questionId);
+    await openQuestionEditor(String(questionId), { question: item.question });
+    questionReview = { id: String(questionId), item, tab: "", loaded: new Set(["details"]), dirty: false, busy: false, mounted: [] };
+    for (const [sourceId, targetId] of [
+      ["question-enrichment-dialog", "question-review-suggestion-content"],
+      ["question-enrichment-classification-dialog", "question-review-classification"],
+    ]) {
+      const source = document.getElementById(sourceId);
+      const target = document.getElementById(targetId);
+      const nodes = [...source.childNodes];
+      target.append(...nodes);
+      questionReview.mounted.push({ source, nodes });
+    }
+    document.querySelector("#question-review-tabs").hidden = false;
+    document.querySelector("#question-review-details").setAttribute("role", "tabpanel");
+    document.querySelector("#question-review-details").setAttribute("aria-labelledby", "question-review-tab-details");
+    await switchQuestionReviewTab(QuestionReviewModel.initialTab(item));
+  } catch (error) {
+    if (questionReview) setSmallDialogStatus("#question-review-status", `读取失败：${friendlyError(error)}`, "error");
+    else window.alert(`读取题目失败：${friendlyError(error)}`);
+  } finally {
+    questionReviewOpening = false;
+  }
+}
+
+async function switchQuestionReviewTab(tab, force = false) {
+  const session = questionReview;
+  if (!session || session.busy || !["suggestions", "classification", "details"].includes(tab)) return;
+  if (!force && tab === session.tab && session.loaded.has(tab)) return;
+  if (!force && tab !== session.tab && !questionReviewDiscardChanges()) return;
+  setQuestionReviewBusy(true);
+  session.tab = tab;
+  document.querySelectorAll("[data-question-review-tab]").forEach(button => {
+    const selected = button.dataset.questionReviewTab === tab;
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  for (const name of ["suggestions", "classification", "details"]) document.querySelector(`#question-review-${name}`).hidden = true;
+  setSmallDialogStatus("#question-review-status", "正在读取本题…", "loading");
+  try {
+    if (session.stale) {
+      session.item = await readQuestionReviewItem(session.id);
+      session.stale = false;
+    }
+    if (!session.loaded.has(tab)) {
+      if (tab === "suggestions") {
+        const actionable = Boolean(QuestionReviewModel.activeSuggestion(session.item));
+        document.querySelector("#question-review-suggestion-empty").hidden = actionable;
+        document.querySelector("#question-review-suggestion-content").hidden = !actionable;
+        if (actionable) await openQuestionEnrichmentReview(session.id, { embedded: true });
+        else {
+          const status = session.item.suggestion?.status;
+          document.querySelector("#question-review-suggestion-message").textContent = status === "recommended"
+            ? "建议内容与当前内容一致，没有需要采纳的新改动。"
+            : status ? `建议状态：${questionEnrichmentStatusLabels[status] || status}。当前没有可采纳的新建议。` : "当前没有待采纳建议。";
+          document.querySelector("#question-review-revert").hidden = status !== "applied";
+        }
+      } else if (tab === "classification") await openEnrichmentClassification(session.id, { embedded: true });
+      else await openQuestionEditor(session.id, { question: session.item.question });
+      session.loaded.add(tab);
+    }
+    if (questionReview !== session) return;
+    document.querySelector(`#question-review-${tab}`).hidden = false;
+    document.querySelector("#question-editor-title").textContent = `查看/裁决 · v${session.item.question.version}`;
+    setSmallDialogStatus("#question-review-status");
+    session.dirty = false;
+  } catch (error) {
+    setSmallDialogStatus("#question-review-status", `读取失败：${friendlyError(error)}，可点击页签重试。`, "error");
+  } finally {
+    if (questionReview === session) setQuestionReviewBusy(false);
+  }
+}
+
+function closeQuestionReview() {
+  if (!questionReview) return true;
+  if (questionReview.busy || knowledgeInspectionApplyGuard.currentRequest() || !questionReviewDiscardChanges()) return false;
+  const session = questionReview;
+  knowledgeInspectionApplyGuard.close(state.enrichmentClassificationSession);
+  state.enrichmentClassificationSession = "";
+  state.enrichmentClassificationQuestionId = "";
+  state.enrichmentClassificationResult = null;
+  for (const { source, nodes } of session.mounted) source.append(...nodes);
+  questionReview = null;
+  document.querySelector("#question-review-tabs").hidden = true;
+  document.querySelector("#question-review-suggestions").hidden = true;
+  document.querySelector("#question-review-classification").hidden = true;
+  const details = document.querySelector("#question-review-details");
+  details.hidden = false;
+  details.removeAttribute("role");
+  details.removeAttribute("aria-labelledby");
+  setSmallDialogStatus("#question-review-status");
+  return true;
+}
+
+async function refreshQuestionReviewAfterWrite(preferredTab = "") {
+  const session = questionReview;
+  if (!session) return;
+  session.dirty = false;
+  session.stale = true;
+  session.loaded.clear();
+  try {
+    session.item = await readQuestionReviewItem(session.id);
+    session.stale = false;
+    await loadQuestionEnrichment();
+    setQuestionReviewBusy(false);
+    await switchQuestionReviewTab(preferredTab || (QuestionReviewModel.needsAttribution(session.item) ? "classification" : "details"), true);
+  } catch (error) {
+    for (const name of ["suggestions", "classification", "details"]) document.querySelector(`#question-review-${name}`).hidden = true;
+    setSmallDialogStatus("#question-review-status", `保存已成功，但读取最新结果失败：${friendlyError(error)}。请关闭后重新打开。`, "error");
+  } finally {
+    if (questionReview === session) setQuestionReviewBusy(false);
+  }
+}
+
 function questionEnrichmentActions(item) {
-  const suggestion = item.suggestion;
-  // 有建议的题都会出现在「裁决台」；这里给一条**就地去裁决台**的入口（带题号，过去会自动预筛选到这道题）。
-  // 没建议的题没有可裁决的东西，就不显示这个入口。
-  const adjudicationLink = suggestion
-    ? `<button class="adjudication-hint" data-open-adjudication="${escapeHtml(item.question.id)}" type="button" title="在裁决台中查看这道题的建议">裁决台</button>`
-    : "";
-  if (suggestion && suggestion.status === "recommended") {
-    return `<button class="icon-text-action" data-enrichment-action="review" data-id="${escapeHtml(item.question.id)}">审核建议</button>${adjudicationLink}`;
+  return `<button class="icon-text-action" data-enrichment-action="adjudicate" data-id="${escapeHtml(item.question.id)}">查看/裁决</button>`;
+}
+
+async function revertQuestionReviewSuggestion() {
+  const session = questionReview;
+  if (!session || session.busy || session.item.suggestion?.status !== "applied") return;
+  if (!window.confirm("确认撤回本次采纳的目录、知识点和得分点吗？系统会创建一个恢复版本。")) return;
+  setQuestionReviewBusy(true);
+  try {
+    await requestJson(`/api/admin/question-enrichment/questions/${encodeURIComponent(session.id)}/revert`, {
+      method: "POST", body: JSON.stringify({ suggestionId: session.item.suggestion.id }),
+    });
+    await refreshQuestionReviewAfterWrite("suggestions");
+  } catch (error) {
+    setSmallDialogStatus("#question-review-status", `撤回失败：${friendlyError(error)}`, "error");
+  } finally {
+    setQuestionReviewBusy(false);
   }
-  if (suggestion && suggestion.status === "applied") {
-    return `<button class="icon-text-action" data-enrichment-action="revert" data-id="${escapeHtml(item.question.id)}">撤回采纳</button>${adjudicationLink}`;
-  }
-  if (!item.needs.complete) {
-    return `<button class="icon-text-action" data-enrichment-action="generate" data-id="${escapeHtml(item.question.id)}">${suggestion ? "重新生成" : "生成建议"}</button>${adjudicationLink}`;
-  }
-  return `<span class="enrichment-muted">无需处理</span>`;
+}
+
+// DEC-099 ④「完善环节按题组」：服务端读出时已派生 questionGroupId／questionGroupTitle／groupQuestionCount
+// （question-store.js → decorateQuestionGroups），但这张表此前逐行渲染，同一题组的小问被散成多行，
+// 看起来就是"题组没有以题组呈现"。这里按题目单元分组：**组头一行 + 组内逐问**；逐问保留各自的
+// AI 建议／置信度／审核操作——同一题组各小问的建议本来就不同（章节都可能不一样），不能合并成一条。
+// 组内顺序按小问号（groupOrder／subNumber）——接口的列表顺序是"最近更新倒序"，直接铺会变成 (2)(1)。
+function questionEnrichmentSubOrder(question = {}) {
+  const explicit = Number(question.groupOrder);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const digits = String(question.subNumber || "").normalize("NFKC").replace(/[^0-9]/g, "");
+  return Number(digits) || Number.MAX_SAFE_INTEGER;
+}
+
+function questionEnrichmentUnits(items = []) {
+  const units = [];
+  const byKey = new Map();
+  items.forEach((item) => {
+    const question = item.question || {};
+    const questionGroupId = String(question.questionGroupId || "").trim();
+    const key = questionGroupId || `question:${question.id}`;
+    if (!byKey.has(key)) {
+      const unit = {
+        key,
+        questionGroupId,
+        title: question.questionGroupTitle || (questionGroupId ? `第${question.groupNumber || "—"}题 · 材料题组` : ""),
+        groupQuestionCount: Number(question.groupQuestionCount) || 0,
+        items: [],
+      };
+      byKey.set(key, unit);
+      units.push(unit);
+    }
+    byKey.get(key).items.push(item);
+  });
+  return units.map((unit) => ({
+    ...unit,
+    items: unit.questionGroupId
+      ? [...unit.items].sort((left, right) => questionEnrichmentSubOrder(left.question) - questionEnrichmentSubOrder(right.question))
+      : unit.items,
+    totalScore: unit.items.reduce((total, item) => total + (Number(item.question.maxScore) || 0), 0),
+    pendingCount: unit.items.filter((item) => !(item.needs && item.needs.complete)).length,
+  }));
+}
+
+function questionEnrichmentGroupHeadHtml(unit) {
+  if (!unit.questionGroupId) return "";
+  const declared = unit.groupQuestionCount || unit.items.length;
+  // 筛选可能只留下组内一部分小问：把"整组几问"和"当前显示几问"分开说清楚，别让人以为组缩水了。
+  const partial = unit.items.length < declared ? `（当前筛选 ${unit.items.length} 问）` : "";
+  const ids = unit.items.map((item) => item.question.id);
+  const selected = ids.filter((id) => state.questionEnrichmentSelectedIds.includes(id)).length;
+  // 整组勾选是**主操作**（产品负责人 2026-09-25 定）：材料题组的分值要整组一起算、一起分配，
+  // 只有整组勾选时 LLM 才有足够信息算分与分配；单独勾某一问只是"补这一问的归属"，属次要操作。
+  return `<tr class="question-enrichment-group-row"><td colspan="5"><div class="enrichment-group-head">
+      <label class="enrichment-group-select" title="整组勾选：分值按整组计算与分配"><input class="question-enrichment-group-checkbox" type="checkbox" data-question-ids="${escapeHtml(ids.join(","))}" aria-label="整组勾选：${escapeHtml(unit.title)}，共 ${escapeHtml(declared)} 个作答项" ${ids.length && selected === ids.length ? "checked" : ""} /><span>整组勾选</span></label>
+      <strong>${escapeHtml(unit.title)}</strong>
+      <span class="question-group-badge">1 个题组 · ${escapeHtml(declared)} 个作答项</span>
+      <span class="task-stage">本组 ${escapeHtml(unit.totalScore)} 分 · 待完善 ${escapeHtml(unit.pendingCount)} 问 · 已选 ${escapeHtml(selected)}/${escapeHtml(ids.length)} 问${partial}</span>
+      <span class="enrichment-muted">分值的计算与分配按整组进行，请优先整组勾选；单独勾选只完善该问的归属</span>
+    </div></td></tr>`;
+}
+
+function questionEnrichmentRowHtml(item, inGroup) {
+  const { question } = item;
+  const suggestion = QuestionReviewModel.activeSuggestion(item);
+  const confidence = Math.round(Number(suggestion && suggestion.confidence || 0) * 100);
+  const confidenceClass = confidence >= 85 ? "" : (confidence >= 65 ? "medium" : "low");
+  const evidenceCount = suggestion && suggestion.evidence ? suggestion.evidence.length : 0;
+  const labels = { stored: "已入库", suggested: "建议待确认", missing: "缺失" };
+  const fieldModels = QuestionReviewModel.fields(item, questionBookName);
+  const renderField = field => `<div class="enrichment-field" data-review-field="${field.key}" data-field-status="${field.status}"><span class="enrichment-field-label">${field.label}：</span><span class="enrichment-field-value" title="${escapeHtml(field.value || "—")}">${field.key === "stem" && inGroup ? `<span class="enrichment-sub-number">（${escapeHtml(question.subNumber || question.groupOrder || "?")}）</span>` : ""}${escapeHtml(field.value || "—")}</span><span class="enrichment-field-state ${field.status}">${labels[field.status]}</span>${field.newSuggestion ? '<span class="enrichment-new-suggestion">有新建议</span>' : ""}</div>`;
+  const fields = [["stem", "chapter", "fingerprint"], ["book", "knowledge", "family"]]
+    .map(keys => `<div class="enrichment-field-group">${keys.map(key => renderField(fieldModels.find(field => field.key === key))).join("")}</div>`).join("");
+  return `<tr class="${inGroup ? "enrichment-group-sub" : ""}">
+      <td class="question-select-cell"><input class="question-enrichment-row-checkbox${inGroup ? " enrichment-sub-checkbox" : ""}" type="checkbox" value="${escapeHtml(question.id)}" aria-label="${inGroup ? "单独选择这个小问" : "选择题目"}" title="${inGroup ? "次要操作：单独勾选只完善这一问的归属；分值的计算与分配请用上方的整组勾选" : "选择题目"}" ${state.questionEnrichmentSelectedIds.includes(question.id) ? "checked" : ""} /></td>
+      <td colspan="2"><div class="enrichment-fields">${fields}</div>${suggestion && suggestion.subjectId && suggestion.subjectId !== question.subjectId ? '<span class="enrichment-new-suggestion">有换科目建议</span>' : ""}</td>
+      <td><div class="enrichment-evidence-cell">${suggestion && suggestion.status !== "failed" ? `<strong class="enrichment-confidence ${confidenceClass}">${escapeHtml(confidence)}%</strong><span class="enrichment-muted">${escapeHtml(evidenceCount)} 条教材证据${suggestion.uncertainty ? ` · 有不确定项` : ""}</span>` : '<span class="enrichment-muted">暂无证据</span>'}</div></td>
+      <td><div class="question-row-actions">${questionEnrichmentActions(item)}${suggestion && !fieldModels.some(field => field.newSuggestion || field.status === "suggested") ? '<span class="enrichment-new-suggestion">有新建议</span>' : ""}</div></td>
+    </tr>`;
 }
 
 function renderQuestionEnrichmentTable() {
@@ -2242,39 +3312,864 @@ function renderQuestionEnrichmentTable() {
     renderQuestionEnrichmentSelection();
     return;
   }
-  body.innerHTML = state.questionEnrichmentItems.map((item) => {
-    const { question, needs, suggestion } = item;
-    const suggestionStatus = suggestion ? suggestion.status : "none";
-    const confidence = Math.round(Number(suggestion && suggestion.confidence || 0) * 100);
-    const confidenceClass = confidence >= 85 ? "" : (confidence >= 65 ? "medium" : "low");
-    const evidenceCount = suggestion && suggestion.evidence ? suggestion.evidence.length : 0;
-    const suggestedContent = suggestion && suggestion.status !== "failed" ? `
-      <strong>${escapeHtml(suggestion.catalogPath || "未给出目录")}</strong>
-      <span class="enrichment-muted">${escapeHtml((suggestion.knowledgePoints || []).join(" · ") || "未给出知识点")}</span>
-      ${suggestion.scoringPoints && suggestion.scoringPoints.length ? `<span class="enrichment-muted">${escapeHtml(enrichmentScoringPointText(suggestion.scoringPoints))}</span>` : ""}` : `<span class="enrichment-muted">${escapeHtml(suggestion && friendlyError(suggestion.error) || "等待生成建议")}</span>`;
-    return `<tr>
-      <td class="question-select-cell"><input class="question-enrichment-row-checkbox" type="checkbox" value="${escapeHtml(question.id)}" aria-label="选择题目" ${state.questionEnrichmentSelectedIds.includes(question.id) ? "checked" : ""} /></td>
-      <td><div class="enrichment-question-cell"><strong>${escapeHtml(question.stem)}</strong><span class="enrichment-muted">${escapeHtml(questionBookName(question.bookId))} · v${escapeHtml(question.version)}</span><span class="enrichment-muted">当前：${escapeHtml(question.chapter)} · ${escapeHtml((question.knowledgePoints || []).join(" · "))}</span><div class="enrichment-tags">${needs.complete ? '<span class="enrichment-status applied">已完善</span>' : needs.needs.map((need) => `<span class="enrichment-tag ${escapeHtml(need)}">${escapeHtml(questionEnrichmentNeedLabels[need])}</span>`).join("")}</div></div></td>
-      <td><div class="enrichment-suggestion-cell"><span class="enrichment-status ${escapeHtml(suggestionStatus)}">${escapeHtml(questionEnrichmentStatusLabels[suggestionStatus] || suggestionStatus)}</span>${suggestedContent}</div></td>
-      <td><div class="enrichment-evidence-cell">${suggestion && suggestion.status !== "failed" ? `<strong class="enrichment-confidence ${confidenceClass}">${escapeHtml(confidence)}%</strong><span class="enrichment-muted">${escapeHtml(evidenceCount)} 条教材证据${suggestion.uncertainty ? ` · 有不确定项` : ""}</span>` : '<span class="enrichment-muted">暂无证据</span>'}</div></td>
-      <td><div class="question-row-actions">${questionEnrichmentActions(item)}</div></td>
-    </tr>`;
-  }).join("");
+  body.innerHTML = questionEnrichmentUnits(state.questionEnrichmentItems).map((unit) => (
+    questionEnrichmentGroupHeadHtml(unit) + unit.items.map((item) => questionEnrichmentRowHtml(item, Boolean(unit.questionGroupId))).join("")
+  )).join("");
+  // 整组勾选框的"选了一部分"状态只能用 DOM 属性设（HTML 属性写不出来）。
+  body.querySelectorAll(".question-enrichment-group-checkbox").forEach((checkbox) => {
+    const ids = String(checkbox.dataset.questionIds || "").split(",").filter(Boolean);
+    const selected = ids.filter((id) => state.questionEnrichmentSelectedIds.includes(id)).length;
+    checkbox.indeterminate = selected > 0 && selected < ids.length;
+  });
   renderQuestionEnrichmentSelection();
 }
 
-function questionEnrichmentQuery() {
-  return new URLSearchParams({
-    query: document.querySelector("#question-enrichment-search").value.trim(),
-    subjectId: document.querySelector("#question-enrichment-subject").value,
-    bookId: document.querySelector("#question-enrichment-book").value,
-    importBatchId: document.querySelector("#question-enrichment-batch").value,
-    type: document.querySelector("#question-enrichment-type").value,
-    need: document.querySelector("#question-enrichment-need").value,
-    suggestionStatus: document.querySelector("#question-enrichment-status").value,
-    page: state.questionEnrichmentPage,
-    pageSize: 80,
+// ── DEC-100（产品手册 §4.6.12）：完善题目承接「知识依据」＋「题族归属」 ───────────────
+// AI 巡检只诊断、不改库；这里是知识归属与题族归属的**唯一**改库入口。
+// 提交走 submitKnowledgeClassificationApply（全文件唯一的接口调用点），载荷由
+// knowledge-inspection-apply-guard.js 的纯函数构造 —— 从巡检弹窗原来的内联构造里逐字抽出来的，
+// 判据未放宽也未加严。
+
+function enrichmentClassificationNodes(result = null) {
+  // 巡检结论存在时以它的最小充分知识集为准；没有巡检记录时用题目现有知识点兜底（全库绝大多数题都没巡检过）。
+  // 2026-09-27 修：结论里的节点路径必须按**这道题自己的教材**那棵树解析——以前这里读的是题库页那棵树
+  // （可能为空或别册），结论里的节点就会只剩一个裸 id、显示不出路径。
+  const nodes = result ? knowledgeInspectionRequiredNodes(result, enrichmentClassificationRawNodes()) : [];
+  if (nodes.length) return nodes;
+  const matched = new Map();
+  enrichmentClassificationQuestionKnowledgePoints().forEach((point) => {
+    const node = matchKnowledgeNodeByPoint(point);
+    if (node && !matched.has(String(node.id))) matched.set(String(node.id), node);
   });
+  return [...matched.values()].map((node) => ({ ...node, id: String(node.id), path: knowledgeInspectionPath(node) || knowledgePathOfNode(node) || String(node.id) }));
+}
+
+// 题目的知识点是**纯文本**（"辅音的发音方法"），节点 id 是知识树里的真 id（"method"）。
+// 2026-09-26 修：这里以前匹配不上就把知识点的纯文本直接当成节点 id 兜底，
+// 那会在提交时写出一个知识树里根本不存在的节点 id —— 放开写入后就是真缺陷。
+// 现在的口径：只在知识树里找**真实节点**（标题精确 → 路径／展示标题精确 → 标题互相包含），
+// 一个都没匹配上就不进候选，改由 enrichmentClassificationUnmatchedKnowledgePoints 明确提示。
+function enrichmentClassificationQuestionKnowledgePoints(result = null) {
+  const nodes = result ? knowledgeInspectionRequiredNodes(result) : [];
+  if (nodes.length) return [];
+  const question = enrichmentClassificationQuestion() || {};
+  return [...new Set((question.knowledgePoints || []).map((point) => String(point || "").trim()).filter(Boolean))];
+}
+
+function enrichmentClassificationStructureNodes() {
+  return enrichmentClassificationRawNodes().filter((node) => node && node.id && node.kind === "knowledge");
+}
+
+// 弹窗该用的那棵树的**原始节点**：优先弹窗自己按"这道题的教材"加载的树；
+// 其次题库页那棵——但**只有它属于同一册时**才认。否则 B 册的题会拿 A 册的知识点当候选，
+// 那正是本次要修掉的"用错册"缺陷（回退时最容易漏的就是这一条）。
+function enrichmentClassificationRawNodes() {
+  const scoped = state.enrichmentClassificationStructure;
+  if (scoped && Array.isArray(scoped.nodes) && scoped.nodes.length) return scoped.nodes;
+  const library = state.knowledgeStructure;
+  if (!library || !Array.isArray(library.nodes) || !library.nodes.length) return [];
+  const wanted = enrichmentClassificationBookId(state.enrichmentClassificationResult);
+  if (wanted && String(library.bookId || "").trim() !== wanted) return [];
+  return library.nodes;
+}
+
+// 这道题自己的教材 id：优先巡检结论带的，其次题目字段。
+function enrichmentClassificationBookId(result = null) {
+  const question = enrichmentClassificationQuestion() || {};
+  return String((result && (result.bookId || result.question?.bookId)) || question.bookId || "").trim();
+}
+
+// 按**这道题自己的教材**加载弹窗用的知识树。用只读接口（不带 generate=true）：
+// 这本教材没有树时就让它没有，绝不因为"打开弹窗"偷偷生成一棵树。
+async function loadEnrichmentClassificationStructure(bookId = "") {
+  const wanted = String(bookId || "").trim();
+  if (!wanted) {
+    state.enrichmentClassificationStructure = null;
+    return null;
+  }
+  if (String(state.enrichmentClassificationStructure?.bookId || "") === wanted) return state.enrichmentClassificationStructure;
+  try {
+    // optional=true：这本教材没有树时返回 200 + structure:null，不当成错误（否则控制台每次多一条 404）。
+    const payload = await requestJson(`/api/admin/knowledge-structure?bookId=${encodeURIComponent(wanted)}&optional=true`);
+    state.enrichmentClassificationStructure = payload.structure || null;
+  } catch (_error) {
+    state.enrichmentClassificationStructure = null;
+  }
+  return state.enrichmentClassificationStructure;
+}
+
+function matchKnowledgeNodeByPoint(point) {
+  const text = String(point || "").trim();
+  if (!text) return null;
+  const pool = enrichmentClassificationStructureNodes();
+  if (!pool.length) return null;
+  const titleOf = (node) => String(node.title || node.displayTitle || "").trim();
+  const exactTitle = pool.find((node) => titleOf(node) === text);
+  if (exactTitle) return exactTitle;
+  const exactPath = pool.find((node) => [node.path, node.displayPath, node.primaryKnowledgePoint]
+    .some((value) => String(value || "").trim() === text));
+  if (exactPath) return exactPath;
+  return pool.find((node) => {
+    const title = titleOf(node);
+    return Boolean(title) && (title.includes(text) || text.includes(title));
+  }) || null;
+}
+
+// 匹配不到真节点的知识点：单独提示，不伪装成候选（产品负责人 2026-09-26 决定）。
+// 2026-09-27 修：原来这里 `if (result) return []` —— 有巡检结论时**恰恰跳过**这句提示，
+// 而"结论没落地到节点 + 题目知识点也匹配不上"正是最需要提示的情况（实测真实题就是这个组合）。
+function enrichmentClassificationUnmatchedKnowledgePoints(result = null) {
+  return enrichmentClassificationQuestionKnowledgePoints(result).filter((point) => !matchKnowledgeNodeByPoint(point));
+}
+
+function enrichmentClassificationSelectableNodes(result = null) {
+  const nodeMap = new Map((state.knowledgeStructure?.nodes || []).map((node) => [String(node.id), node]));
+  const knowledgeNodes = [...nodeMap.values()].filter((node) => node.id && knowledgePathOfNode(node) && node.kind === "knowledge");
+  if (knowledgeNodes.length) return knowledgeNodes;
+  return enrichmentClassificationNodes(result);
+}
+
+function knowledgePathOfNode(node = {}) {
+  return String(node.path || node.displayPath || node.title || node.displayTitle || "");
+}
+
+function enrichmentClassificationQuestion() {
+  if (questionReview?.id === String(state.enrichmentClassificationQuestionId)) return questionReview.item.question;
+  return state.questionEnrichmentItems
+    .map((item) => item.question)
+    .find((question) => String(question.id) === String(state.enrichmentClassificationQuestionId)) || null;
+}
+
+// 复核痕迹（处理人／时间／作废原因）——状态名由调用方单独显示，这里不重复。
+function enrichmentClassificationAuditStateLabel(result = {}) {
+  const audit = knowledgeInspectionAuditReview(result);
+  const bits = [];
+  const actor = knowledgeInspectionAuditActorLabel(audit);
+  if (audit.at) bits.push(`${actor || "人工"} · ${formatTaskTime(audit.at)}`);
+  if (audit.note) bits.push(audit.note);
+  if (audit.invalidated) bits.push(`已作废：${knowledgeInspectionInvalidatedReasonLabels[audit.invalidatedReason] || audit.invalidatedReason || "题目已变更"}`);
+  return bits.filter(Boolean).join(" · ");
+}
+
+// 上半区只读：Agent 1 特征／Agent 2 归类轨迹／Agent 3 教材核验与教材证据。
+// 复用巡检弹窗同一批渲染函数，避免出现第二套"怎么读 Agent 结论"的实现。
+function enrichmentClassificationReadonlyHtml(result) {
+  if (!result) {
+    return `<p class="enrichment-muted">尚无巡检结论。<b>题族归属可以现在单独写</b>，也可先预览补齐缺失指纹与题族；已有内容不会被覆盖。最小充分知识集和知识焦点角色仍需巡检依据。</p>`;
+  }
+  const agent1 = knowledgeInspectionAgent(result, 1);
+  const agent2 = knowledgeInspectionAgent(result, 2);
+  const agent3 = knowledgeInspectionAgent(result, 3);
+  return `<div class="enrichment-classification-readonly-grid">
+    <details open><summary>Agent 1 · 题目特征</summary>${knowledgeInspectionFeatureHtml(agent1)}</details>
+    <details><summary>Agent 2 · 混合归类轨迹</summary>${knowledgeInspectionTraceHtml(agent2)}</details>
+    <details><summary>Agent 3 · 教材核验与教材证据</summary>${knowledgeInspectionEvidenceHtml(agent3)}</details>
+  </div>`;
+}
+
+// 巡检结论摘要：四态（auditReview.state）＋确定性体检项三态（命中／已留档通过／未体检）。
+// 没有巡检记录、或字段缺失时优雅降级：不渲染空壳、不报错、也不冒充"通过"。
+function renderEnrichmentInspectionSummary(result) {
+  const audit = document.querySelector("#question-enrichment-inspection-audit");
+  const rules = document.querySelector("#question-enrichment-inspection-rule-findings");
+  const empty = document.querySelector("#question-enrichment-inspection-empty");
+  if (!audit || !rules || !empty) return;
+  empty.hidden = Boolean(result);
+  audit.hidden = !result;
+  // 决定 1：只有"没有巡检结论"的题才给这条确定性重建入口（有结论的题走正常复核/提交路径）。
+  const rebuildRow = document.querySelector("#question-enrichment-deterministic-rebuild-row");
+  if (rebuildRow) rebuildRow.hidden = Boolean(result);
+  renderEnrichmentKnowledgeRepeatNote(result);
+  audit.innerHTML = result
+    ? `<p><strong>记录状态：${escapeHtml(knowledgeInspectionAuditStateLabels[knowledgeInspectionAuditReview(result).state] || knowledgeInspectionAuditReview(result).state)}</strong><span class="enrichment-muted">${escapeHtml(enrichmentClassificationAuditStateLabel(result))}</span></p>`
+    : "";  const ruleHtml = knowledgeInspectionRuleFindingsHtml(result || {});
+  rules.hidden = !ruleHtml;
+  rules.innerHTML = ruleHtml;
+}
+
+function renderEnrichmentClassificationQuestion(question = {}, result = null) {
+  const container = document.querySelector("#question-enrichment-classification-question");
+  if (!container) return;
+  const currentNodes = (question.knowledgePoints || []).join(" · ") || "缺知识点";
+  container.innerHTML = `<strong>${escapeHtml(question.stem || "题目内容暂不可用")}</strong>
+    <span class="enrichment-muted">${escapeHtml(question.id || "")} · ${escapeHtml(question.bookId ? questionBookName(question.bookId) : "未指定教材（待归类）")} · v${escapeHtml(question.version)}</span>
+    <span class="enrichment-muted">当前：${escapeHtml(question.chapter || "缺章节")} · ${escapeHtml(currentNodes)}</span>
+    <span class="enrichment-muted">巡检建议知识焦点：${escapeHtml(result ? (knowledgeInspectionSuggestedPath(result) || "未形成明确建议") : "尚无巡检结论")}</span>`;
+}
+
+// 唯一一处真正调用知识归类改库接口的地方（DEC-100：知识／题族改库入口只在「完善题目」）。
+// 巡检弹窗已无任何可提交控件；老函数 applyKnowledgeInspection 只剩三行转发壳。
+// 全文件里这个改库地址字符串只出现一次——就在下一行（静态契约测试会数它）。
+async function submitKnowledgeClassificationApply(body) {
+  return requestJson("/api/admin/knowledge-classification/apply", { method: "POST", body: JSON.stringify(body) });
+}
+
+function renderEnrichmentClassificationReadonly(result) {
+  const container = document.querySelector("#question-enrichment-knowledge-readonly");
+  if (container) container.innerHTML = enrichmentClassificationReadonlyHtml(result);
+}
+
+// 候选为空时的说法必须**按事实分支**（2026-09-27 修）：原来无论什么原因都写"请先生成知识树"，
+// 但实测真实场景里这册**有**树（358 个节点），真因是"题目的章节/知识点名在树里对不上"——
+// 那句话会把人引到错误的方向（去生成一棵已经存在的树）。
+function enrichmentClassificationEmptyKnowledgeCopy(result = null) {
+  const bookId = enrichmentClassificationBookId(result);
+  if (!bookId) return "这道题还没有教材归属：先给它定教材与章节，才能落到知识树的节点上。";
+  const knowledgeNodeCount = enrichmentClassificationStructureNodes().length;
+  const structure = state.enrichmentClassificationStructure
+    || (String(state.knowledgeStructure?.bookId || "") === bookId ? state.knowledgeStructure : null);
+  if (!structure || !Array.isArray(structure.nodes) || !structure.nodes.length) {
+    return "这本教材还没有知识树：请先在「题库」的知识结构里生成知识树，或先给这道题补章节与知识点。";
+  }
+  if (!knowledgeNodeCount) {
+    // 树在，但这棵树里没有 kind=knowledge 的节点：那是"树还只是目录骨架"，与"名字对不上"是两回事。
+    return "这本教材的知识树里还没有知识点节点（只有目录骨架）：请先补正文并生成知识树，或先给这道题补章节与知识点。";
+  }
+  const points = enrichmentClassificationQuestionKnowledgePoints(result);
+  const chapter = String(enrichmentClassificationQuestion()?.chapter || "").trim();
+  const named = [...points, chapter].filter(Boolean).slice(0, 3);
+  return `这道题的章节／知识点在知识树里没有对应节点，所以没有候选${named.length ? `（${escapeHtml(named.join("、"))}）` : ""}：把章节／知识点改成知识树里的名字，或先在知识树里补上对应节点。`;
+}
+
+function renderEnrichmentKnowledgeChoices(result) {
+  const container = document.querySelector("#question-enrichment-knowledge-choices");
+  if (!container) return;
+  const nodes = enrichmentClassificationNodes(result);
+  const suggestedPrimary = String((result && knowledgeInspectionResolvedNodeId(result)) || "");
+  const primaryRole = result ? knowledgeInspectionPrimaryNodeRole(result) : "core";
+  container.innerHTML = nodes.length ? nodes.map((node) => {
+    const id = String(node.id);
+    const isPrimary = id === suggestedPrimary;
+    return `<div class="enrichment-classification-choice" data-enrichment-node-row="${escapeHtml(id)}">
+      <label><input type="checkbox" data-enrichment-node-choice value="${escapeHtml(id)}" checked /> ${escapeHtml(node.path || id)}</label>
+      <label class="enrichment-classification-primary"><input type="radio" name="question-enrichment-primary-choice" data-enrichment-primary-choice value="${escapeHtml(id)}" ${isPrimary ? "checked" : (!suggestedPrimary && node === nodes[0] ? "checked" : "")} /> 知识焦点</label>
+      ${isPrimary ? `<span class="enrichment-muted">巡检建议焦点 · ${escapeHtml(primaryRole === "scope_anchor" ? "范围锚点" : "作答核心")}</span>` : ""}
+    </div>`;
+  }).join("") : `<p class="enrichment-muted">${enrichmentClassificationEmptyKnowledgeCopy(result)}</p>`;
+  // 没树的时候不重复念这一句（主提示已经说了"这本教材还没有知识树"），避免同一件事说两遍。
+  const unmatched = enrichmentClassificationRawNodes().length ? enrichmentClassificationUnmatchedKnowledgePoints(result) : [];
+  if (unmatched.length) {
+    container.insertAdjacentHTML("beforeend", `<p class="enrichment-muted" id="question-enrichment-unmatched-knowledge">这些知识点在知识树里没有对应节点，没有进候选：${escapeHtml(unmatched.join("、"))}。把章节／知识点改成知识树里的名字，或先在知识树里补上对应节点。</p>`);
+  }
+  const roleInput = document.querySelector(`input[name="question-enrichment-primary-node-role"][value="${primaryRole}"]`);
+  if (roleInput) roleInput.checked = true;
+  syncEnrichmentClassificationRoleHint();
+}
+
+// 产品负责人 2026-09-26 决定 3：无巡检结论时「1. 知识依据」栏保留（能看现状、能回勾），
+// 但必须常显标明"这是当前值回勾、不是知识判断"，免得被当成 Agent 建议或已写入的结论。
+function renderEnrichmentKnowledgeRepeatNote(result) {
+  const note = document.querySelector("#question-enrichment-knowledge-repeat-note");
+  if (note) note.hidden = Boolean(result);
+}
+
+function enrichmentClassificationSelection() {
+  const selectedNodeIds = [...new Set([...document.querySelectorAll("#question-enrichment-knowledge-choices [data-enrichment-node-choice]:checked")]
+    .map((input) => input.value).filter(Boolean))];
+  const selectedPrimary = document.querySelector("#question-enrichment-knowledge-choices [data-enrichment-primary-choice]:checked")?.value || "";
+  const primaryNodeRole = normalizeQuestionFingerprintPrimaryNodeRole(document.querySelector('input[name="question-enrichment-primary-node-role"]:checked')?.value);
+  const createCandidateFamily = document.querySelector("#question-enrichment-create-candidate-family")?.checked === true;
+  const primaryFamilyId = document.querySelector("#question-enrichment-family-choices [data-enrichment-primary-family]:checked")?.value || "";
+  const familyMemberships = [...document.querySelectorAll("#question-enrichment-family-choices [data-enrichment-family-choice]:checked")].map((input) => {
+    const row = input.closest("[data-enrichment-family-row]");
+    const isPrimary = !createCandidateFamily && input.value === primaryFamilyId;
+    const coverageRole = isPrimary ? "required" : String(row?.dataset.enrichmentFamilyCoverageRole || "reference");
+    const contributionKnowledgeNodeIds = coverageRole === "reference" ? []
+      : [...(row ? row.querySelectorAll("[data-enrichment-family-contribution]:checked") : [])].map((item) => item.value).filter(Boolean);
+    return { familyId: input.value, isPrimary, coverageRole, contributionKnowledgeNodeIds };
+  });
+  return {
+    selectedNodeIds,
+    selectedPrimary,
+    primaryNodeRole,
+    familyMemberships,
+    familyDeferred: document.querySelector("#question-enrichment-family-deferred")?.checked === true,
+    createCandidateFamily,
+    candidateFamilyDraft: createCandidateFamily ? enrichmentClassificationCandidateDraft() : null,
+  };
+}
+
+function enrichmentClassificationCheckedNodeIds() {
+  return [...document.querySelectorAll("#question-enrichment-knowledge-choices [data-enrichment-node-choice]:checked")]
+    .map((input) => input.value).filter(Boolean);
+}
+
+function enrichmentClassificationDraftValues(selector) {
+  return [...(document.querySelector(selector)?.selectedOptions || [])].map((option) => option.value).filter(Boolean);
+}
+
+// 候选题族草案：字段与老弹窗 knowledgeInspectionSelectedCandidateFamilyDraft 逐个对齐（后端按同一形状收）。
+function enrichmentClassificationCandidateDraft() {
+  const coverageKnowledgeNodeIds = enrichmentClassificationDraftValues("#question-enrichment-candidate-family-coverage");
+  const scopeAnchorNodeId = document.querySelector("#question-enrichment-candidate-family-anchor")?.value || "";
+  return {
+    familyKnowledgeProtocolVersion: blindGoldFamilyKnowledgeProtocolVersion,
+    name: document.querySelector("#question-enrichment-candidate-family-name")?.value.trim() || "",
+    focusKey: document.querySelector("#question-enrichment-candidate-family-focus")?.value.trim() || "",
+    scopeAnchorNodeId,
+    coreKnowledgeNodeId: scopeAnchorNodeId,
+    coverageKnowledgeNodeIds,
+    requiredKnowledgeNodeIds: coverageKnowledgeNodeIds,
+    textbookAnchorNodeIds: enrichmentClassificationDraftValues("#question-enrichment-candidate-family-anchors"),
+    assessmentAction: document.querySelector("#question-enrichment-candidate-family-action")?.value.trim() || "",
+    inclusionBoundary: document.querySelector("#question-enrichment-candidate-family-inclusion")?.value.trim() || "",
+    exclusionBoundary: document.querySelector("#question-enrichment-candidate-family-exclusion")?.value.trim() || "",
+    textbookEvidence: {
+      chunkIds: [...document.querySelectorAll("#question-enrichment-candidate-family-evidence [data-candidate-family-evidence]:checked")].map((input) => input.value).filter(Boolean),
+      summary: document.querySelector("#question-enrichment-candidate-family-evidence-summary")?.value.trim() || "",
+    },
+    reason: document.querySelector("#question-enrichment-candidate-family-reason")?.value.trim() || "",
+    membership: { coverageRole: "required", contributionKnowledgeNodeIds: enrichmentClassificationCheckedNodeIds() },
+  };
+}
+
+function syncEnrichmentClassificationRoleHint() {
+  const element = document.querySelector("#question-enrichment-knowledge-role-hint");
+  if (!element) return;
+  const selection = enrichmentClassificationSelection();
+  const inSet = selection.selectedNodeIds.includes(selection.selectedPrimary);
+  if (!selection.selectedPrimary) {
+    element.textContent = "请指定题目知识焦点。";
+    return;
+  }
+  element.textContent = selection.primaryNodeRole === "scope_anchor"
+    ? (inSet ? "范围锚点不能计入最小充分知识集：请取消勾选这个焦点节点。" : "范围锚点只界定知识范围，不计入最小充分知识集。")
+    : (inSet ? "作答核心已计入最小充分知识集。" : "作答核心必须计入最小充分知识集：请勾选这个焦点节点。");
+}
+
+function renderEnrichmentFamilyChoices(result) {
+  const container = document.querySelector("#question-enrichment-family-choices");
+  if (!container) return;
+  const candidateFamilies = enrichmentClassificationFamilyCandidates(result);
+  const suggestedMemberships = result ? knowledgeInspectionSuggestedFamilyMemberships(result) : [];
+  const suggestedMap = new Map(suggestedMemberships.map((membership) => [String(membership.familyId), membership]));
+  const selectedNodeIds = enrichmentClassificationCheckedNodeIds();
+  const suggestedPrimaryFamilyId = String(suggestedMemberships.find((membership) => membership.isPrimary)?.familyId || "");
+  const statusLabels = { confirmed: "已确认", pending_review: "待审核", rejected: "已驳回" };
+  container.innerHTML = candidateFamilies.length ? candidateFamilies.map((family) => {
+    const familyId = String(family.id);
+    const existingMembership = (enrichmentClassificationQuestion()?.familyMemberships || []).find(item => String(item.familyId) === familyId);
+    const membership = suggestedMap.get(familyId);
+    const isSuggested = Boolean(membership);
+    const isPrimary = familyId === suggestedPrimaryFamilyId;
+    const role = isPrimary ? "required" : String(membership?.coverageRole || "reference");
+    // 无巡检结论时 result 为 null：这些历史装配函数按"传对象"约定取字段，
+    // 传 {} 与传 null 的差别只是"没有 Agent 数据"，而本题承担的题族知识本来就不来自 Agent
+    //（＝勾选知识点 ∩ 题族覆盖），所以这里传 {} 而不是跳过计算——跳过会渲染出"无交集"的假结论。
+    const contributionCandidates = knowledgeInspectionContributionCandidates(family, selectedNodeIds, result || {});
+    const suggestedContribution = new Set(knowledgeInspectionArray(membership?.contributionKnowledgeNodeIds).map(String));
+    return `<div class="enrichment-classification-family-row" data-enrichment-family-row="${escapeHtml(familyId)}" data-enrichment-family-coverage-role="${escapeHtml(role)}">
+      <div class="enrichment-classification-family-head">
+        <label><input type="checkbox" data-enrichment-family-choice value="${escapeHtml(familyId)}" ${isSuggested ? "checked" : ""} /> ${escapeHtml(family.name || familyId)}</label>
+        <label class="enrichment-classification-primary"><input type="radio" name="question-enrichment-primary-family" data-enrichment-primary-family value="${escapeHtml(familyId)}" ${isPrimary ? "checked" : ""} /> 主题族</label>
+        <span class="enrichment-muted">${escapeHtml(family.knowledgePath || "未标注知识位置")} · ${escapeHtml(family.memberCount || 0)} 道题 · ${escapeHtml(statusLabels[family.status] || family.status || "候选")}${existingMembership ? ` · 本题已有关系（${escapeHtml(statusLabels[existingMembership.reviewStatus] || "待审核")}）` : membership ? ` · ${escapeHtml(membership.isPrimary ? "AI 建议主题族（作答必需）" : "AI 建议关联题族")}` : " · 未被 AI 建议"}</span>
+      </div>
+      <div class="enrichment-classification-family-detail" hidden>
+        <label>本题在该题族的角色
+          <select data-enrichment-family-role>
+            <option value="required" ${role === "required" ? "selected" : ""}>承担知识（作答必需）</option>
+            <option value="reference" ${role === "reference" ? "selected" : ""}>普通关联（不承担知识）</option>
+          </select>
+        </label>
+        <fieldset class="enrichment-classification-contribution" data-enrichment-family-contribution-fieldset hidden>
+          <legend>该题族承担的本题知识</legend>
+          ${contributionCandidates.length ? contributionCandidates.map((node) => {
+    const id = String(node.id);
+    return `<label><input type="checkbox" data-enrichment-family-contribution value="${escapeHtml(id)}" ${suggestedContribution.has(id) || (!suggestedContribution.size && selectedNodeIds.includes(id)) ? "checked" : ""} /> ${escapeHtml(node.path || id)}</label>`;
+  }).join("") : `<p class="enrichment-muted">题族覆盖知识与本题知识没有交集：该题族只能作为普通关联（不承担知识）。</p>`}
+        </fieldset>
+      </div>
+    </div>`;
+  }).join("") : `<p class="enrichment-muted">${result ? "这道题目前没有可复用的题族候选：可以先勾选下方的「明确放入待归组」，或新建一个候选题族。" : "当前没有可选题族。可先「预览并补齐缺失指纹与题族」，已有题族优先匹配；也可明确放入待归组。"}</p>`;
+  renderEnrichmentCandidateFamilyDraft(result);
+  [...container.querySelectorAll("[data-enrichment-family-row]")].forEach((row) => syncEnrichmentFamilyRow(row));
+  syncEnrichmentFamilyCoverageSummary();
+}
+
+// 题族候选的**唯一**装配点：有巡检结论时用服务端给这道题装的 agent3.candidateFamilies（带建议角色／建议主题族，
+// 质量最高）；没有巡检结论时用题族库自己按**本题知识节点**筛出来的候选（同一条接口契约、服务端筛选，
+// 前端不重算"哪些题族算候选"，避免出现第二份候选装配逻辑）。
+function enrichmentClassificationFamilyCandidates(result) {
+  if (result) return knowledgeInspectionArray(knowledgeInspectionAgent(result, 3).candidateFamilies);
+  return Array.isArray(state.enrichmentClassificationFamilyCandidates) ? state.enrichmentClassificationFamilyCandidates : [];
+}
+
+// 无结论时给弹窗拿候选：GET /api/admin/question-families 与题族管理工作区同一个地址与形状，
+// 只是把 bookId 固定成**这道题的教材**（工作区筛选可能是别的书／别的节点），并优先按本题知识节点筛。
+async function loadEnrichmentFamilyCandidates() {
+  const question = enrichmentClassificationQuestion() || {};
+  const bookId = String(question.bookId || "");
+  if (!bookId) {
+    state.enrichmentClassificationFamilyCandidates = [];
+    return [];
+  }
+  const knowledgeNodeId = String(enrichmentClassificationNodes(null)[0]?.id || "");
+  const load = async (nodeId) => {
+    const query = new URLSearchParams({ bookId, status: "all", ...(nodeId ? { knowledgeNodeId: nodeId } : {}) });
+    const payload = await requestJson(`/api/admin/question-families?${query}`);
+    return payload.families || [];
+  };
+  let families = knowledgeNodeId ? await load(knowledgeNodeId) : [];
+  // 按本题知识节点筛出来是空的（比如题族挂在别的节点下）：退回"这本教材的全部题族"，仍是服务端筛选。
+  if (!families.length) families = await load("");
+  state.enrichmentClassificationFamilyCandidates = families;
+  return families;
+}
+
+function renderEnrichmentCandidateFamilyDraft(result) {
+  const container = document.querySelector("#question-enrichment-family-draft");
+  if (!container) return;
+  const draft = (result && knowledgeInspectionCandidateFamilyDraft(result)) || {};
+  const agent3 = result ? knowledgeInspectionAgent(result, 3) : {};
+  const selectableNodes = enrichmentClassificationSelectableNodes(result);
+  const labelOf = (node) => String(node.path || node.title || node.id || "");
+  const coverageIds = new Set(knowledgeInspectionArray(draft.coverageKnowledgeNodeIds || draft.requiredKnowledgeNodeIds).map(String));
+  const anchorIds = new Set(knowledgeInspectionArray(draft.textbookAnchorNodeIds || draft.knowledgeNodeId).map(String));
+  const scopeAnchorNodeId = String(draft.scopeAnchorNodeId || draft.coreKnowledgeNodeId || "");
+  const evidenceIds = [...new Set([
+    ...knowledgeInspectionArray(draft.textbookEvidence?.chunkIds || draft.evidenceChunkIds),
+    ...knowledgeInspectionArray(agent3.evidenceChunkIds),
+  ].map(String).filter(Boolean))];
+  const checkedEvidence = new Set(knowledgeInspectionArray(draft.textbookEvidence?.chunkIds).map(String));
+  const nodeOptions = selectableNodes.map((node) => `<option value="${escapeHtml(String(node.id))}" ${coverageIds.has(String(node.id)) ? "selected" : ""}>${escapeHtml(labelOf(node))}</option>`).join("");
+  const anchorOptions = selectableNodes.map((node) => `<option value="${escapeHtml(String(node.id))}" ${anchorIds.has(String(node.id)) ? "selected" : ""}>${escapeHtml(labelOf(node))}</option>`).join("");
+  container.innerHTML = `
+    <label>题族名<input id="question-enrichment-candidate-family-name" type="text" value="${escapeHtml(draft.name || "")}" placeholder="例如：辅音的发音方法（阻碍方式）" /></label>
+    <label>题族判别焦点<input id="question-enrichment-candidate-family-focus" type="text" value="${escapeHtml(draft.focusKey || "")}" placeholder="例如：辅音发音方法·阻碍方式" /></label>
+    <label>后台目录锚点<select id="question-enrichment-candidate-family-anchor"><option value="">请选择</option>${selectableNodes.map((node) => `<option value="${escapeHtml(String(node.id))}" ${String(node.id) === scopeAnchorNodeId ? "selected" : ""}>${escapeHtml(labelOf(node))}</option>`).join("")}</select></label>
+    <label>题族覆盖知识（可多选）<select id="question-enrichment-candidate-family-coverage" multiple size="4">${nodeOptions}</select></label>
+    <label>教材位置（教材锚点，可多选）<select id="question-enrichment-candidate-family-anchors" multiple size="4">${anchorOptions}</select></label>
+    <label>考查动作<input id="question-enrichment-candidate-family-action" type="text" value="${escapeHtml(draft.assessmentAction || draft.action || "")}" placeholder="例如：判断辅音的发音方法" /></label>
+    <label>纳入边界<input id="question-enrichment-candidate-family-inclusion" type="text" value="${escapeHtml(draft.inclusionBoundary || "")}" placeholder="什么题应该进这个题族" /></label>
+    <label>排除边界<input id="question-enrichment-candidate-family-exclusion" type="text" value="${escapeHtml(draft.exclusionBoundary || "")}" placeholder="什么题不该进这个题族" /></label>
+    <fieldset class="enrichment-classification-evidence" id="question-enrichment-candidate-family-evidence"><legend>教材证据（至少保留一条）</legend>${evidenceIds.length ? evidenceIds.map((chunkId) => `<label><input type="checkbox" data-candidate-family-evidence value="${escapeHtml(chunkId)}" ${checkedEvidence.has(chunkId) ? "checked" : ""} /> ${escapeHtml(chunkId)}</label>`).join("") : `<p class="enrichment-muted">这道题还没有可追溯的教材证据片段：先在「教材知识」里补齐正文并跑一次巡检。</p>`}</fieldset>
+    <label>证据摘要<input id="question-enrichment-candidate-family-evidence-summary" type="text" value="${escapeHtml(draft.textbookEvidence?.summary || draft.evidenceSummary || "")}" /></label>
+    <label>新建理由<input id="question-enrichment-candidate-family-reason" type="text" value="${escapeHtml(draft.reason || "")}" /></label>
+    <p class="enrichment-muted">新建的候选题族会自动成为本题的主题族；已有题族只能作为关联题族。后台目录锚点用于组织检索，不自动写入题目知识。</p>`;
+}
+
+function syncEnrichmentFamilyRow(row) {
+  if (!row) return;
+  const selected = row.querySelector("[data-enrichment-family-choice]")?.checked === true;
+  const roleSelect = row.querySelector("[data-enrichment-family-role]");
+  const role = roleSelect?.value || row.dataset.enrichmentFamilyCoverageRole || "required";
+  row.dataset.enrichmentFamilyCoverageRole = role;
+  const detail = row.querySelector(".enrichment-classification-family-detail");
+  if (detail) detail.hidden = !selected;
+  const contribution = row.querySelector("[data-enrichment-family-contribution-fieldset]");
+  if (contribution) contribution.hidden = !selected || role !== "required";
+  const primary = row.querySelector("[data-enrichment-primary-family]");
+  if (primary) primary.disabled = !selected;
+  if (!selected && primary) primary.checked = false;
+}
+
+function enrichmentClassificationCoverageAudit(selection = enrichmentClassificationSelection()) {
+  return knowledgeInspectionFamilyCoverageAudit({
+    result: state.enrichmentClassificationResult || {},
+    selectedNodeIds: selection.selectedNodeIds,
+    primaryNodeId: selection.selectedPrimary,
+    primaryNodeRole: selection.primaryNodeRole,
+    familyMemberships: selection.familyMemberships,
+    familyDeferred: selection.familyDeferred,
+    createCandidateFamily: selection.createCandidateFamily,
+    candidateFamilyDraft: selection.candidateFamilyDraft,
+  });
+}
+
+function syncEnrichmentFamilyCoverageSummary() {
+  const element = document.querySelector("#question-enrichment-family-coverage-summary");
+  if (!element) return;
+  const selection = enrichmentClassificationSelection();
+  if (!state.enrichmentClassificationResult || !knowledgeInspectionResultId(state.enrichmentClassificationResult)) {
+    element.classList.toggle("has-gap", false);
+    element.textContent = selection.familyMemberships.length
+      ? "本次只保存所选题族归属，新增成员仍需审核；不确认知识依据。"
+      : "可选择已有题族，或先预览补齐缺失指纹与题族。";
+    return;
+  }
+  const error = knowledgeInspectionFamilyCoverageError(enrichmentClassificationCoverageAudit(selection));
+  // 产品负责人 2026-09-26：**没提交过就不许报红**。刚打开弹窗、用户一个动作都没做时，
+  // 「请选择一个主题族」这样的红字既重复又吓人（上方灰字已经说明了该怎么做）。
+  // 所以只有真正点过一次「确认并写入」、并且确实被拦下之后，这里才显示红色阻断原因。
+  // 另外：没有巡检结论时整段题族归属本来就写不进去（原因由状态条统一说明），
+  // 这里也不报红——否则"缺结论"会被误读成"缺主题族选择"。
+  const resultUsable = Boolean(state.enrichmentClassificationResult) && Boolean(knowledgeInspectionResultId(state.enrichmentClassificationResult));
+  const showBlocking = Boolean(error) && Boolean(state.enrichmentClassificationSubmitAttempted) && resultUsable;
+  element.classList.toggle("has-gap", showBlocking);
+  element.textContent = showBlocking
+    ? error
+    : (error ? "题族归属还没定：可以勾一个主题族、新建候选题族，或明确放入待归组。" : "题族覆盖校验通过：主题族与该题族承担的知识已覆盖本题的最小充分知识集。");
+}
+
+// 与 AI 建议不同＝需要一句调整依据（判据来自后端冻结口径，前端只是提前提示，不放宽也不加严）。
+function enrichmentClassificationSelectionAdjusted(selection, result) {
+  if (!result) return false;
+  const suggestedNodes = knowledgeInspectionRequiredNodes(result, enrichmentClassificationRawNodes()).map((node) => String(node.id)).sort();
+  const suggestedPrimary = String(knowledgeInspectionResolvedNodeId(result) || "");
+  const suggestedRole = knowledgeInspectionPrimaryNodeRole(result);
+  const familyKey = (membership) => `${membership.familyId}:${membership.isPrimary ? "primary" : String(membership.coverageRole || "")}`;
+  const suggestedFamilies = knowledgeInspectionSuggestedFamilyMemberships(result).map(familyKey).sort();
+  const selectedFamilies = selection.familyMemberships.map(familyKey).sort();
+  return JSON.stringify(suggestedNodes) !== JSON.stringify([...selection.selectedNodeIds].sort())
+    || suggestedPrimary !== selection.selectedPrimary
+    || suggestedRole !== selection.primaryNodeRole
+    || JSON.stringify(suggestedFamilies) !== JSON.stringify(selectedFamilies)
+    || selection.createCandidateFamily;
+}
+
+function updateEnrichmentClassificationCopy() {
+  const element = document.querySelector("#question-enrichment-classification-copy");
+  const adjustment = document.querySelector("#question-enrichment-classification-adjustment");
+  const selection = enrichmentClassificationSelection();
+  const noResult = !knowledgeInspectionResultId(state.enrichmentClassificationResult);
+  const fingerprintEntry = document.querySelector("#question-enrichment-edit-fingerprint");
+  if (fingerprintEntry) fingerprintEntry.hidden = !noResult || !questionReview;
+  const submit = document.querySelector("#apply-question-enrichment-classification");
+  if (submit) submit.textContent = noResult ? "添加所选题族（仅新增）" : "确认并写入";
+  const adjusted = enrichmentClassificationSelectionAdjusted(selection, state.enrichmentClassificationResult || null);
+  if (adjustment) adjustment.hidden = !adjusted;
+  if (!element) return;
+  const familyCopy = selection.createCandidateFamily ? "新建候选题族"
+    : (selection.familyMemberships.length ? `${selection.familyMemberships.length} 个题族` : (selection.familyDeferred ? "待归组" : "未选题族"));
+  if (noResult) {
+    const added = QuestionReviewModel.familyAdditions(enrichmentClassificationQuestion(), selection.familyMemberships).length;
+    element.textContent = `待新增 ${added} 个题族 · 已有关系不重复写入；指纹请到题目详情核对并保存。`;
+  } else element.textContent = `最小充分知识 ${selection.selectedNodeIds.length} 项 · ${selection.selectedPrimary ? "已指定知识焦点" : "未指定知识焦点"} · ${familyCopy}`;
+}
+
+function openQuestionInspectionFromEnrichment() {
+  // 「去看这道题的巡检结论」＝跳转／定位（不复制巡检面板）：切到 AI 巡检页并把搜索框定位到本题。
+  const questionId = String(state.enrichmentClassificationQuestionId || "");
+  if (questionReview && !questionReviewDiscardChanges()) return;
+  closeEnrichmentClassificationDialog();
+  document.querySelector("#knowledge-inspection-search").value = questionId;
+  state.knowledgeInspectionPage = 1;
+  setQuestionLibraryTab("inspections");
+  loadKnowledgeInspections();
+}
+
+async function loadEnrichmentClassificationResult(questionId) {
+  try {
+    const query = new URLSearchParams({ query: String(questionId), page: "1", pageSize: "20" });
+    const payload = await requestJson(`/api/admin/knowledge-classification/results?${query}`);
+    // 体检项三态（命中／已留档通过／未体检）的判据读的是这份响应里的 summary —— 与巡检清单同一个接口的
+    // 同一份形状，所以照样记进 state.knowledgeInspectionSummary（它只影响体检项区块的显示口径）。
+    state.knowledgeInspectionSummary = payload.summary || {};
+    const items = (payload.items || []).filter((item) => String(item.questionId || "") === String(questionId));
+    return items.find((item) => !item.isHistoricalRecord && !item.hasNewerResult) || items[0] || null;
+  } catch (error) {
+    setSmallDialogStatus("#question-enrichment-classification-status", `读取巡检结论失败（${friendlyError(error)}）：仍可查看题目现有归属。`, "error");
+    return null;
+  }
+}
+
+async function openEnrichmentClassification(questionId, options = {}) {
+  await loadQuestionCatalog();
+  const question = questionEnrichmentItem(questionId)?.question;
+  if (!question) return;
+  state.enrichmentClassificationQuestionId = String(questionId);
+  state.enrichmentClassificationResult = null;
+  // 每次打开都从"还没提交过"开始：没点过「确认并写入」之前，题族区不报红（产品负责人 2026-09-26）。
+  state.enrichmentClassificationSubmitAttempted = false;
+  document.querySelector("#question-enrichment-classification-question").innerHTML = "";
+  document.querySelector("#question-enrichment-create-candidate-family").checked = false;
+  document.querySelector("#question-enrichment-family-deferred").checked = false;
+  document.querySelector("#question-enrichment-classification-adjustment-reason").value = "";
+  document.querySelector("#question-enrichment-family-draft").hidden = true;
+  setSmallDialogStatus("#question-enrichment-classification-status", "正在读取这道题的巡检结论…", "loading");
+  // 与巡检弹窗共用同一套并发/会话守卫：开一个会话身份，冲突的提交会被挡住并按结果身份丢弃。
+  state.enrichmentClassificationSession = knowledgeInspectionApplyGuard.open(String(questionId));
+  if (!options.embedded) document.querySelector("#question-enrichment-classification-dialog").showModal();
+  const result = await loadEnrichmentClassificationResult(questionId);
+  if (String(state.enrichmentClassificationQuestionId) !== String(questionId)) return;
+  state.enrichmentClassificationResult = result;
+  // 2026-09-27 修：**无论有没有巡检结论**都按"这道题自己的教材"加载知识树。
+  // 原来只有"无巡检结论"分支才加载，且加载用的是题库页的教材筛选（#question-book-filter）——
+  // 于是在「完善题目」页翻别册的题时，候选池会是别册的树或空，界面就误报"知识树里还没有可用的知识点"。
+  await loadEnrichmentClassificationStructure(enrichmentClassificationBookId(result));
+  if (String(state.enrichmentClassificationQuestionId) !== String(questionId)) return;
+  // 决定 1：没有巡检结论的题，题族候选不再"等巡检跑完才有"——直接从题族库按本题知识节点拿。
+  // 走既有加载函数（题族 GET /api/admin/question-families），不新造路径。
+  state.enrichmentClassificationFamilyCandidates = [];
+  if (!knowledgeInspectionResultId(result)) {
+    try {
+      await loadEnrichmentFamilyCandidates();
+    } catch (_error) {
+      state.enrichmentClassificationFamilyCandidates = [];
+    }
+    if (String(state.enrichmentClassificationQuestionId) !== String(questionId)) return;
+  }
+  renderEnrichmentClassificationQuestion(question, result);
+  renderEnrichmentClassificationReadonly(result);
+  renderEnrichmentInspectionSummary(result);
+  renderEnrichmentKnowledgeChoices(result);
+  renderEnrichmentFamilyChoices(result);
+  // 打开时只在"结论本身用不了"（无结论／结论不可采纳）时把原因摆在状态条上（中性颜色，不是报错）；
+  // 题族怎么选这类**还没做动作**的提示不进状态条（产品负责人 2026-09-26 第 2、3 点：
+  // 没提交过就不许出现阻断语，同时也不做沉默失败）。
+  const openingBlockReason = (!result || !knowledgeInspectionResultId(result))
+    ? enrichmentClassificationBlockReason()
+    : knowledgeInspectionApplyBlockReason(result);
+  setSmallDialogStatus("#question-enrichment-classification-status", openingBlockReason);
+  updateEnrichmentClassificationCopy();
+}
+
+function closeEnrichmentClassificationDialog() {
+  if (questionReview) return closeQuestionEditor();
+  const dialog = document.querySelector("#question-enrichment-classification-dialog");
+  if (!knowledgeInspectionApplyGuard.close(state.enrichmentClassificationSession)) {
+    // 还有提交在飞：不关弹窗，等它落地（与巡检弹窗同一套守卫语义）。
+    if (knowledgeInspectionApplyGuard.currentRequest()) {
+      setSmallDialogStatus("#question-enrichment-classification-status", "正在保存，请等待完成", "loading");
+      return;
+    }
+  }
+  if (dialog && dialog.open) dialog.close();
+  state.enrichmentClassificationSession = "";
+  state.enrichmentClassificationQuestionId = "";
+  state.enrichmentClassificationResult = null;
+  state.enrichmentClassificationFamilyCandidates = [];
+  state.enrichmentClassificationSubmitAttempted = false;
+}
+
+function enrichmentClassificationBlockReason(selection = enrichmentClassificationSelection()) {
+  const result = state.enrichmentClassificationResult || null;
+  if (!result || !knowledgeInspectionResultId(result)) {
+    // 诚实提示（产品负责人 2026-09-26 决定 1）：没有巡检结论时**知识依据写不进去**，
+    // 但题族归属可以单独写（走 question-families/:id/members，不是 /apply）。
+    // 这里只说明边界与两条出路，不伪造 resultId、不假装三项都写了。
+    return "这道题还没有巡检结论：题族归属可单独确认；也可先预览补齐缺失指纹与题族。知识判断仍需巡检依据。";
+  }
+  const guard = enrichmentClassificationApplyGuard();
+  const draftError = selection.createCandidateFamily ? knowledgeInspectionCandidateFamilyDraftError(selection.candidateFamilyDraft) : "";
+  const coverageError = knowledgeInspectionFamilyCoverageError(enrichmentClassificationCoverageAudit(selection));
+  const adjusted = enrichmentClassificationSelectionAdjusted(selection, result);
+  return guard.validateApplySelection({
+    selection,
+    resultBlockReason: knowledgeInspectionApplyBlockReason(result),
+    candidateDraftError: draftError,
+    familyCoverageError: coverageError,
+    adjusted,
+    adjustmentReason: document.querySelector("#question-enrichment-classification-adjustment-reason")?.value || "",
+  });
+}
+
+function enrichmentClassificationApplyGuard() {
+  return globalThis.ShukaoKnowledgeInspectionApplyGuard || {};
+}
+
+// 被拒原因的中文口径（与巡检弹窗同一份）：后端用这些代码说明"为什么这条建议不能再采纳"。
+const knowledgeClassificationStaleReasonLabels = {
+  question_version_changed: "本题在巡检后被编辑过",
+  question_deleted: "本题已被删除",
+  knowledge_nodes_changed: "建议引用的知识节点或层级已修改",
+  textbook_knowledge_changed: "教材正文库已重建",
+  question_knowledge_assignment_changed: "本题的知识归属已在巡检后被人工调整",
+  question_family_memberships_changed: "本题的题族归属已在巡检后被人工调整",
+  question_classification_baseline_missing: "这条旧建议缺少归类基线，请重新巡检",
+  newer_result_available: "同一题已有更新的巡检建议",
+  result_already_reviewed: "这条建议已经处理过",
+  result_not_reviewable: "这条建议尚未形成可采纳结论",
+};
+
+// 决定 1 + B（产品负责人 2026-09-26）：**没有巡检结论时，本次提交只写题族归属**，绝不写知识依据。
+// 写入口是题族库自己的接口（POST /api/admin/question-families/:familyId/members），
+// 不是上面那个知识归类改库接口（submitKnowledgeClassificationApply）——后者是按巡检结论落库的
+// 结果驱动接口，缺 resultId 必被拒。
+async function applyEnrichmentFamilyMembershipOnly(questionId, selection) {
+  // 用户已经真的点过提交：这一次题族区可以报红（与"打开就报红"分开）。
+  state.enrichmentClassificationSubmitAttempted = true;
+  syncEnrichmentFamilyCoverageSummary();
+  if (selection.createCandidateFamily) {
+    setSmallDialogStatus("#question-enrichment-classification-status",
+      "无巡检结论时不能新建候选题族：新建的候选题族要随巡检建议一起提交（那条接口需要巡检结论）。请先选用已有题族，或先对本题跑一次巡检。本次没有写入任何内容。", "error");
+    return;
+  }
+  const familyIds = [...new Set(selection.familyMemberships.map((membership) => String(membership.familyId)).filter(Boolean))];
+  if (!familyIds.length) {
+    if (selection.familyDeferred) {
+      // 「明确放入待归组」＝不写库（待归组不是一个库里的关系，只是本次不归组）。
+      setSmallDialogStatus("#question-enrichment-classification-status",
+        "已放入待归组（没有写入题族关系）；最小充分知识集／知识焦点角色需要巡检结论，没有写。", "success");
+      return;
+    }
+    setSmallDialogStatus("#question-enrichment-classification-status",
+      "无巡检结论时只能写题族归属：请先勾选题族、预览补齐缺失指纹与题族，或明确放入待归组。本次没有写入任何内容。", "error");
+    return;
+  }
+  const familyNames = new Map(enrichmentClassificationFamilyCandidates(null)
+    .map((family) => [String(family.id), String(family.name || family.id)]));
+  const request = knowledgeInspectionApplyGuard.begin(state.enrichmentClassificationSession, { commitId: `family-membership-only:${questionId}` });
+  if (!request) {
+    setSmallDialogStatus("#question-enrichment-classification-status", "当前提交正在保存，请等待完成", "loading");
+    return;
+  }
+  setSmallDialogStatus("#question-enrichment-classification-status", "正在写入题族归属（本次不写知识依据）…", "loading");
+  setEnrichmentClassificationLocked(true);
+  const written = [];
+  const failed = [];
+  try {
+    // Re-read immediately before adding: another save may have already added a selected family.
+    const fresh = await readQuestionReviewItem(questionId);
+    if (!knowledgeInspectionApplyGuard.isCurrent(request)) return;
+    const additions = QuestionReviewModel.familyAdditions(fresh.question, selection.familyMemberships);
+    const skipped = familyIds.length - additions.length;
+    if (!additions.length) {
+      if (questionReview?.id === String(questionId)) {
+        questionReview.item = fresh;
+        questionReview.loaded.delete("details");
+        questionReview.loaded.delete("suggestions");
+        questionReview.dirty = false;
+      }
+      updateEnrichmentClassificationCopy();
+      setSmallDialogStatus("#question-enrichment-classification-status",
+        "所选题族关系已存在，无需重复写入；原有审核状态保持不变。若指纹仍待确认，请点「核对／确认指纹」进入题目详情。", "success");
+      return;
+    }
+    for (const familyId of additions) {
+      try {
+        const payload = await requestJson(`/api/admin/question-families/${encodeURIComponent(familyId)}/members`, {
+          method: "POST",
+          body: JSON.stringify({ questionIds: [questionId] }),
+        });
+        written.push(`${familyNames.get(familyId) || familyId}（新增 ${payload.addedCount ?? 0} 道成员）`);
+      } catch (error) {
+        failed.push(`${familyNames.get(familyId) || familyId}：${friendlyError(error)}`);
+      }
+      if (!knowledgeInspectionApplyGuard.isCurrent(request)) return;
+    }
+    if (String(state.enrichmentClassificationQuestionId) !== String(questionId)) return;
+    if (questionReview?.id === String(questionId) && written.length) {
+      questionReview.item = await readQuestionReviewItem(questionId);
+      questionReview.loaded.delete("details");
+      questionReview.loaded.delete("suggestions");
+      if (!failed.length) questionReview.dirty = false;
+    }
+    await Promise.all([loadQuestionEnrichment(), loadQuestionFamilies()]);
+    await loadEnrichmentFamilyCandidates();
+    if (String(state.enrichmentClassificationQuestionId) !== String(questionId)) return;
+    renderEnrichmentFamilyChoices(state.enrichmentClassificationResult || null);
+    updateEnrichmentClassificationCopy();
+    const boundary = `${skipped ? `已跳过 ${skipped} 个已有关系。` : ""}本次未修改指纹；请在题目详情核对并保存正式指纹。`;
+    if (failed.length) {
+      setSmallDialogStatus("#question-enrichment-classification-status",
+        `部分写入：已加入 ${written.length} 个题族（${written.join("、")}），失败 ${failed.length} 个（${failed.join("；")}）。本次只写了题族归属；${boundary}`, "error");
+      return;
+    }
+    setSmallDialogStatus("#question-enrichment-classification-status",
+      `本次只写了题族归属：已把本题加入 ${written.join("、")}；${boundary}`, "success");
+  } catch (error) {
+    setSmallDialogStatus("#question-enrichment-classification-status",
+      written.length ? `已写入 ${written.length} 个题族，但刷新失败：${friendlyError(error)}。请重新打开本题核对。`
+        : `核对或保存题族失败：${friendlyError(error)}。请重试。`, "error");
+  } finally {
+    if (knowledgeInspectionApplyGuard.finish(request)) setEnrichmentClassificationLocked(false);
+  }
+}
+
+// DEC-104: all completion entry points use the same preview/confirm flow.
+async function rebuildEnrichmentDeterministic() {
+  const question = enrichmentClassificationQuestion() || {};
+  const questionId = String(question.id || state.enrichmentClassificationQuestionId || "");
+  if (!questionId) return;
+  libraryWorkspace.openCompletion([questionId]);
+}
+
+async function applyEnrichmentClassification() {
+  const questionId = String(state.enrichmentClassificationQuestionId || "");
+  const selection = enrichmentClassificationSelection();
+  const result = state.enrichmentClassificationResult || null;
+  if (!knowledgeInspectionResultId(result)) return applyEnrichmentFamilyMembershipOnly(questionId, selection);
+  const blockReason = enrichmentClassificationBlockReason(selection);
+  if (blockReason) {
+    // 无巡检结论时这里就返回：**不发请求**（/apply 是结果驱动的，缺 resultId 必被拒）。
+    // 用户已经真的点过提交，所以这一次题族区的阻断原因可以报红（与"打开就报红"分开）。
+    state.enrichmentClassificationSubmitAttempted = true;
+    syncEnrichmentFamilyCoverageSummary();
+    setSmallDialogStatus("#question-enrichment-classification-status", blockReason, "error");
+    return;
+  }
+  const resultId = knowledgeInspectionResultId(result);
+  const adjustmentReason = document.querySelector("#question-enrichment-classification-adjustment-reason")?.value.trim() || "";
+  const commitId = getKnowledgeInspectionCommitId({ resultId, ...selection, adjustmentReason });
+  const body = enrichmentClassificationApplyGuard().buildApplyRequest({
+    resultId,
+    selection,
+    commitId,
+    adjustmentReason,
+    familyKnowledgeProtocolVersion: blindGoldFamilyKnowledgeProtocolVersion,
+  });
+  const applyRequest = knowledgeInspectionApplyGuard.begin(state.enrichmentClassificationSession, { resultId });
+  if (!applyRequest) {
+    setSmallDialogStatus("#question-enrichment-classification-status", "当前提交正在保存，请等待完成", "loading");
+    return;
+  }
+  setSmallDialogStatus("#question-enrichment-classification-status", selection.createCandidateFamily ? "正在创建候选题族并保存本题归属…" : "正在保存知识依据与题族归属，并重新校验版本…", "loading");
+  setEnrichmentClassificationLocked(true);
+  try {
+    const applied = await submitKnowledgeClassificationApply(body);
+    if (!knowledgeInspectionApplyGuard.isCurrent(applyRequest)) return;
+    knowledgeInspectionApplyGuard.finish(applyRequest);
+    setEnrichmentClassificationLocked(false);
+    if (!questionReview) closeEnrichmentClassificationDialog();
+    await Promise.all([loadQuestionEnrichment(), loadKnowledgeInspections(), loadKnowledgeStructure(), loadOverview()]);
+    const familyCopy = selection.createCandidateFamily
+      ? `已创建候选题族「${selection.candidateFamilyDraft.name}」并设为主题族`
+      : (selection.familyMemberships.length ? `已归入 ${selection.familyMemberships.length} 个题族` : "已进入待归组，不会自动新建题族");
+    setQuestionEnrichmentFeedback(`知识依据已确认（${questionId}），${familyCopy}；Agent 4 已沉淀 ${applied.agent4?.confirmedCaseCount || 1} 个确认案例${applied.agent4?.correctionCount ? `、${applied.agent4.correctionCount} 个人工修正` : ""}。`, "success");
+    if (questionReview?.id === questionId) await refreshQuestionReviewAfterWrite();
+  } catch (error) {
+    if (!knowledgeInspectionApplyGuard.isCurrent(applyRequest)) return;
+    const staleItems = error.details?.staleResults || [];
+    const reasons = [...new Set(staleItems.flatMap((item) => item.reasons || [item.reason]).map((reason) => knowledgeClassificationStaleReasonLabels[reason] || reason).filter(Boolean))];
+    setSmallDialogStatus("#question-enrichment-classification-status", staleItems.length
+      ? `保存被拒：${reasons.length ? reasons.join("；") : friendlyError(error)}`
+      : `保存失败：${friendlyError(error)}`, "error");
+  } finally {
+    if (knowledgeInspectionApplyGuard.finish(applyRequest)) setEnrichmentClassificationLocked(false);
+  }
+}
+
+// 提交期间锁住整张弹窗（与巡检弹窗同一套做法：控件禁用 ＋ dialog inert，防止重复提交与中途改值）。
+function setEnrichmentClassificationLocked(locked) {
+  const dialog = document.querySelector(questionReview ? "#question-review-classification" : "#question-enrichment-classification-dialog");
+  setQuestionReviewBusy(locked);
+  if (!dialog) return;
+  if (locked) {
+    knowledgeInspectionApplyControlLock.lock(dialog.querySelectorAll("button, input, textarea, select"));
+    dialog.inert = true;
+  } else {
+    knowledgeInspectionApplyControlLock.unlock(dialog.querySelectorAll("button, input, textarea, select"));
+    dialog.inert = false;
+  }
+}
+
+// 筛选取值（多选，数组）：勾选式下拉的选中值就是唯一来源。
+function questionEnrichmentFilters() {
+  return {
+    query: document.querySelector("#question-enrichment-search").value.trim(),
+    subjectIds: filterSelectValues("question-enrichment-subject"),
+    bookIds: filterSelectValues("question-enrichment-book"),
+    importBatchIds: filterSelectValues("question-enrichment-batch"),
+    types: filterSelectValues("question-enrichment-type"),
+    needs: filterSelectValues("question-enrichment-need"),
+    suggestionStatuses: filterSelectValues("question-enrichment-status"),
+  };
+}
+
+// 多选走重复参数（?need=chapter&need=knowledge_points）；后端按数组归一化，单值与 "all" 仍兼容。
+function questionEnrichmentQuery() {
+  const filters = questionEnrichmentFilters();
+  const params = new URLSearchParams({ query: filters.query, page: state.questionEnrichmentPage, pageSize: 80 });
+  [
+    ["subjectId", filters.subjectIds],
+    ["bookId", filters.bookIds],
+    ["importBatchId", filters.importBatchIds],
+    ["type", filters.types],
+    ["need", filters.needs],
+    ["suggestionStatus", filters.suggestionStatuses],
+  ].forEach(([key, values]) => values.forEach((value) => params.append(key, value)));
+  return params;
 }
 
 function stopQuestionEnrichmentPolling() {
@@ -2282,15 +4177,21 @@ function stopQuestionEnrichmentPolling() {
   questionEnrichmentRefreshTimer = null;
 }
 
+function isQuestionEnrichmentActive() {
+  return ["题库管理", "平台题库", "题族管理"].includes(state.currentView)
+    && state.questionLibrary === "official" && state.questionLibraryTab === "enrichment";
+}
+
 function syncQuestionEnrichmentPolling() {
   const active = state.questionEnrichmentJobs.some((job) => ["queued", "running"].includes(job.status));
-  if (!active || state.currentView !== "题目完善") {
+  if (!active || !isQuestionEnrichmentActive()) {
     stopQuestionEnrichmentPolling();
     return;
   }
   if (!questionEnrichmentRefreshTimer) {
     questionEnrichmentRefreshTimer = setInterval(() => {
-      if (state.currentView === "题目完善") loadQuestionEnrichment();
+      if (isQuestionEnrichmentActive()) loadQuestionEnrichment();
+      else stopQuestionEnrichmentPolling();
     }, 2200);
   }
 }
@@ -2310,6 +4211,9 @@ async function loadQuestionEnrichment() {
       requestJson(`/api/admin/question-enrichment?${questionEnrichmentQuery()}`),
       requestJson("/api/admin/questions/import-batches"),
     ]);
+    if ((payload.items || []).some(item => !Object.prototype.hasOwnProperty.call(item.question, "knowledgeFingerprintStatus"))) {
+      throw new Error("后台版本尚未更新，请先重启后台，再刷新页面。");
+    }
     state.questionEnrichmentItems = payload.items || [];
     state.questionEnrichmentSummary = payload.summary || {};
     state.questionEnrichmentJobs = payload.jobs || [];
@@ -2352,46 +4256,85 @@ async function refreshQuestionEnrichment() {
   }
 }
 
-async function runQuestionEnrichment(questionIds = null) {
-  const button = document.querySelector("#run-question-enrichment");
-  button.disabled = true;
+async function runQuestionEnrichment(questionIds = []) {
+  if (state.questionEnrichmentSubmitting) return;
+  state.questionEnrichmentSubmitting = true;
+  renderQuestionEnrichmentSelection();
   try {
-    const selectedIds = questionIds || state.questionEnrichmentSelectedIds;
-    const filters = Object.fromEntries(questionEnrichmentQuery());
+    const selectedIds = [...new Set(questionIds.map(String).filter(Boolean))];
+    if (selectedIds.length > 50) throw new Error("一次最多为 50 道勾选题生成建议，请减少勾选数量。");
+    // 与列表同一份筛选（多选＝数组）；POST 体直接给数组，后端与 GET 的重复参数走同一套归一化。
+    const filters = questionEnrichmentFilters();
     const payload = await requestJson("/api/admin/question-enrichment/jobs", {
       method: "POST",
       body: JSON.stringify({ ...filters, questionIds: selectedIds, limit: 50 }),
     });
     state.questionEnrichmentJobs = [payload.job, ...state.questionEnrichmentJobs.filter((job) => job.id !== payload.job.id)];
+    setQuestionEnrichmentFeedback(selectedIds.length
+      ? `已为勾选的 ${selectedIds.length} 道题创建建议任务；确认采纳前不会改题。`
+      : "已按当前筛选创建建议任务（最多 50 道）；确认采纳前不会改题。");
     renderQuestionEnrichmentJob();
     syncQuestionEnrichmentPolling();
   } catch (error) {
     window.alert(`创建完善任务失败：${friendlyError(error)}`);
   } finally {
-    button.disabled = false;
+    state.questionEnrichmentSubmitting = false;
+    renderQuestionEnrichmentSelection();
   }
 }
 
+async function runSelectedQuestionEnrichment() {
+  const questionIds = [...state.questionEnrichmentSelectedIds];
+  if (!questionIds.length) {
+    setQuestionEnrichmentFeedback("请先勾选需要生成建议的题目。", "error");
+    return;
+  }
+  await runQuestionEnrichment(questionIds);
+}
+
+// Fill-only actions share one preview and confirmation dialog.
+async function openEnrichmentDeterministicDialog() {
+  libraryWorkspace.openCompletion();
+}
+
+// 勾选只确定预览范围；写入必须在预览弹窗中再次明确选择。
+async function runEnrichmentDeterministicSelection() {
+  const questionIds = [...new Set((state.questionEnrichmentSelectedIds || []).map(String).filter(Boolean))];
+  if (!questionIds.length) {
+    setQuestionEnrichmentFeedback("请先勾选题目，再点「补指纹与题族（勾选题）」。", "error");
+    return;
+  }
+  libraryWorkspace.openCompletion(questionIds);
+}
+
 async function applyQuestionEnrichmentBatch() {
+  if (state.questionEnrichmentApplying) return;
+  const questionIds = [...new Set(state.questionEnrichmentSelectedIds.map(String).filter(Boolean))];
+  if (!questionIds.length || questionIds.length > 100) {
+    setQuestionEnrichmentFeedback(questionIds.length ? "一次最多采纳 100 道题，请减少勾选数量。" : "请先勾选需要采纳建议的题目。", "error");
+    return;
+  }
+  if (!window.confirm(`仅采纳已勾选 ${questionIds.length} 道题中置信度不低于 85% 的建议。采纳会更新题目版本；换科目建议须逐题审核。未勾选题目不会处理。是否继续？`)) return;
   const button = document.querySelector("#apply-question-enrichment-batch");
   const label = button.textContent;
+  state.questionEnrichmentApplying = true;
   button.disabled = true;
   button.textContent = "采纳中...";
-  const selectedCount = state.questionEnrichmentSelectedIds.length;
-  setQuestionEnrichmentFeedback(selectedCount ? `正在采纳已选择的 ${selectedCount} 条高置信度建议…` : "正在采纳全部高置信度建议…", "loading");
+  setQuestionEnrichmentFeedback(`正在采纳已勾选 ${questionIds.length} 道题中的高置信度建议…`, "loading");
   try {
     const payload = await requestJson("/api/admin/question-enrichment/apply-batch", {
       method: "POST",
-      body: JSON.stringify({ questionIds: state.questionEnrichmentSelectedIds, confidenceThreshold: 0.85 }),
+      body: JSON.stringify({ questionIds, confidenceThreshold: 0.85 }),
     });
     state.questionEnrichmentSelectedIds = [];
     await loadQuestionEnrichment();
-    setQuestionEnrichmentFeedback(`已采纳 ${payload.appliedCount} 条建议${payload.failedCount ? `；${payload.failedCount} 条因版本或校验问题未采纳。` : "。"}`);
+    setQuestionEnrichmentFeedback(`已采纳 ${payload.appliedCount} 条建议${payload.failedCount ? `；${payload.failedCount} 条因版本或校验问题未采纳` : ""}${payload.skippedSubjectChangeCount ? `；${payload.skippedSubjectChangeCount} 条换科目建议请逐题审核` : ""}。`);
   } catch (error) {
     setQuestionEnrichmentFeedback(`批量采纳失败：${friendlyError(error)}`, "error");
   } finally {
-    button.disabled = false;
+    state.questionEnrichmentApplying = false;
     button.textContent = label;
+    renderQuestionEnrichmentSelection();
   }
 }
 
@@ -2406,213 +4349,182 @@ function enrichmentCatalogNodes(textbook) {
 }
 
 function updateQuestionEnrichmentApplyState() {
+  const subjectSelect = document.querySelector("#question-enrichment-dialog-subject");
+  const textbookSelect = document.querySelector("#question-enrichment-textbook");
+  const subjectChanged = subjectSelect.value
+    && subjectSelect.value !== state.questionEnrichmentReviewSubjectId;
+  // 服务端规定：换科目必须同时采纳教材、目录与知识点（三样都挂在那棵树下面）。
+  // 界面上直接把这三项勾上并锁住，操作者就不可能拼出一条必然被 422 拒绝的请求。
+  const dependentFields = ["#question-enrichment-use-textbook", "#question-enrichment-use-chapter", "#question-enrichment-use-knowledge"];
+  if (subjectChanged) {
+    dependentFields.forEach((selector) => {
+      const checkbox = document.querySelector(selector);
+      checkbox.checked = true;
+      checkbox.disabled = true;
+    });
+  } else {
+    dependentFields.forEach((selector) => { document.querySelector(selector).disabled = false; });
+  }
   const selected = [
+    document.querySelector("#question-enrichment-use-subject").checked && "科目归属",
+    document.querySelector("#question-enrichment-use-textbook").checked && "教材归属",
     document.querySelector("#question-enrichment-use-chapter").checked && "目录",
     document.querySelector("#question-enrichment-use-knowledge").checked && "知识点",
     document.querySelector("#question-enrichment-use-scoring").checked && "结构化得分点",
   ].filter(Boolean);
+  const bookChanged = textbookSelect.value
+    && textbookSelect.value !== state.questionEnrichmentReviewBookId;
+  const versionNote = subjectChanged
+    ? "（换科目＝版本 +1，教材/目录/知识点一起写，答案审核状态与历史记录照旧保留）"
+    : (bookChanged ? "（换教材＝版本 +1，答案审核状态与历史记录照旧保留）" : "");
   document.querySelector("#question-enrichment-apply-copy").textContent = selected.length
-    ? `将写入：${selected.join("、")}`
+    ? `将写入：${selected.join("、")}${versionNote}`
     : "请选择需要写入的字段";
   document.querySelector("#apply-question-enrichment").disabled = selected.length === 0;
 }
 
-// ── 裁决台（《链路职责矩阵》第十三节，形态 B）────────────────────────────────
-// 两条产线的待裁决建议在这里合并成一张队列。本页**只做分流与追溯**：
-// 采纳 / 驳回 / 就地修正仍在各自的裁决界面完成，「去裁决」只负责跳过去并打开那一条。
-// 形态 C（在本页直接采纳）明确不做；来源筛选项由接口返回的 sourceOptions 动态渲染，
-// 所以将来第三条产线接入时本页不需要改结构。
-let adjudicationSearchTimer = null;
-
-function adjudicationSourceLabel(value, sourceOptions = []) {
-  const hit = (sourceOptions || []).find((option) => option.value === value);
-  return hit ? hit.label : value;
+// 跨册批次：候选目录按**科目**展开（同一本科目的上下册同时当候选），
+// 没有教材的题也能在这里定册次——采纳时教材归属会跟着目录一起写进题目。
+// 归属判断第二级：候选科目（DEC-098）。候选＝本项目里"至少有一本已确认目录教材"的科目，
+// 题目当前科目永远在里面并标 isCurrent——AI 只能在这份清单里建议换科目，服务端也按同一份清单校验。
+// 项目一级今天只有一个（后台没有切项目入口），所以这里按"全部科目"展开；
+// 多项目落地时改为读 state.questionCatalog.project 的科目范围，界面结构不用动。
+function enrichmentCandidateSubjects(question) {
+  const books = state.questionCatalog ? state.questionCatalog.books : [];
+  const subjects = state.questionCatalog ? state.questionCatalog.subjects : [];
+  return subjects.map((subject) => ({
+    id: subject.id,
+    name: subject.name || subject.id,
+    isCurrent: subject.id === String(question.subjectId || ""),
+    candidateCount: books.filter((book) => book.subjectId === subject.id && enrichmentCandidateBooks(question, subject.id).length).length,
+  })).filter((subject) => subject.candidateCount > 0);
 }
 
-function setAdjudicationFeedback(message = "", tone = "") {
-  const element = document.querySelector("#adjudication-feedback");
-  if (!element) return;
-  element.textContent = message;
-  element.className = `adjudication-feedback${tone ? ` is-${tone}` : ""}`;
-  element.hidden = !message;
+// 候选教材按**选中的科目**收敛（跨科目时一个下拉里塞 9 本会看不出层级）：
+// 科目切换 → 教材下拉只剩该科目的册 → 目录下拉跟着换，正好是服务端允许的候选集合。
+function enrichmentCandidateBooks(question, subjectId = "") {
+  const fallbackSubject = (state.questionCatalog.books.find((book) => book.id === question.bookId) || {}).subjectId || "";
+  const targetSubject = String(subjectId || question.subjectId || fallbackSubject || "");
+  return state.questionCatalog.books
+    .filter((book) => !targetSubject || book.subjectId === targetSubject)
+    .map((book) => {
+      const textbook = state.textbooks.find((entry) => entry.bookId === book.id);
+      return { id: book.id, label: questionBookName(book.id), subjectId: book.subjectId, nodes: enrichmentCatalogNodes(textbook) };
+    })
+    .filter((candidate) => candidate.nodes.length)
+    .sort((left, right) => Number(right.id === question.bookId) - Number(left.id === question.bookId));
 }
 
-function renderAdjudicationSourceOptions(sourceOptions = []) {
-  const select = document.querySelector("#adjudication-source");
-  if (!select) return;
-  const previous = select.value || "all";
-  select.innerHTML = `<option value="all">全部来源</option>${sourceOptions
-    .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(`${option.label}（${option.count}）`)}</option>`)
-    .join("")}`;
-  select.value = [...select.options].some((option) => option.value === previous) ? previous : "all";
+function renderQuestionEnrichmentBookOptions(subjectId, preferredBookId = "", question = {}) {
+  const candidates = enrichmentCandidateBooks(question, subjectId);
+  const select = document.querySelector("#question-enrichment-textbook");
+  select.innerHTML = candidates.map((candidate) => `<option value="${escapeHtml(candidate.id)}">${escapeHtml(candidate.label)}${candidate.id === question.bookId ? "（当前）" : ""}</option>`).join("");
+  select.value = candidates.some((candidate) => candidate.id === preferredBookId)
+    ? preferredBookId
+    : ((candidates.find((candidate) => candidate.id === question.bookId) || candidates[0] || {}).id || "");
+  return candidates;
 }
 
-function renderAdjudicationSummary(summary = null, sourceOptions = []) {
-  const host = document.querySelector("#adjudication-summary");
-  if (!host) return;
-  if (!summary) { host.innerHTML = ""; return; }
-  const parts = Object.entries(summary.bySource || {})
-    .map(([value, count]) => `${escapeHtml(adjudicationSourceLabel(value, sourceOptions))} ${escapeHtml(String(count))}`);
-  host.innerHTML = `
-    <div class="question-summary-item"><span>待处理</span><strong>${escapeHtml(String(summary.recommended || 0))}</strong></div>
-    <div class="question-summary-item"><span>已采纳</span><strong>${escapeHtml(String(summary.applied || 0))}</strong></div>
-    <div class="question-summary-item"><span>已驳回</span><strong>${escapeHtml(String(summary.rejected || 0))}</strong></div>
-    <div class="question-summary-item"><span>其他状态</span><strong>${escapeHtml(String(summary.other || 0))}</strong></div>
-    <div class="question-summary-item"><span>来源</span><strong>${parts.length ? parts.join(" · ") : "—"}</strong></div>`;
+function renderQuestionEnrichmentChapterOptions(bookId, preferredNodeId = "", preferredPath = "") {
+  const questionId = document.querySelector("#question-enrichment-question-id").value;
+  const item = questionEnrichmentItem(questionId);
+  const subjectId = document.querySelector("#question-enrichment-dialog-subject").value;
+  const candidate = enrichmentCandidateBooks(item ? item.question : {}, subjectId).find((entry) => entry.id === bookId);
+  const nodes = candidate ? candidate.nodes : [];
+  const select = document.querySelector("#question-enrichment-chapter");
+  select.innerHTML = nodes.map((node) => `<option value="${escapeHtml(node.id)}">${escapeHtml(node.path)}</option>`).join("");
+  const target = nodes.find((node) => node.id === preferredNodeId)
+    || nodes.find((node) => preferredPath && node.path === preferredPath);
+  if (target) select.value = target.id;
+  return nodes;
 }
 
-function renderAdjudicationRows(items = []) {
-  const body = document.querySelector("#adjudication-table-body");
-  if (!body) return;
-  if (!items.length) {
-    body.innerHTML = '<tr><td colspan="6" class="question-table-empty">当前教材下没有符合筛选条件的建议</td></tr>';
-    return;
+function enrichmentSubjectHint(question, suggestion, subjects) {
+  const suggestedSubjectId = String(suggestion.subjectId || "");
+  const suggestionLabel = suggestion.subjectLabel || (suggestedSubjectId ? questionSubjectName(suggestedSubjectId) : "");
+  if (suggestedSubjectId && suggestedSubjectId !== String(question.subjectId || "")) {
+    return `AI 判断这道题应归到「${suggestionLabel}」，与当前科目不同；勾选采纳会连教材、目录与知识点一起改（三者都在那棵树下面）。`;
   }
-  body.innerHTML = items.map((entry) => {
-    const trace = entry.appliedFields.length
-      ? `已采纳：${escapeHtml(entry.appliedFields.join("、"))}${entry.appliedVersion ? ` · v${escapeHtml(String(entry.appliedVersion))}` : ""}`
-      : "";
-    return `<tr>
-      <td><span class="adjudication-source">${escapeHtml(entry.sourceLabel)}</span></td>
-      <td><div class="adjudication-question">${escapeHtml((entry.questionStem || "（题目已不可用）").slice(0, 60))}</div><small>${escapeHtml(entry.questionId || "")}</small></td>
-      <td>${entry.fieldLabels.length ? entry.fieldLabels.map((label) => `<span class="adjudication-field">${escapeHtml(label)}</span>`).join("") : "—"}</td>
-      <td><span class="adjudication-status is-${escapeHtml(entry.status)}">${escapeHtml(entry.statusLabel)}</span>${trace ? `<br /><small>${trace}</small>` : ""}${entry.reviewedBy ? `<br /><small>${escapeHtml(entry.reviewedBy)}</small>` : ""}</td>
-      <td>${entry.updatedAt ? `<small>${escapeHtml(new Date(entry.updatedAt).toLocaleString("zh-CN"))}</small>` : "—"}</td>
-      <td><button class="secondary-action" data-adjudication-jump="${escapeHtml(entry.id)}" type="button">去裁决</button></td>
-    </tr>`;
-  }).join("");
-}
-
-function renderAdjudication(payload = {}) {
-  const sourceOptions = payload.sourceOptions || [];
-  state.adjudicationSourceOptions = sourceOptions;
-  state.adjudicationSummary = payload.summary || null;
-  renderAdjudicationSourceOptions(sourceOptions);
-  renderAdjudicationSummary(payload.summary || null, sourceOptions);
-  renderAdjudicationRows(payload.items || []);
-  const copy = document.querySelector("#adjudication-page-copy");
-  if (copy) copy.textContent = `第 ${payload.page || 1} / ${payload.pageCount || 1} 页 · 共 ${payload.total || 0} 条`;
-  const prev = document.querySelector("#adjudication-prev");
-  const next = document.querySelector("#adjudication-next");
-  if (prev) prev.disabled = (payload.page || 1) <= 1;
-  if (next) next.disabled = (payload.page || 1) >= (payload.pageCount || 1);
-}
-
-async function loadAdjudicationQueue() {
-  setAdjudicationFeedback("");
-  const params = new URLSearchParams({
-    bookId: document.querySelector("#question-book-filter")?.value || "all",
-    source: document.querySelector("#adjudication-source")?.value || "all",
-    status: document.querySelector("#adjudication-status")?.value || "all",
-    query: document.querySelector("#adjudication-search")?.value.trim() || "",
-    page: String(state.adjudicationPage || 1),
-    pageSize: "20",
-  });
-  try {
-    const payload = await requestJson(`/api/admin/adjudication/queue?${params.toString()}`);
-    state.adjudicationItems = payload.items || [];
-    renderAdjudication(payload);
-  } catch (error) {
-    state.adjudicationItems = [];
-    renderAdjudication({});
-    setAdjudicationFeedback(`读取裁决队列失败：${friendlyError(error)}`, "error");
+  if (!suggestedSubjectId) {
+    return `建议稿没给出科目（旧建议），按当前科目「${questionSubjectName(question.subjectId)}」处理。`;
   }
+  return `与当前科目一致，采纳时不会改动科目归属（候选共 ${subjects.length} 个科目）。`;
 }
 
-// 「去裁决」：切到对应产线的裁决界面，并把那一条直接打开。
-// 两个 open* 都依赖各自列表已加载，所以这里显式等一次加载（切换标签时也会加载，
-// 重复一次是为了确定性 —— 宁可多一次请求，也不要出现"点了没反应"）。
-async function adjudicateJump(entryId) {
-  const entry = (state.adjudicationItems || []).find((item) => String(item.id) === String(entryId));
-  if (!entry) return;
-  if (entry.targetType === "question") {
-    setQuestionLibraryTab("enrichment");
-    await loadQuestionEnrichment();
-    await openQuestionEnrichmentReview(entry.questionId);
-    return;
+function enrichmentTextbookHint(question, suggestion, candidates) {
+  const label = suggestion.bookLabel || (suggestion.bookId ? questionBookName(suggestion.bookId) : "");
+  if (!question.bookId) {
+    return `这道题还没定教材；AI 在本项目已确认目录的 ${candidates.length} 册候选里挑册次，采纳后教材归属会一起写入。`;
   }
-  setQuestionLibraryTab("inspections");
-  await loadKnowledgeInspections();
-  openKnowledgeInspection(entry.id, entry.questionId);
+  if (suggestion.bookId && suggestion.bookId !== question.bookId) {
+    return `AI 判断应归到《${label}》，与当前教材不同；勾选采纳会连目录与知识点一起改。`;
+  }
+  return "与当前教材一致，采纳时不会改动教材归属。";
 }
 
-document.querySelector("#refresh-adjudication")?.addEventListener("click", () => {
-  state.adjudicationPage = 1;
-  loadAdjudicationQueue();
-});
-["#adjudication-source", "#adjudication-status"].forEach((selector) => {
-  document.querySelector(selector)?.addEventListener("change", () => {
-    state.adjudicationPage = 1;
-    loadAdjudicationQueue();
-  });
-});
-document.querySelector("#adjudication-search")?.addEventListener("input", () => {
-  clearTimeout(adjudicationSearchTimer);
-  adjudicationSearchTimer = setTimeout(() => {
-    state.adjudicationPage = 1;
-    loadAdjudicationQueue();
-  }, 280);
-});
-document.querySelector("#adjudication-prev")?.addEventListener("click", () => {
-  state.adjudicationPage = Math.max(1, (state.adjudicationPage || 1) - 1);
-  loadAdjudicationQueue();
-});
-document.querySelector("#adjudication-next")?.addEventListener("click", () => {
-  state.adjudicationPage = (state.adjudicationPage || 1) + 1;
-  loadAdjudicationQueue();
-});
-document.querySelector("#adjudication-table-body")?.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-adjudication-jump]");
-  if (button) adjudicateJump(button.dataset.adjudicationJump);
-});
-// 各产线页的「这些建议也会出现在裁决台」：页头标注 + 表格逐行入口。
-// 用 document 级代理，因为表格行是动态渲染的（静态注册抓不到新行）。
-// 行内入口带题号：过去之后把裁决台的搜索框预填成该题 ID，直接定位到那一条。
-document.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-open-adjudication]");
-  if (!button) return;
-  const questionId = String(button.dataset.openAdjudication || "").trim();
-  state.adjudicationPage = 1;
-  const search = document.querySelector("#adjudication-search");
-  if (search) search.value = questionId;
-  setQuestionLibraryTab("adjudication");
-});
-
-async function openQuestionEnrichmentReview(questionId) {
-  const item = state.questionEnrichmentItems.find((entry) => entry.question.id === questionId);
+async function openQuestionEnrichmentReview(questionId, options = {}) {
+  const item = questionEnrichmentItem(questionId);
   if (!item || !item.suggestion) return;
   if (!state.textbooks.length) {
     const payload = await requestJson("/api/admin/textbooks");
     state.textbooks = payload.textbooks || [];
   }
   const { question, suggestion, needs } = item;
-  const textbook = state.textbooks.find((entry) => entry.bookId === question.bookId);
-  const nodes = enrichmentCatalogNodes(textbook);
+  // 归属判断按 科目 → 教材 → 目录 收敛（DEC-098）：先定科目（默认取建议的科目），
+  // 教材下拉只列该科目的册，目录只列该册的节点——三级联动，改上一级就重算下一级。
+  const subjects = enrichmentCandidateSubjects(question);
+  const suggestedSubjectId = String(suggestion.subjectId || "");
+  const selectedSubjectId = subjects.some((subject) => subject.id === suggestedSubjectId)
+    ? suggestedSubjectId
+    : String(question.subjectId || ((subjects[0] || {}).id || ""));
+  const candidates = enrichmentCandidateBooks(question, selectedSubjectId);
+  const suggestedBookId = String(suggestion.bookId || "");
+  const selectedBookId = candidates.some((candidate) => candidate.id === suggestedBookId)
+    ? suggestedBookId
+    : (candidates.some((candidate) => candidate.id === question.bookId) ? question.bookId : ((candidates[0] || {}).id || ""));
   document.querySelector("#question-enrichment-question-id").value = question.id;
   document.querySelector("#question-enrichment-suggestion-id").value = suggestion.id;
   document.querySelector("#question-enrichment-dialog-stem").textContent = question.stem;
   document.querySelector("#question-enrichment-current").innerHTML = `
+    <dt>科目</dt><dd>${escapeHtml(questionSubjectName(question.subjectId))}</dd>
+    <dt>教材</dt><dd>${escapeHtml(question.bookId ? questionBookName(question.bookId) : "未指定教材（待归类）")}</dd>
     <dt>目录</dt><dd>${escapeHtml(question.chapter)}</dd>
     <dt>知识点</dt><dd>${escapeHtml((question.knowledgePoints || []).join("\n"))}</dd>
     <dt>得分点</dt><dd>${escapeHtml(enrichmentScoringPointText(question.scoringPoints) || "尚未结构化")}</dd>`;
-  const chapterSelect = document.querySelector("#question-enrichment-chapter");
-  chapterSelect.innerHTML = nodes.map((node) => `<option value="${escapeHtml(node.id)}">${escapeHtml(node.path)}</option>`).join("");
-  if (nodes.some((node) => node.id === suggestion.chapterNodeId)) chapterSelect.value = suggestion.chapterNodeId;
+  const subjectSelect = document.querySelector("#question-enrichment-dialog-subject");
+  subjectSelect.innerHTML = subjects.map((subject) => `<option value="${escapeHtml(subject.id)}">${escapeHtml(subject.name)}${subject.id === question.subjectId ? "（当前）" : ""}</option>`).join("");
+  subjectSelect.value = selectedSubjectId;
+  state.questionEnrichmentReviewSubjectId = String(question.subjectId || "");
+  document.querySelector("#question-enrichment-subject-hint").textContent = enrichmentSubjectHint(question, suggestion, subjects);
+  const textbookSelect = renderQuestionEnrichmentBookOptions(selectedSubjectId, selectedBookId, question);
+  textbookSelect.value = selectedBookId;
+  state.questionEnrichmentReviewBookId = String(question.bookId || "");
+  document.querySelector("#question-enrichment-textbook-hint").textContent = enrichmentTextbookHint(question, suggestion, candidates);
+  renderQuestionEnrichmentChapterOptions(selectedBookId, suggestion.chapterNodeId, suggestion.catalogPath);
   document.querySelector("#question-enrichment-knowledge").value = (suggestion.knowledgePoints || []).join("\n");
   document.querySelector("#question-enrichment-scoring").value = (suggestion.scoringPoints || []).map((point) => `${point.score} | ${point.description} | ${point.textbookPage || ""}`).join("\n");
+  document.querySelector("#question-enrichment-use-subject").checked = Boolean(suggestedSubjectId && suggestedSubjectId !== String(question.subjectId || ""));
+  document.querySelector("#question-enrichment-use-textbook").checked = needs.needsTextbook
+    || Boolean(suggestedBookId && suggestedBookId !== question.bookId);
   document.querySelector("#question-enrichment-use-chapter").checked = needs.needsChapter;
   document.querySelector("#question-enrichment-use-knowledge").checked = needs.needsKnowledgePoints;
   document.querySelector("#question-enrichment-use-scoring").checked = needs.needsScoringPoints;
   updateQuestionEnrichmentApplyState();
   document.querySelector("#question-enrichment-reason").textContent = `${suggestion.reason || "未提供说明"}${suggestion.uncertainty ? `；不确定项：${suggestion.uncertainty}` : ""}`;
-  document.querySelector("#question-enrichment-evidence").innerHTML = (suggestion.evidence || []).map((evidence, index) => `<details><summary>证据 ${index + 1} · ${escapeHtml(evidence.catalogPath || "未归目录")}${evidence.printedPage ? ` · 教材 ${escapeHtml(evidence.printedPage)} 页` : ""}</summary><pre>${escapeHtml(evidence.excerpt)}</pre></details>`).join("") || '<span class="enrichment-muted">没有检索到教材正文证据</span>';
+  // 跨册时证据必须自带册次（2026-09-24）：同一科目上下册的目录路径可能重名，
+  // 只印目录路径＋页码时看不出这段正文出自哪一册。
+  document.querySelector("#question-enrichment-evidence").innerHTML = (suggestion.evidence || []).map((evidence, index) => `<details><summary>证据 ${index + 1} · ${escapeHtml(evidence.bookLabel ? `${evidence.bookLabel} · ` : "")}${escapeHtml(evidence.catalogPath || "未归目录")}${evidence.printedPage ? ` · 教材 ${escapeHtml(evidence.printedPage)} 页` : ""}</summary><pre>${escapeHtml(evidence.excerpt)}</pre></details>`).join("") || '<span class="enrichment-muted">没有检索到教材正文证据</span>';
   setSmallDialogStatus("#question-enrichment-dialog-status");
-  document.querySelector("#question-enrichment-dialog").showModal();
+  if (!options.embedded) document.querySelector("#question-enrichment-dialog").showModal();
 }
 
 function parseQuestionEnrichmentScoringPoints(question, suggestion) {
   const selectedNode = document.querySelector("#question-enrichment-chapter");
-  const sourceNote = `${questionBookName(question.bookId)} · ${selectedNode.options[selectedNode.selectedIndex]?.text || suggestion.catalogPath}`;
+  const textbookSelect = document.querySelector("#question-enrichment-textbook");
+  const selectedBook = textbookSelect && textbookSelect.selectedIndex >= 0
+    ? String(textbookSelect.options[textbookSelect.selectedIndex].text || "").replace("（当前）", "")
+    : "";
+  const sourceNote = `${selectedBook || questionBookName(question.bookId)} · ${selectedNode.options[selectedNode.selectedIndex]?.text || suggestion.catalogPath}`;
   return document.querySelector("#question-enrichment-scoring").value.split(/\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
     const [score, description, textbookPage = ""] = line.split(/[|｜]/).map((part) => part.trim());
     return { description, score: Number(score), textbookPage, pageBasis: textbookPage ? "textbook_text" : "", sourceNote };
@@ -2621,57 +4533,86 @@ function parseQuestionEnrichmentScoringPoints(question, suggestion) {
 
 async function saveQuestionEnrichmentReview(event) {
   event.preventDefault();
+  if (questionReview?.busy) return;
   const questionId = document.querySelector("#question-enrichment-question-id").value;
   const suggestionId = document.querySelector("#question-enrichment-suggestion-id").value;
-  const item = state.questionEnrichmentItems.find((entry) => entry.question.id === questionId);
+  const item = questionEnrichmentItem(questionId);
   if (!item) return;
   const button = document.querySelector("#apply-question-enrichment");
   button.disabled = true;
+  setQuestionReviewBusy(true);
   setSmallDialogStatus("#question-enrichment-dialog-status", "正在创建题目新版本", "loading");
   try {
-    await requestJson(`/api/admin/question-enrichment/questions/${encodeURIComponent(questionId)}/apply`, {
+    const applied = await requestJson(`/api/admin/question-enrichment/questions/${encodeURIComponent(questionId)}/apply`, {
       method: "POST",
       body: JSON.stringify({
         suggestionId,
         fields: {
+          subject: document.querySelector("#question-enrichment-use-subject").checked,
+          textbook: document.querySelector("#question-enrichment-use-textbook").checked,
           chapter: document.querySelector("#question-enrichment-use-chapter").checked,
           knowledgePoints: document.querySelector("#question-enrichment-use-knowledge").checked,
           scoringPoints: document.querySelector("#question-enrichment-use-scoring").checked,
         },
         overrides: {
+          subjectId: document.querySelector("#question-enrichment-dialog-subject").value,
+          bookId: document.querySelector("#question-enrichment-textbook").value,
           chapterNodeId: document.querySelector("#question-enrichment-chapter").value,
           knowledgePoints: document.querySelector("#question-enrichment-knowledge").value.split(/\n|，|,/).map((value) => value.trim()).filter(Boolean),
           scoringPoints: parseQuestionEnrichmentScoringPoints(item.question, item.suggestion),
         },
       }),
     });
-    document.querySelector("#question-enrichment-dialog").close();
-    await loadQuestionEnrichment();
+    if (applied.unchanged) {
+      setSmallDialogStatus("#question-enrichment-dialog-status", "所选内容与当前内容一致，无需重复写入；未改动题目版本或审核状态。", "success");
+      return;
+    }
+    if (questionReview?.id === questionId) await refreshQuestionReviewAfterWrite();
+    else {
+      document.querySelector("#question-enrichment-dialog").close();
+      await loadQuestionEnrichment();
+    }
   } catch (error) {
     setSmallDialogStatus("#question-enrichment-dialog-status", `采纳失败：${friendlyError(error)}`, "error");
   } finally {
     button.disabled = false;
+    setQuestionReviewBusy(false);
   }
 }
 
 async function rejectQuestionEnrichment() {
+  if (questionReview?.busy) return;
   const questionId = document.querySelector("#question-enrichment-question-id").value;
   const suggestionId = document.querySelector("#question-enrichment-suggestion-id").value;
+  setQuestionReviewBusy(true);
   try {
     await requestJson(`/api/admin/question-enrichment/questions/${encodeURIComponent(questionId)}/reject`, { method: "POST", body: JSON.stringify({ suggestionId }) });
-    document.querySelector("#question-enrichment-dialog").close();
-    await loadQuestionEnrichment();
+    if (questionReview?.id === questionId) await refreshQuestionReviewAfterWrite("suggestions");
+    else {
+      document.querySelector("#question-enrichment-dialog").close();
+      await loadQuestionEnrichment();
+    }
   } catch (error) {
     setSmallDialogStatus("#question-enrichment-dialog-status", `拒绝失败：${friendlyError(error)}`, "error");
+  } finally {
+    setQuestionReviewBusy(false);
   }
 }
 
+// 批次归属下拉同样是「可暂缺」：首项为空值（=把这批题标记为待归类），
+// 已保存但不在当前科目目录里的教材保留成显式选项，避免静默丢掉原归属。
 function syncQuestionBatchEditBooks(selectedBookId = "") {
   const subjectId = document.querySelector("#question-batch-edit-subject").value;
   const books = state.questionCatalog.books.filter((book) => book.subjectId === subjectId);
   const select = document.querySelector("#question-batch-edit-book");
-  select.innerHTML = books.map((book) => `<option value="${escapeHtml(book.id)}">${escapeHtml(`${book.title}${book.volume ? ` · ${book.volume}` : ""}`)}</option>`).join("");
-  if (books.some((book) => book.id === selectedBookId)) select.value = selectedBookId;
+  const orphan = selectedBookId && !books.some((book) => book.id === selectedBookId) ? selectedBookId : "";
+  select.innerHTML = [
+    '<option value="">（不指定教材 · 待归类）</option>',
+    orphan ? `<option value="${escapeHtml(orphan)}">${escapeHtml(orphan)}（不在当前科目目录中）</option>` : "",
+    ...books.map((book) => `<option value="${escapeHtml(book.id)}">${escapeHtml(`${book.title}${book.volume ? ` · ${book.volume}` : ""}`)}</option>`),
+  ].join("");
+  if (selectedBookId === "" || orphan || books.some((book) => book.id === selectedBookId)) select.value = selectedBookId;
+  else select.value = "";
 }
 
 function openQuestionBatchEdit() {
@@ -2683,6 +4624,8 @@ function openQuestionBatchEdit() {
   if (batch.subjectId !== "mixed") subjectSelect.value = batch.subjectId;
   syncQuestionBatchEditBooks(batch.bookId === "mixed" ? "" : batch.bookId);
   document.querySelector("#question-batch-edit-id").value = batch.id;
+  document.querySelector("#question-batch-edit-chapter").value = "";
+  document.querySelector("#question-batch-edit-knowledge-points").value = "";
   document.querySelector("#question-batch-edit-subtitle").textContent = `${formatTaskTime(batch.createdAt)} 导入 · 共 ${batch.count} 道题`;
   setSmallDialogStatus("#question-batch-edit-status");
   document.querySelector("#question-batch-edit-dialog").showModal();
@@ -2700,9 +4643,15 @@ async function saveQuestionBatchEdit(event) {
   const batch = state.questionImportBatches.find((item) => item.id === batchId);
   const subjectId = document.querySelector("#question-batch-edit-subject").value;
   const bookId = document.querySelector("#question-batch-edit-book").value;
+  const chapter = document.querySelector("#question-batch-edit-chapter").value.trim();
+  const knowledgePoints = document.querySelector("#question-batch-edit-knowledge-points").value
+    .split(/[，,、\n]/).map((value) => value.trim()).filter(Boolean);
   const subjectLabel = questionSubjectName(subjectId);
-  const bookLabel = questionBookName(bookId);
-  if (!batch || !window.confirm(`确认把该批次 ${batch.count} 道题统一改为“${subjectLabel} / ${bookLabel}”吗？`)) return;
+  const bookLabel = bookId ? questionBookName(bookId) : "不指定教材（待归类）";
+  const classificationLabel = bookId
+    ? `${chapter || "缺章节"} / ${knowledgePoints.length ? knowledgePoints.join("、") : "缺知识点"}`
+    : "待归类";
+  if (!batch || !window.confirm(`确认把该批次 ${batch.count} 道题统一改为“${subjectLabel} / ${bookLabel} / ${classificationLabel}”吗？`)) return;
   const button = document.querySelector("#save-question-batch-edit");
   button.disabled = true;
   button.textContent = "修改中";
@@ -2710,11 +4659,17 @@ async function saveQuestionBatchEdit(event) {
   try {
     const payload = await requestJson(`/api/admin/questions/import-batches/${encodeURIComponent(batchId)}`, {
       method: "PUT",
-      body: JSON.stringify({ subjectId, bookId }),
+      body: JSON.stringify({
+        subjectId,
+        bookId,
+        ...(chapter ? { chapter } : {}),
+        ...(knowledgePoints.length ? { knowledgePoints } : {}),
+      }),
     });
     closeQuestionBatchEdit();
     await Promise.all([loadQuestions(), loadOverview()]);
-    window.alert(`已统一修改 ${payload.updatedCount} 道题，原内容与版本记录均已保留。`);
+    const pendingCount = Number(payload.pendingClassificationCount || 0);
+    window.alert(`已统一修改 ${payload.updatedCount} 道题，原内容与版本记录均已保留。${pendingCount ? `\n其中 ${pendingCount} 道仍是待归类（缺教材/章节/知识点），未自动发布到用户端。` : ""}`);
   } catch (error) {
     setSmallDialogStatus("#question-batch-edit-status", `修改失败：${friendlyError(error)}`, "error");
   } finally {
@@ -2723,15 +4678,90 @@ async function saveQuestionBatchEdit(event) {
   }
 }
 
-async function deleteSelectedQuestions() {
-  const ids = [...state.questionSelectedIds];
-  if (!ids.length) return;
-  const selectedIds = new Set(ids);
-  const selectedUnits = questionTableUnits().filter((unit) => unit.questions.some((question) => selectedIds.has(question.id)));
-  const unitCount = selectedUnits.length;
-  if (!window.confirm(`确定永久删除选中的 ${unitCount} 个题目单位（共 ${ids.length} 个作答项）吗？\n\n材料题组会整组删除；删除后不可恢复，相关版本记录也会一并移除。`)) return;
+// 「删除所选」的第二步：先向服务端盘点影响面（只读），让操作人看清会删掉什么，再输入确认码放行。
+// 2026-09-22（DEC-094 形态 A）：以前是一个 window.confirm，只报"选中 N 个单位"，看不到试卷/题族/练习痕迹，
+// 而按批次整批删除恰恰是最需要看清影响面的操作。确认码＝批次 id 后 6 位（非批次选择时用一次性随机码）。
+let questionDeleteConfirmation = null;
 
-  const button = document.querySelector("#delete-selected-questions");
+function questionDeleteImpactLines(impact, batch = null) {
+  const lines = [];
+  const summary = impact.referenceSummary || {};
+  const batchPart = batch ? `本批「${batch.label}」` : "当前所选";
+  lines.push(`<p class="question-batch-delete-lead">${escapeHtml(batchPart)}：将永久删除 <strong>${impact.deletedCount}</strong> 个作答项（${impact.unitCount} 个题目单位${impact.materialGroupCount ? ` · 含 ${impact.materialGroupCount} 组材料题整组连带` : ""}）</p>`);
+  const items = [];
+  if (impact.offlineCount) items.push(`其中已下架 ${impact.offlineCount} 道`);
+  items.push(summary.examCount
+    ? `已进试卷 ${summary.examCount} 份（${(impact.exams || []).slice(0, 3).map((exam) => escapeHtml(exam.title)).join("、")}${summary.examCount > 3 ? " 等" : ""}）`
+    : "未被任何试卷引用");
+  items.push(summary.packCount
+    ? `已进题包 ${summary.packCount} 个（${(impact.packs || []).slice(0, 3).map((pack) => escapeHtml(pack.name)).join("、")}${summary.packCount > 3 ? " 等" : ""}）`
+    : "未被任何题包引用");
+  items.push(summary.familyCount
+    ? `属于 ${summary.familyCount} 个题族（${(impact.families || []).slice(0, 3).map((family) => escapeHtml(family.name)).join("、")}${summary.familyCount > 3 ? " 等" : ""}）——会从题族里摘除成员`
+    : "不属于任何题族");
+  const practiced = impact.practiced || {};
+  items.push(practiced.questions
+    ? `已被用户练过 ${practiced.questions} 道（${practiced.attempts} 次作答 · ${practiced.accounts} 个账号）——练习记录不会被清理`
+    : "没有用户练习记录");
+  if (impact.notFoundIds && impact.notFoundIds.length) items.push(`有 ${impact.notFoundIds.length} 个 id 在题库中已不存在，将被跳过`);
+  const blocked = impact.deleteBlocked
+    ? `<p class="question-batch-delete-blocked">⚠ 有 ${impact.mergedSourceIds.length} 道已合并的源题、${impact.mergedTargetIds.length} 道被引用的合并目标在这批里，服务端会拒绝整批删除。请先在题目合并里处理它们，再回来撤销这一批。</p>`
+    : "";
+  return `${lines.join("")}<ul>${items.map((item) => `<li>${item}</li>`).join("")}</ul>${blocked}`;
+}
+
+function syncQuestionBatchDeleteConfirmState() {
+  const confirmation = questionDeleteConfirmation;
+  const button = document.querySelector("#confirm-question-batch-delete");
+  if (!confirmation) {
+    button.disabled = true;
+    return;
+  }
+  const input = document.querySelector("#question-batch-delete-code").value.trim().toLowerCase();
+  button.disabled = Boolean(confirmation.impact.deleteBlocked) || input !== confirmation.code.toLowerCase();
+}
+
+function openQuestionBatchDeleteConfirm(ids, payload) {
+  const impact = payload.impact || {};
+  const code = String((payload.batch && payload.batch.confirmCode) || "").trim()
+    || Math.random().toString(36).slice(2, 8).toUpperCase();
+  questionDeleteConfirmation = { ids, impact, code, batchId: (payload.batch && payload.batch.id) || "" };
+  document.querySelector("#question-batch-delete-subtitle").textContent = payload.batch
+    ? `${formatTaskTime(payload.batch.createdAt)} 导入 · 批次 id 末 6 位即确认码`
+    : "当前筛选结果中的选中项（非整批操作）";
+  document.querySelector("#question-batch-delete-impact").innerHTML = `
+    ${questionDeleteImpactLines(impact, payload.batch)}
+    <p class="question-batch-delete-code">确认码：<strong id="question-batch-delete-code-value">${escapeHtml(code)}</strong></p>`;
+  document.querySelector("#question-batch-delete-code-label").textContent = payload.batch
+    ? "照抄上面的确认码，启用下方删除按钮（防止误点整批删除）"
+    : "照抄上面的确认码，启用下方删除按钮";
+  const input = document.querySelector("#question-batch-delete-code");
+  input.value = "";
+  input.disabled = Boolean(impact.deleteBlocked);
+  syncQuestionBatchDeleteConfirmState();
+  const dialog = document.querySelector("#question-batch-delete-dialog");
+  if (!dialog.open) dialog.showModal();
+}
+
+function closeQuestionBatchDeleteConfirm() {
+  const dialog = document.querySelector("#question-batch-delete-dialog");
+  if (dialog.open) dialog.close();
+  questionDeleteConfirmation = null;
+  const input = document.querySelector("#question-batch-delete-code");
+  input.value = "";
+  input.disabled = false;
+  syncQuestionBatchDeleteConfirmState();
+}
+
+async function confirmQuestionBatchDelete() {
+  const confirmation = questionDeleteConfirmation;
+  if (!confirmation) return;
+  const input = document.querySelector("#question-batch-delete-code").value.trim().toLowerCase();
+  if (input !== confirmation.code.toLowerCase()) return;
+  const button = document.querySelector("#confirm-question-batch-delete");
+  const ids = [...confirmation.ids];
+  const selectedIds = new Set(ids);
+  const unitCount = questionTableUnits().filter((unit) => unit.questions.some((question) => selectedIds.has(question.id))).length;
   button.disabled = true;
   button.textContent = "删除中";
   try {
@@ -2739,12 +4769,35 @@ async function deleteSelectedQuestions() {
       method: "POST",
       body: JSON.stringify({ ids }),
     });
+    closeQuestionBatchDeleteConfirm();
     state.questionSelectedIds = [];
     await loadQuestions();
     await loadOverview();
     window.alert(`已永久删除 ${unitCount} 个题目单位，共 ${payload.deletedCount} 个作答项${payload.notFoundIds.length ? `；${payload.notFoundIds.length} 个作答项已不存在` : ""}。`);
   } catch (error) {
     window.alert(`删除失败：${friendlyError(error)}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "永久删除";
+    syncQuestionBatchDeleteConfirmState();
+  }
+}
+
+async function deleteSelectedQuestions() {
+  const ids = [...state.questionSelectedIds];
+  if (!ids.length) return;
+  const batchId = document.querySelector("#question-import-batch-filter").value || "all";
+  const button = document.querySelector("#delete-selected-questions");
+  button.disabled = true;
+  button.textContent = "盘点影响面";
+  try {
+    const payload = await requestJson("/api/admin/questions/deletion-impact", {
+      method: "POST",
+      body: JSON.stringify({ ids, importBatchId: batchId }),
+    });
+    openQuestionBatchDeleteConfirm(ids, payload);
+  } catch (error) {
+    window.alert(`读取删除影响面失败，已取消本次删除：${friendlyError(error)}`);
   } finally {
     button.disabled = false;
     button.textContent = "删除所选";
@@ -3116,6 +5169,7 @@ function renderQuestionMembershipEditor() {
     </article>`;
   }).join("") : '<p class="question-family-membership-empty">尚未归入题族。保存后只会出现在“未成族题目”，不会散落到知识目录。</p>';
   document.querySelectorAll("[data-question-membership-contribution-picker]").forEach(renderQuestionMembershipContributionPicker);
+  renderQuestionFamilySetAttribution();
 
   const available = availableQuestionMembershipFamilies();
   const query = normalizedQuestionFamilyLabel(state.questionMembershipSearchQuery);
@@ -3135,6 +5189,19 @@ function renderQuestionMembershipEditor() {
   document.querySelector("#add-question-membership").disabled = available.length === 0;
   document.querySelector("#confirm-question-membership").disabled = matched.length === 0;
   if (!available.length) document.querySelector("#question-family-membership-add").hidden = true;
+}
+
+function renderQuestionFamilySetAttribution() {
+  const list = document.querySelector("#question-family-set-attribution-list");
+  if (!list) return;
+  const sets = state.questionFingerprintQuestion?.familySetMemberships || [];
+  list.innerHTML = sets.length
+    ? sets.map((set) => `<div class="question-family-set-attribution-row">
+      <strong>${escapeHtml(set.name || set.setId)}</strong>
+      <span>${set.sources.map((source) => `${source.isPrimary ? "主题族" : "关联题族"}「${source.familyName || source.familyId}」${source.relation === "ancestor" ? "经下级集" : "直属"} · ${{ confirmed: "已确认", pending: "待审核关系", inactive: "已失效关系", rejected: "已驳回关系" }[source.status] || "待审核关系"}`).map(escapeHtml).join("；")}</span>
+      <button class="inline-action" type="button" data-view-question-family-set="${escapeHtml(set.setId)}">查看/调整</button>
+    </div>`).join("")
+    : "未关联题族集";
 }
 
 async function loadQuestionMembershipCatalog(bookId) {
@@ -3204,10 +5271,7 @@ function normalizeQuestionFingerprintPrimaryNodeRole(value) {
   return value === "scope_anchor" ? "scope_anchor" : "core";
 }
 
-// 知识点是否落在主题范围锚点之下（含锚点自身）。
-// 后端对「问题知识范围」有硬校验：范围内的每个节点必须位于主题锚点之下，否则报
-// knowledge_assignment_theme_anchor_invalid。前端必须用同一判据驱动显示与保存前校验，
-// 避免"界面说纳入、保存却被拒"。跨主题的选项知识应只记在选项行，不进入问题知识范围。
+// 历史范围锚点只用于旧选项知识的只读分组，不决定题族集归属。
 function isNodeWithinAnchor(nodeMap, nodeId, anchorNodeId) {
   const target = String(anchorNodeId || "");
   if (!target || !nodeId) return false;
@@ -3247,41 +5311,13 @@ function questionFingerprintNodeMap() {
   return new Map(questionFingerprintNodes().map((node) => [String(node.id), node]));
 }
 
-// 「问题知识范围」的单点受控判据：该节点是否落在当前主题范围锚点之下。
-// 与保存前拦截、字段下方覆盖提示共用 questionFingerprintNodeMap()。
-// 未设置锚点、或两棵树都拿不到时不算约束 —— 宁可放行，也不能因为"没数据"误伤；
-// 这种"无法校验"的状态由 syncQuestionFingerprintRangeCoverageHint() 显式告知用户，不假装通过。
-function isQuestionRangeNodeWithinThemeAnchor(nodeId) {
-  const anchorNodeId = String(state.questionFingerprintDraftKnowledgeThemeRangeAnchorNodeId || "");
-  if (!anchorNodeId) return true;
-  const nodeMap = questionFingerprintNodeMap();
-  if (!nodeMap.has(anchorNodeId)) return true;
-  return isNodeWithinAnchor(nodeMap, nodeId, anchorNodeId);
-}
-
-// 受控字段的就地提示：用户尝试把跨主题节点勾进问题知识范围时当场弹窗。
-// 原先这段约束只有字段下方一行 8px 小字，实测很容易被忽略；拖到"保存时"才拦也已经太晚。
-// 弹窗只做告知，所以用 confirmOnly 隐藏"取消"，不制造一个无意义的二选一。
-function showQuestionRangeAnchorBlockedDialog(nodeId) {
-  const anchorNodeId = String(state.questionFingerprintDraftKnowledgeThemeRangeAnchorNodeId || "");
-  const nodeMap = questionFingerprintNodeMap();
-  const labelOf = (id) => nodeMap.get(String(id))?.path || nodeMap.get(String(id))?.title || String(id);
-  openDialog(
-    "不能加入问题知识范围",
-    `「${labelOf(nodeId)}」不在主题范围锚点「${labelOf(anchorNodeId)}」之下，因此不能加入问题知识范围。`
-    + "跨主题的选项知识请只标注在该选项行；若确实要纳入，请先把主题范围锚点改成能覆盖它的共同上位节点。",
-    { confirmOnly: true },
-  );
-}
-
 function normalizeQuestionFingerprintDraftRequiredNodeIds() {
   const primaryNodeId = state.questionFingerprintDraftCoreNodeId;
-  const themeAnchorNodeId = state.questionFingerprintDraftKnowledgeThemeRangeAnchorNodeId;
   state.questionFingerprintDraftPrimaryNodeRole = "core";
   state.questionFingerprintDraftRequiredNodeIds = [...new Set([
     primaryNodeId,
     ...state.questionFingerprintDraftRequiredNodeIds,
-  ].filter((nodeId) => nodeId && (nodeId !== themeAnchorNodeId || nodeId === primaryNodeId)))];
+  ].filter(Boolean))];
   state.questionFingerprintDraftProblemKnowledgeRangeNodeIds = [...new Set([
     ...state.questionFingerprintDraftProblemKnowledgeRangeNodeIds,
     ...state.questionFingerprintDraftRequiredNodeIds,
@@ -3293,7 +5329,6 @@ function syncQuestionFingerprintPrimaryRoleUi() {
   state.questionFingerprintDraftPrimaryNodeRole = "core";
   const coreHelp = document.querySelector("#question-fingerprint-core-help");
   const requiredHelp = document.querySelector("#question-fingerprint-required-help");
-  const anchorHelp = document.querySelector("#question-fingerprint-theme-anchor-help");
   if (coreHelp) coreHelp.textContent = "直接决定答案的核心知识；会自动计入最小充分知识集。";
   if (requiredHelp) requiredHelp.textContent = "只保留完成作答不可缺少的知识；作答核心会自动包含并显示为已选。若要更换，请先修改作答核心。";
   // 「问题知识范围」的说明由 syncQuestionFingerprintRangeCoverageHint() **独占**负责：
@@ -3302,7 +5337,6 @@ function syncQuestionFingerprintPrimaryRoleUi() {
   // 于是把刚算好的结论清掉了 —— 实测表现为：打开编辑器后覆盖提示永远只剩基础文案，
   // 要等下一次交互（改锚点/改范围）才出现，连"本次无法校验"的告警也一起被吞掉。
   syncQuestionFingerprintRangeCoverageHint();
-  if (anchorHelp) anchorHelp.textContent = "从有效知识范围归纳出的共同上位主题，用于目录投影和范围组织。";
 }
 
 function questionFingerprintSummary(fingerprint = {}) {
@@ -3314,7 +5348,7 @@ function questionFingerprintSummary(fingerprint = {}) {
   const requiredNodeIds = [...new Set([
     primaryNodeId,
     ...(fingerprint.requiredNodeIds || []),
-  ].filter((nodeId) => nodeId && (nodeId !== themeAnchorNodeId || nodeId === primaryNodeId)))];
+  ].filter(Boolean))];
   const rangeIds = [...new Set([
     ...(fingerprint.problemKnowledgeRangeNodeIds || []),
     ...requiredNodeIds,
@@ -3328,7 +5362,7 @@ function questionFingerprintSummary(fingerprint = {}) {
   const rangeLabels = rangeIds.map(questionFingerprintNodeLabel).filter(Boolean);
   return [
     `作答核心：${primaryLabel}`,
-    themeAnchorLabel ? `知识主题范围锚点：${themeAnchorLabel}` : "",
+    themeAnchorLabel ? `旧知识范围锚点（历史兼容）：${themeAnchorLabel}` : "",
     rangeLabels.length ? `问题知识范围：${rangeLabels.join("、")}` : "",
     requiredLabels.length ? `另需 ${requiredLabels.join("、")}` : "",
   ].filter(Boolean).join("；");
@@ -3337,7 +5371,6 @@ function questionFingerprintSummary(fingerprint = {}) {
 function questionFingerprintPickerConfig(type) {
   if (type === "core") return { selectId: "question-fingerprint-core", emptyLabel: "请选择作答核心", multiple: false };
   if (type === "range") return { selectId: "question-fingerprint-range", emptyLabel: "可不选择问题知识范围", multiple: true };
-  if (type === "theme-anchor") return { selectId: "question-fingerprint-theme-anchor", emptyLabel: "可不设置知识主题范围锚点", multiple: false };
   return { selectId: "question-fingerprint-required", emptyLabel: "请选择作答必需知识", multiple: true };
 }
 
@@ -3405,154 +5438,19 @@ function setQuestionFingerprintPickerOpen(targetRoot = null, open = false) {
 
 function syncQuestionFingerprintSelects() {
   const nodes = questionFingerprintKnowledgeNodes();
-  const themeNodes = questionFingerprintThemeAnchorNodes();
   const core = document.querySelector("#question-fingerprint-core");
   const range = document.querySelector("#question-fingerprint-range");
-  const themeAnchor = document.querySelector("#question-fingerprint-theme-anchor");
   const required = document.querySelector("#question-fingerprint-required");
   const selectedRequired = new Set(normalizeQuestionFingerprintDraftRequiredNodeIds());
   const selectedRange = new Set(state.questionFingerprintDraftProblemKnowledgeRangeNodeIds || []);
   core.innerHTML = `<option value="">请选择作答核心</option>${nodes.map((node) => `<option value="${escapeHtml(node.id)}" ${node.id === state.questionFingerprintDraftCoreNodeId ? "selected" : ""}>${escapeHtml(node.path || node.displayTitle || node.title)}</option>`).join("")}`;
   if (range) range.innerHTML = nodes.map((node) => `<option value="${escapeHtml(node.id)}" ${selectedRange.has(node.id) ? "selected" : ""}>${escapeHtml(node.path || node.displayTitle || node.title)}</option>`).join("");
-  if (themeAnchor) themeAnchor.innerHTML = `<option value="">不设置知识主题范围锚点</option>${themeNodes.map((node) => `<option value="${escapeHtml(node.id)}" ${node.id === state.questionFingerprintDraftKnowledgeThemeRangeAnchorNodeId ? "selected" : ""}>${escapeHtml(node.path || node.displayTitle || node.title)}</option>`).join("")}`;
   required.innerHTML = nodes.map((node) => `<option value="${escapeHtml(node.id)}" ${selectedRequired.has(node.id) ? "selected" : ""}>${escapeHtml(node.path || node.displayTitle || node.title)}</option>`).join("");
   syncQuestionFingerprintPrimaryRoleUi();
   syncQuestionFingerprintRangeCoverageHint();
   renderQuestionFingerprintPicker("core");
   renderQuestionFingerprintPicker("range");
-  renderQuestionFingerprintPicker("theme-anchor");
   renderQuestionFingerprintPicker("required");
-}
-
-// 在范围字段下方显示"主题锚点 ↔ 问题知识范围"的覆盖情况。
-// 范围内的每个节点都必须落在锚点之下（后端硬校验），越界项在这里提前点出，
-// 而不是等保存时报 knowledge_assignment_theme_anchor_invalid。
-// 题目编辑对话框里的「选项 → 涉及知识」只读区块 + 问题知识范围分组。
-// 数据来源：/api/admin/questions/:id/option-knowledge（人工确认过的金标选项知识 + 正式指纹的锚点/范围）。
-// 逐选项知识目前只存在于人工确认的金标审核条目；无数据时如实提示，不用 AI 草稿充数。
-const QUESTION_OPTION_KNOWLEDGE_LABELS = {
-  question_only: "仅题目知识",
-  option_specific: "另有选项知识",
-  undetermined: "暂无法判断",
-  unreviewed: "未判断",
-};
-const QUESTION_OPTION_ROLE_LABELS = {
-  answer: "正确项",
-  distractor: "干扰项",
-  neutral: "中性",
-  unreviewed: "待人工判断",
-};
-
-function questionOptionKnowledgeBlockHtml(payload, nodes, nodeMap) {
-  const nodeLabelOf = (nodeId) => nodeMap.get(String(nodeId))?.path
-    || nodeMap.get(String(nodeId))?.title || String(nodeId);
-  const anchorNodeId = String(payload?.themeAnchorNodeId || "");
-  const anchorLabel = anchorNodeId ? nodeLabelOf(anchorNodeId) : "";
-  const requiredNodeIds = [...new Set((payload?.requiredNodeIds || []).map(String).filter(Boolean))];
-  const rangeNodeIds = [...new Set((payload?.problemKnowledgeRangeNodeIds || []).map(String).filter(Boolean))];
-  const rangeOutside = anchorNodeId && nodeMap.has(anchorNodeId)
-    ? partitionKnowledgeNodesByThemeAnchor(nodeMap, rangeNodeIds, anchorNodeId).outside
-    : [];
-
-  // 范围分组：必含（作答核心 + 最小充分知识集）/ 选项带入（在锚点下）/ 未纳入（跨主题）
-  const optionNodeIds = (payload?.options || []).flatMap((option) => option.knowledgeNodeIds || []);
-  const optionWithinAnchor = anchorNodeId && nodeMap.has(anchorNodeId)
-    ? partitionKnowledgeNodesByThemeAnchor(nodeMap, optionNodeIds, anchorNodeId)
-    : { within: [], outside: optionNodeIds };
-  const requiredSet = new Set([...requiredNodeIds, String(payload?.primaryNodeId || "")].filter(Boolean));
-  const broughtIn = [...new Set(optionWithinAnchor.within)].filter((nodeId) => !requiredSet.has(nodeId));
-  const groupHtml = (title, hint, ids, tone) => `<div class="question-option-scope-group ${tone}">
-      <span class="question-option-scope-group-title">${escapeHtml(title)}</span>
-      <span class="question-option-scope-group-hint">${escapeHtml(hint)}</span>
-      <div class="question-option-scope-group-nodes">${ids.length
-    ? ids.map((nodeId) => `<span class="question-option-scope-node">${escapeHtml(nodeLabelOf(nodeId))}</span>`).join("")
-    : '<span class="question-option-scope-empty">（无）</span>'}</div>
-    </div>`;
-  const scopeGroups = `<div class="question-option-scope-groups">
-      ${groupHtml("必含", "作答核心 + 最小充分知识集（不可删）", requiredNodeIds, "is-required")}
-      ${groupHtml("选项带入", `在主题范围${anchorLabel ? `「${anchorLabel}」` : ""}之下的选项知识`, broughtIn, "is-brought")}
-      ${groupHtml("未纳入", "跨主题（只记在选项行，不进范围）", optionWithinAnchor.outside, "is-excluded")}
-    </div>${rangeOutside.length
-    ? `<div class="question-option-scope-warning">⚠️ 当前问题知识范围有 ${rangeOutside.length} 项不在主题锚点之下：${rangeOutside.map(nodeLabelOf).join("、")}。保存会被拦下。</div>`
-    : ""}`;
-
-  const rows = payload?.options || [];
-  const table = rows.length ? `<div class="question-option-knowledge-table" role="table" aria-label="选项、角色、知识关系、涉及知识、主题范围">
-      <div class="question-option-knowledge-head" role="row"><span role="columnheader">选项</span><span role="columnheader">角色</span><span role="columnheader">知识关系</span><span role="columnheader">涉及知识</span><span role="columnheader">主题范围</span></div>
-      ${rows.map((option) => {
-    const relation = String(option.knowledgeRelation || "unreviewed");
-    const selectedNodes = (option.knowledgeNodeIds || []).map((nodeId, index) => ({
-      id: String(nodeId),
-      path: String((option.knowledgeLabels || [])[index] || nodeLabelOf(nodeId)),
-    }));
-    const showNodes = relation === "option_specific";
-    return `<div class="question-option-knowledge-row" role="row">
-          <span role="cell"><strong>${escapeHtml(option.key)}</strong><span class="question-option-knowledge-text">${escapeHtml(String(option.text || "").slice(0, 40))}</span></span>
-          <span role="cell">${escapeHtml(QUESTION_OPTION_ROLE_LABELS[option.role] || option.role || "—")}</span>
-          <span role="cell">${escapeHtml(QUESTION_OPTION_KNOWLEDGE_LABELS[relation] || relation)}</span>
-          <span role="cell">${showNodes && selectedNodes.length
-      ? selectedNodes.map((node) => `<span class="question-option-knowledge-node">${escapeHtml(node.path)}</span>`).join("")
-      : "—"}</span>
-          <span role="cell">${showNodes && selectedNodes.length
-      ? blindGoldOptionThemeScopeBadgeHtml([...nodeMap.values()], selectedNodes, anchorNodeId) || "—"
-      : "—"}</span>
-        </div>`;
-  }).join("")}
-    </div>` : "";
-
-  const notice = payload?.available
-    ? ""
-    : `<div class="question-option-knowledge-notice">本题未进入金标审核，暂无逐选项知识（正式指纹与分类结果里都没有该数据）。</div>`;
-  // 逐选项明细已由选项表格编辑器（#choice-answer-fields 内的表格）展示，这里只保留范围分组，
-  // 避免同一页出现两份内容相同的表格。
-  return `<div class="question-option-knowledge-block" data-question-option-knowledge>
-      <div class="question-option-knowledge-title">问题知识范围分组 <small>（只读）</small></div>
-      ${scopeGroups}
-      ${notice}
-    </div>`;
-}
-
-function renderQuestionOptionKnowledgeBlock(payload) {
-  const container = document.querySelector("[data-question-option-knowledge-host]");
-  if (!container) return;
-  if (!payload) { container.innerHTML = ""; return; }
-  // 与选项表格、锚点判据共用同一个取树入口（优先题目自己的树）
-  const nodes = questionFingerprintNodes();
-  const nodeMap = questionFingerprintNodeMap();
-  container.innerHTML = questionOptionKnowledgeBlockHtml(payload, nodes, nodeMap);
-}
-
-// 把宿主容器注入到**选项编辑区正下方**（#choice-answer-fields 之后）——产品负责人要的就是
-// 选项/正确答案那一行的下面直接看到"选项 → 涉及知识"表格；不改 index.html，降低误伤风险。
-// 若该区域不存在（非选择题等），退回指纹编辑器内。
-function ensureQuestionOptionKnowledgeHost() {
-  let host = document.querySelector("[data-question-option-knowledge-host]");
-  if (host) return host;
-  host = document.createElement("div");
-  host.setAttribute("data-question-option-knowledge-host", "");
-  const choiceFields = document.querySelector("#choice-answer-fields");
-  if (choiceFields && choiceFields.parentElement) {
-    choiceFields.parentElement.insertBefore(host, choiceFields.nextSibling);
-    return host;
-  }
-  const editor = document.querySelector("#question-fingerprint-editor");
-  if (!editor) return null;
-  const actions = editor.querySelector(".question-fingerprint-editor-actions");
-  if (actions) editor.insertBefore(host, actions); else editor.appendChild(host);
-  return host;
-}
-
-async function loadQuestionOptionKnowledgeBlock(questionId) {
-  const container = ensureQuestionOptionKnowledgeHost();
-  if (!container) return;
-  if (!questionId) { container.innerHTML = ""; return; }
-  container.innerHTML = '<div class="question-option-knowledge-notice">正在读取逐选项知识…</div>';
-  try {
-    const payload = await requestJson(`/api/admin/questions/${encodeURIComponent(questionId)}/option-knowledge`);
-    renderQuestionOptionKnowledgeBlock(payload);
-  } catch (error) {
-    container.innerHTML = `<div class="question-option-knowledge-notice">逐选项知识读取失败：${escapeHtml(String(error.message || error))}</div>`;
-  }
 }
 
 // 选项表格编辑器：替代"选项 textarea + 正确答案 input"的展示形态。
@@ -3590,9 +5488,8 @@ function writeQuestionOptionTableBack(rows) {
 function ensureQuestionOptionTableHost() {
   const choiceFields = document.querySelector("#choice-answer-fields");
   if (!choiceFields) return null;
-  // 原输入框隐藏但保留为数据源
-  const grid = choiceFields.querySelector(".answer-grid");
-  if (grid) grid.style.display = "none";
+  // 旧输入框隐藏但保留为唯一数据源，界面只展示选项表格。
+  choiceFields.classList.add("has-option-table");
   let host = choiceFields.querySelector("[data-question-option-table-host]");
   if (!host) {
     host = document.createElement("div");
@@ -3673,7 +5570,11 @@ function renderQuestionOptionTable() {
   const host = ensureQuestionOptionTableHost();
   if (!host) return;
   const rows = questionOptionTableRows();
-  if (!rows.length) { host.innerHTML = ""; return; }
+  if (!rows.length) {
+    host.innerHTML = "";
+    document.querySelector("#choice-answer-fields")?.classList.remove("has-option-table");
+    return;
+  }
   const knowledgeRows = new Map((questionOptionTableKnowledge?.options || [])
     .map((option) => [String(option.key).toUpperCase(), option]));
   const anchorNodeId = String(questionOptionTableKnowledge?.themeAnchorNodeId || "");
@@ -3811,34 +5712,8 @@ async function loadQuestionOptionKnowledgeForOptionTable(questionId) {
 function syncQuestionFingerprintRangeCoverageHint() {
   const help = document.querySelector("#question-fingerprint-range-help");
   if (!help) return;
-  const base = "本题主题范围内的相关知识（受下方主题范围锚点约束）；跨主题的选项知识请只标注在该选项行，不加入这里。";
-  const anchorNodeId = String(state.questionFingerprintDraftKnowledgeThemeRangeAnchorNodeId || "");
-  const rangeNodeIds = [...new Set([
-    ...(state.questionFingerprintDraftProblemKnowledgeRangeNodeIds || []),
-    ...(state.questionFingerprintDraftRequiredNodeIds || []),
-  ].map(String).filter(Boolean))];
-  const nodeMap = questionFingerprintNodeMap();
-  const labelOf = (nodeId) => nodeMap.get(String(nodeId))?.path
-    || nodeMap.get(String(nodeId))?.title || String(nodeId);
-  if (!anchorNodeId) {
-    help.textContent = base;
-    return;
-  }
-  // 无法校验时**不假装通过**，明说这次没校验。两种情况都要报出来：
-  // ① 两棵树都拿不到（知识树未加载）；② 拿到的那棵树里没有该锚点（例如只退回到另一本书的树）。
-  if (!nodeMap.size || !nodeMap.has(anchorNodeId)) {
-    help.textContent = `${base} ⚠️ ${nodeMap.size
-      ? "当前知识树里找不到所选主题锚点"
-      : "知识树未加载"}，本次无法校验问题知识范围是否在锚点内；保存时仍会被服务端拦下。`;
-    return;
-  }
-  const { outside } = partitionKnowledgeNodesByThemeAnchor(nodeMap, rangeNodeIds, anchorNodeId);
-  if (!outside.length) {
-    help.textContent = `${base} 当前锚点「${labelOf(anchorNodeId)}」已覆盖全部 ${rangeNodeIds.length} 项。`;
-    return;
-  }
-  help.textContent = `${base} ⚠️ 当前锚点「${labelOf(anchorNodeId)}」未覆盖 ${outside.length} 项：`
-    + `${outside.map(labelOf).join("、")}；保存会被拦下，请移除这些节点或改锚点。`;
+  if (help.dataset) help.dataset.questionHelpInline = "false";
+  help.textContent = "本题实际涉及的相关知识，与作答必需知识分别保存；旧知识范围锚点不再限制日常编辑。";
 }
 
 function applyQuestionFingerprintDraft(fingerprint = null, source = "manual") {
@@ -3864,8 +5739,6 @@ function applyQuestionFingerprintDraft(fingerprint = null, source = "manual") {
   document.querySelector("#question-fingerprint-action").value = state.questionFingerprintDraftAction;
   syncQuestionFingerprintSelects();
   renderQuestionFingerprintEditor();
-  // 逐选项知识（只读）+ 范围分组：随指纹编辑器打开一起加载。
-  loadQuestionOptionKnowledgeBlock(String(state.questionFingerprintQuestion?.id || ""));
 }
 
 // 范围锚点不合法时给出可操作的说明：是哪些节点没被覆盖、可以直接改用哪个锚点。
@@ -3894,6 +5767,7 @@ function renderQuestionFingerprintEditor(message = "", tone = "") {
   const saveButton = document.querySelector("#save-question-fingerprint");
   const resetButton = document.querySelector("#reset-question-fingerprint-draft");
   const editorStatus = document.querySelector("#question-fingerprint-editor-status");
+  if (editorStatus.dataset) editorStatus.dataset.questionHelpInline = String(Boolean(!question || message || state.questionEditorContentDirty));
   syncQuestionFingerprintPrimaryRoleUi();
   if (!question) {
     status.textContent = "保存题目后建立";
@@ -3914,7 +5788,7 @@ function renderQuestionFingerprintEditor(message = "", tone = "") {
   status.className = confirmed ? "is-confirmed" : (candidate ? "is-candidate" : "is-missing");
   facts.innerHTML = `
     <div><span>题目原有知识标签</span><strong>${escapeHtml(legacyKnowledge.join(" · ") || "未标注")}</strong><em>题目 v${escapeHtml(question.version || 1)}</em></div>
-    <div class="${confirmed ? "is-confirmed" : "is-empty"}"><span>正式知识指纹</span><strong>${escapeHtml(confirmed ? questionFingerprintSummary(confirmed) : "尚未建立")}</strong><em>${confirmed ? `修订 ${escapeHtml(confirmed.revision || 1)}` : "不以候选代替"}</em></div>`;
+    <div class="${confirmed ? "is-confirmed" : "is-empty"}"><span id="question-fingerprint-formal-label">正式知识指纹</span><strong>${escapeHtml(confirmed ? questionFingerprintSummary(confirmed) : "尚未建立")}</strong>${confirmed ? `<em>修订 ${escapeHtml(confirmed.revision || 1)}</em>` : '<em data-question-help-for="#question-fingerprint-formal-label" data-question-help-label="正式知识指纹">不以候选代替</em>'}</div>`;
   candidateBox.hidden = !candidate;
   if (candidate) document.querySelector("#question-fingerprint-candidate-summary").textContent = questionFingerprintSummary(candidate);
   editor.classList.remove("is-disabled");
@@ -3934,6 +5808,52 @@ function renderQuestionFingerprintEditor(message = "", tone = "") {
       : "人工保存后才会形成正式指纹，并使相关成员归属进入待审核";
     editorStatus.className = "";
   }
+}
+
+function setQuestionEditorSectionTab(tab = "training") {
+  const nextTab = ["training", "knowledge"].includes(tab) ? tab : "training";
+  state.questionEditorSectionTab = nextTab;
+  document.querySelectorAll("[data-question-editor-section-tab]").forEach((button) => {
+    const selected = button.dataset.questionEditorSectionTab === nextTab;
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  const trainingPanel = document.querySelector("#question-editor-training-panel");
+  const knowledgePanel = document.querySelector("#question-editor-knowledge-panel");
+  if (trainingPanel) trainingPanel.hidden = nextTab !== "training";
+  if (knowledgePanel) knowledgePanel.hidden = nextTab !== "knowledge";
+}
+
+function syncQuestionOptionalAnswerPanels() {
+  [
+    ["#question-ai-answer-panel", "#question-ai-answer"],
+    ["#question-community-answer-panel", "#question-community-answer"],
+  ].forEach(([panelSelector, fieldSelector]) => {
+    const panel = document.querySelector(panelSelector);
+    const field = document.querySelector(fieldSelector);
+    if (panel && field && String(field.value || "").trim()) panel.open = true;
+  });
+}
+
+function syncQuestionEditorMeta(question = null) {
+  const version = document.querySelector("#question-editor-version-status");
+  const answerState = document.querySelector("#question-answer-state");
+  const answerReviewLabels = { verified: "已核对", doubtful: "存疑待复核", unreviewed: "未核对" };
+  if (version) {
+    version.textContent = question?.id
+      ? `v${question.version || 1} · ${question.status === "offline" ? "已下架" : "平台题目"}`
+      : "新题 · 待保存";
+  }
+  if (answerState) {
+    const value = document.querySelector("#question-answer-review-status")?.value || "unreviewed";
+    answerState.textContent = answerReviewLabels[value] || "待核对";
+  }
+}
+
+function questionEditorDiscardChanges() {
+  if (!assessmentModeUi().discard()) return false;
+  if (!state.questionEditorContentDirty) return true;
+  return window.confirm("当前题目有未保存修改，是否放弃这些修改？");
 }
 
 async function loadQuestionFingerprintEditor(question = null) {
@@ -3956,6 +5876,8 @@ async function loadQuestionFingerprintEditor(question = null) {
 }
 
 async function saveQuestionFingerprint() {
+  if (questionReview?.busy) return;
+  if (!assessmentModeUi().discard()) return;
   const question = state.questionFingerprintQuestion;
   if (!question) return;
   if (state.questionEditorContentDirty) {
@@ -3969,7 +5891,6 @@ async function saveQuestionFingerprint() {
     ...(state.questionFingerprintDraftProblemKnowledgeRangeNodeIds || []),
     ...requiredNodeIds,
   ].filter(Boolean))];
-  const knowledgeThemeRangeAnchorNodeId = String(state.questionFingerprintDraftKnowledgeThemeRangeAnchorNodeId || "");
   if (!primaryNodeId) {
     renderQuestionFingerprintEditor("请选择作答核心", "error");
     return;
@@ -3978,32 +5899,9 @@ async function saveQuestionFingerprint() {
     renderQuestionFingerprintEditor("请至少选择一项作答必需知识", "error");
     return;
   }
-  // 保存前用与后端一致的判据本地拦截：问题知识范围必须落在主题锚点之下。
-  // 这样跨主题的选项知识会当场被指出，而不是等后端返回 knowledge_assignment_theme_anchor_invalid。
-  if (knowledgeThemeRangeAnchorNodeId) {
-    // 与勾选弹窗、下方覆盖提示共用同一个取树入口（优先题目自己的树）
-    const nodeMap = questionFingerprintNodeMap();
-    if (nodeMap.has(String(knowledgeThemeRangeAnchorNodeId))) {
-      const { outside } = partitionKnowledgeNodesByThemeAnchor(
-        nodeMap,
-        problemKnowledgeRangeNodeIds,
-        knowledgeThemeRangeAnchorNodeId,
-      );
-      if (outside.length) {
-        const labelOf = (nodeId) => nodeMap.get(String(nodeId))?.path
-          || nodeMap.get(String(nodeId))?.title || String(nodeId);
-        renderQuestionFingerprintEditor(
-          `以下知识点不在主题范围「${labelOf(knowledgeThemeRangeAnchorNodeId)}」之下，不能加入问题知识范围：`
-          + `${outside.map(labelOf).join("、")}。跨主题的选项知识请只标注在该选项行；`
-          + "若确实要纳入，请先把主题范围锚点改为能覆盖这些节点的共同上位节点。",
-          "error",
-        );
-        return;
-      }
-    }
-  }
   const button = document.querySelector("#save-question-fingerprint");
   button.disabled = true;
+  setQuestionReviewBusy(true);
   button.textContent = "保存中";
   renderQuestionFingerprintEditor("正在保存正式指纹并推进题目版本", "loading");
   try {
@@ -4021,8 +5919,6 @@ async function saveQuestionFingerprint() {
         primaryNodeRole,
         requiredNodeIds,
         problemKnowledgeRangeNodeIds,
-        knowledgeThemeRangeAnchorNodeId,
-        scopeAnchorNodeId: knowledgeThemeRangeAnchorNodeId,
         optionKnowledge: questionOptionKnowledgePayloadForSave(),
         assessmentAction: document.querySelector("#question-fingerprint-action").value.trim(),
       }),
@@ -4039,16 +5935,23 @@ async function saveQuestionFingerprint() {
     document.querySelector("#question-editor-title").textContent = `编辑题目 · v${payload.question.version}`;
     document.querySelector("#save-question").textContent = "保存新版本";
     applyQuestionFingerprintDraft(state.questionFingerprintConfirmed, "manual");
+    await assessmentModeUi().loadQuestion(payload.question);
     renderQuestionFingerprintEditor(`正式指纹已保存；${(payload.affectedFamilyIds || []).length} 个题族中的相关成员归属已进入待审核，题族定义状态保持不变`, "success");
+    if (questionReview?.id === question.id) await refreshQuestionReviewAfterWrite("details");
   } catch (error) {
     renderQuestionFingerprintEditor(`保存失败：${questionFingerprintErrorMessage(error)}`, "error");
   } finally {
     button.disabled = false;
     button.textContent = "保存正式指纹";
+    setQuestionReviewBusy(false);
   }
 }
 
 function resetQuestionForm() {
+  questionCatalogAnchorLoadSequence += 1;
+  questionCatalogAnchorLoadState = "idle";
+  questionCatalogAnchorTextbooks = [];
+  questionCatalogAnchorOriginal = null;
   document.querySelector("#question-form").reset();
   resetQuestionFingerprintState();
   setAnswerRichEditorValue(document.querySelector("#question-reference-answer-editor"), "");
@@ -4057,10 +5960,13 @@ function resetQuestionForm() {
   document.querySelector("#question-id").value = "";
   document.querySelector("#question-max-score").value = "2";
   document.querySelector("#question-difficulty-score").value = "50";
-  document.querySelector("#question-chapter").value = "未归类章节";
-  document.querySelector("#question-knowledge-points").value = "未归类知识点";
-  document.querySelector("#question-primary-knowledge-point").value = "未归类知识点";
+  // 分类字段留空就是"待归类"：不再预填「未归类章节 / 未归类知识点」占位串。
+  // 占位串会被当成真实归类存下去，既污染检索又让"待归类"无法派生（产品口径：不伪造分类）。
+  document.querySelector("#question-chapter").value = "";
+  document.querySelector("#question-knowledge-points").value = "";
+  document.querySelector("#question-primary-knowledge-point").value = "";
   document.querySelector("#question-sub-knowledge-points").value = "";
+  syncQuestionClassificationFields();
   document.querySelector("#question-knowledge-depth-score").value = "";
   document.querySelector("#question-content-obscurity-score").value = "";
   document.querySelector("#question-difficulty-manual").checked = false;
@@ -4073,10 +5979,11 @@ function resetQuestionForm() {
   document.querySelector("#question-material").value = "";
   document.querySelector("#question-material-group").value = "";
   document.querySelector("#question-uses-shared-material").checked = false;
-  document.querySelector("#question-response-mode").value = "text";
   document.querySelector("#question-annotation-text").value = "";
   document.querySelectorAll("[data-question-exam-tag]").forEach((input) => { input.checked = input.value === "insert"; });
   document.querySelector("#question-editor-title").textContent = "录入平台题目";
+  document.querySelector("#question-editor-version-status").textContent = "新题 · 待保存";
+  document.querySelector("#question-answer-state").textContent = "待核对";
   document.querySelector("#save-question").textContent = "保存题目";
   document.querySelector("#question-scoring-structure").hidden = true;
   document.querySelector("#question-scoring-structure").innerHTML = "";
@@ -4087,6 +5994,10 @@ function resetQuestionForm() {
   document.querySelector("#question-family-membership-add").hidden = true;
   document.querySelector("#question-family-membership-count").textContent = "";
   document.querySelector("#question-family-membership-list").innerHTML = "";
+  document.querySelector("#question-family-set-attribution-list").textContent = "未关联题族集";
+  setQuestionEditorSectionTab("training");
+  document.querySelector("#question-ai-answer-panel").open = false;
+  document.querySelector("#question-community-answer-panel").open = false;
   document.querySelector("#question-fingerprint-action").value = "";
   document.querySelector("#question-fingerprint-core").innerHTML = "";
   document.querySelector("#question-fingerprint-required").innerHTML = "";
@@ -4105,13 +6016,13 @@ async function openQuestionEditor(questionId = "", options = {}) {
   await loadQuestionCatalog();
   resetQuestionForm();
   state.questionEditorReturnToExam = options.returnToExam === true;
-  let question = questionId ? (state.questions.find((item) => item.id === questionId) || state.questionPool.find((item) => item.id === questionId)) : null;
-  if (questionId) {
+  let question = options.question || (questionId ? (state.questions.find((item) => item.id === questionId) || state.questionPool.find((item) => item.id === questionId)) : null);
+  if (questionId && !options.question) {
     try {
       const detail = await requestJson(`/api/admin/questions/${encodeURIComponent(questionId)}`);
       question = detail.question || question;
     } catch (error) {
-      if (!question) throw error;
+      throw error;
     }
   }
   if (question) {
@@ -4132,14 +6043,15 @@ async function openQuestionEditor(questionId = "", options = {}) {
     document.querySelector("#question-content-obscurity-score").value = question.contentObscurityScore || "";
     document.querySelector("#question-difficulty-manual").checked = question.difficultyAssessment?.source === "manual" && question.difficultyAssessment?.status === "confirmed";
     syncQuestionDifficultyMode();
-    document.querySelector("#question-chapter").value = question.chapter || "未归类章节";
+    document.querySelector("#question-chapter").value = question.chapter || "";
     document.querySelector("#question-knowledge-points").value = (Array.isArray(question.knowledgePoints)
       ? question.knowledgePoints
-      : [question.knowledgePoints]).map((value) => String(value || "").trim()).filter(Boolean).join("，") || "未归类知识点";
-    document.querySelector("#question-primary-knowledge-point").value = question.primaryKnowledgePoint || "未归类知识点";
+      : [question.knowledgePoints]).map((value) => String(value || "").trim()).filter(Boolean).join("，");
+    document.querySelector("#question-primary-knowledge-point").value = question.primaryKnowledgePoint || "";
     document.querySelector("#question-sub-knowledge-points").value = (Array.isArray(question.subKnowledgePoints)
       ? question.subKnowledgePoints
       : [question.subKnowledgePoints]).map((value) => String(value || "").trim()).filter(Boolean).join("，");
+    syncQuestionClassificationFields();
     document.querySelector("#question-stem").value = question.stem;
     document.querySelector("#question-options").value = question.options.map((option) => `${option.key}. ${option.text}`).join("\n");
     document.querySelector("#question-correct-answer").value = question.correctAnswer.join(",");
@@ -4152,7 +6064,6 @@ async function openQuestionEditor(questionId = "", options = {}) {
     document.querySelector("#question-material").value = question.material || "";
     document.querySelector("#question-material-group").value = question.materialGroupId || "";
     document.querySelector("#question-uses-shared-material").checked = question.usesSharedMaterial !== false && Boolean(question.materialGroupId);
-    document.querySelector("#question-response-mode").value = question.responseMode === "annotation" ? "annotation" : "text";
     document.querySelector("#question-annotation-text").value = question.annotationText || "";
     const examTags = new Set(Array.isArray(question.examTags) ? question.examTags : []);
     if (!examTags.size && question.examTrack === "upgrade") examTags.add("insert");
@@ -4170,6 +6081,7 @@ async function openQuestionEditor(questionId = "", options = {}) {
     document.querySelector("#preview-answer").checked = question.freePreview?.answer === true;
     document.querySelector("#preview-analysis").checked = question.freePreview?.analysis === true;
     document.querySelector("#question-editor-title").textContent = `编辑题目 · v${question.version}`;
+    syncQuestionEditorMeta(question);
     document.querySelector("#save-question").textContent = "保存新版本";
     const memberships = Array.isArray(question.familyMemberships) ? question.familyMemberships : [];
     state.questionMembershipDraft = normalizeQuestionMembershipDraft(memberships);
@@ -4191,18 +6103,34 @@ async function openQuestionEditor(questionId = "", options = {}) {
     document.querySelector("#question-scoring-points-editor"),
     document.querySelector("#question-scoring-points").value,
   );
+  syncQuestionOptionalAnswerPanels();
+  syncQuestionEditorMeta(question);
+  questionCatalogAnchorOriginal = question ? { id: question.id, bookId: question.bookId, chapter: question.chapter, version: question.version } : null;
+  await loadQuestionCatalogAnchors();
   await loadQuestionFingerprintEditor(question);
+  await assessmentModeUi().loadQuestion(question);
   await loadQuestionMembershipCatalog(document.querySelector("#question-book").value);
   state.questionEditorContentDirty = false;
   renderQuestionFingerprintEditor();
-  document.querySelector("#question-editor-dialog").showModal();
+  if (!document.querySelector("#question-editor-dialog").open) document.querySelector("#question-editor-dialog").showModal();
 }
 
 function closeQuestionEditor() {
+  const hasReviewSession = Boolean(questionReview);
+  if (hasReviewSession && !closeQuestionReview()) return false;
+  if (!hasReviewSession && !questionEditorDiscardChanges()) return false;
   const dialog = document.querySelector("#question-editor-dialog");
   if (dialog.open) dialog.close();
   resetQuestionForm();
   state.questionEditorReturnToExam = false;
+  return true;
+}
+
+async function viewQuestionKnowledgeDossiers() {
+  if (questionReview?.busy) return;
+  if (!closeQuestionEditor()) return;
+  await openView("题库管理");
+  setQuestionLibraryTab("dossiers");
 }
 
 function parseQuestionOptions(value) {
@@ -4225,7 +6153,7 @@ function referenceAnswerFromVariants(answerSource, answerVariants) {
 
 function questionFormPayload() {
   const questionId = document.querySelector("#question-id").value;
-  const original = state.questions.find((item) => item.id === questionId) || state.questionPool.find((item) => item.id === questionId);
+  const original = (questionReview?.id === questionId ? questionReview.item.question : null) || state.questions.find((item) => item.id === questionId) || state.questionPool.find((item) => item.id === questionId);
   const usesSharedMaterial = document.querySelector("#question-uses-shared-material").checked;
   const manualDifficulty = document.querySelector("#question-difficulty-manual").checked;
   syncAnswerRichEditor(document.querySelector("#question-reference-answer-editor"));
@@ -4248,6 +6176,7 @@ function questionFormPayload() {
     document.querySelector("#hide-community-answer").checked && "community",
   ].filter(Boolean);
   return {
+    ...questionCatalogAnchorPayload(),
     library: "official",
     subjectId: document.querySelector("#question-subject").value,
     bookId: document.querySelector("#question-book").value,
@@ -4296,7 +6225,7 @@ function questionFormPayload() {
     material: document.querySelector("#question-material").value,
     materialGroupId: usesSharedMaterial ? document.querySelector("#question-material-group").value : "",
     usesSharedMaterial,
-    responseMode: document.querySelector("#question-response-mode").value,
+    responseMode: "text",
     annotationText: document.querySelector("#question-annotation-text").value,
     answerReviewStatus: document.querySelector("#question-answer-review-status").value,
     answerVerified: document.querySelector("#question-answer-review-status").value === "verified",
@@ -4310,6 +6239,86 @@ function questionFormPayload() {
     },
     changeNote: document.querySelector("#question-change-note").value,
   };
+}
+
+function setAnswerSupplementStatus(message = "", tone = "") {
+  const element = document.querySelector("#question-ai-supplement-status");
+  if (!element) return;
+  element.hidden = !message;
+  element.className = `answer-ai-supplement-status${tone ? ` ${tone}` : ""}`;
+  element.textContent = message;
+}
+
+// 「AI 补充答案 / 得分点」（2026-10-10 产品负责人确认三条）：
+// ①只把 AI 结果填进表单，**不写库** —— 人工核对后点「保存新版本」才入库（手册 §3.4「AI 建议、人工裁决」）；
+// ②只填空缺，已有内容一律不动，并在回执里说明跳过了哪些；
+// ③客观题只补正确答案与解析，不写结构化得分点（该字段只对主观题显示）。
+async function requestQuestionAiAnswerSupplement(button) {
+  const questionId = document.querySelector("#question-id").value;
+  if (!questionId) {
+    setAnswerSupplementStatus("请先保存本题，再使用 AI 补充", "error");
+    return;
+  }
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "生成中…";
+  setAnswerSupplementStatus("正在生成候选答案与得分点…");
+  try {
+    const payload = await requestJson(`/api/admin/questions/${encodeURIComponent(questionId)}/ai-supplement-answer`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    const supplement = payload.supplement || {};
+    const filled = [];
+    const skipped = [];
+    // ① 客观题：正确答案（已有内容不动）
+    if (Array.isArray(supplement.correctAnswer) && supplement.correctAnswer.length) {
+      const field = document.querySelector("#question-correct-answer");
+      if (String(field.value || "").trim()) skipped.push("正确答案");
+      else {
+        field.value = supplement.correctAnswer.join(",");
+        filled.push("正确答案");
+      }
+    }
+    // ② AI 答案（编辑器里的富文本，空才算空缺）
+    const aiAnswerEditor = document.querySelector("#question-ai-answer-editor");
+    const aiAnswerText = String(document.querySelector("#question-ai-answer").value || "").trim()
+      || String(aiAnswerEditor.textContent || "").trim();
+    if (String(supplement.referenceAnswer || "").trim()) {
+      if (aiAnswerText) skipped.push("AI 答案");
+      else {
+        setAnswerRichEditorValue(aiAnswerEditor, String(supplement.referenceAnswer).trim());
+        document.querySelector("#question-ai-answer-panel").open = true;
+        filled.push("AI 答案");
+      }
+    }
+    // ③ 结构化得分点（客观题不产出；主观题已有内容不动）
+    const points = Array.isArray(supplement.scoringPoints) ? supplement.scoringPoints : [];
+    if (points.length) {
+      const scoringEditor = document.querySelector("#question-scoring-points-editor");
+      const scoringText = String(document.querySelector("#question-scoring-points").value || "").trim()
+        || String(scoringEditor.textContent || "").trim();
+      if (scoringText) skipped.push("结构化得分点");
+      else {
+        setAnswerRichEditorValue(scoringEditor, scoringPointsText(points));
+        filled.push("结构化得分点");
+      }
+    }
+    const modelText = payload.supplement && payload.supplement.model ? ` · ${payload.supplement.model}` : "";
+    if (!filled.length) {
+      setAnswerSupplementStatus(`AI 已生成，但没有可填的空缺字段（${skipped.join("、") || "无"}已有内容）${modelText}`, "");
+    } else {
+      const skippedText = skipped.length ? `；${skipped.join("、")}已有内容，未覆盖` : "";
+      setAnswerSupplementStatus(`已填入${filled.join("、")}${skippedText}${modelText}。核对后点「保存新版本」才会入库`, "success");
+    }
+  } catch (error) {
+    setAnswerSupplementStatus(`AI 补充失败：${friendlyError(error)}`, "error");
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
 }
 
 async function openQuestionVersions(questionId) {
@@ -4388,13 +6397,30 @@ B. 以北方语音为标准音，以北京话为基础方言
 4 | 说明现代白话文语法规范
 来源：《现代汉语（增订七版）》上册，绪论`;
 
+// 上次同步到导入面板的教材 id（同上：识别"教材真的换了"，换教材即清掉旧教材的默认章节）。
+let questionImportBookId = "";
+
+// 导入面板的默认书籍：首项「暂不指定教材」（值为空字符串），且**默认就是它**——
+// 默认书籍会一次性套用到整批题目上，预选一本真教材等于替操作者做了归属决定；
+// 留空时整批标记为「待归类」，导入后可在完善题目里按批次补归属（DEC-093）。
 function syncImportBooks(selectedBookId = "") {
   if (!state.questionCatalog) return;
   const subjectId = document.querySelector("#import-subject").value;
   const books = state.questionCatalog.books.filter((book) => book.subjectId === subjectId);
   const select = document.querySelector("#import-book");
-  select.innerHTML = books.map((book) => `<option value="${escapeHtml(book.id)}">${escapeHtml(`${book.title}${book.volume ? ` · ${book.volume}` : ""}`)}</option>`).join("");
-  if (books.some((book) => book.id === selectedBookId)) select.value = selectedBookId;
+  select.innerHTML = [
+    '<option value="">（暂不指定教材 · 待归类）</option>',
+    ...books.map((book) => `<option value="${escapeHtml(book.id)}">${escapeHtml(`${book.title}${book.volume ? ` · ${book.volume}` : ""}`)}</option>`),
+  ].join("");
+  select.value = books.some((book) => book.id === selectedBookId) ? selectedBookId : "";
+  const chapter = document.querySelector("#import-chapter");
+  // 换教材（含换科目导致教材跟着换）：旧教材的默认章节不再适用，当场清空。
+  if (questionImportBookId && select.value !== questionImportBookId) chapter.value = "";
+  questionImportBookId = select.value;
+  // 未指定教材时不得留下章节（服务端 question_classification_requires_book 兜底）：
+  // 禁用而不是静默丢弃，让操作者看见"先选教材才能填默认章节"。
+  chapter.disabled = !select.value;
+  chapter.placeholder = select.value ? "文本未标章节时使用" : "先选默认书籍，或留空＝整批待归类";
 }
 
 function resetQuestionImport() {
@@ -4405,6 +6431,7 @@ function resetQuestionImport() {
   compareDialog.removeAttribute("data-question-index");
   document.querySelector("#question-import-compare-body").innerHTML = "";
   state.questionImportPreview = null;
+  resetQuestionImportVerdicts();
   document.querySelector("#question-import-text").value = "";
   document.querySelector("#question-text-file").value = "";
   document.querySelector("#question-file-name").textContent = "未选择文件";
@@ -4425,6 +6452,66 @@ async function prepareQuestionImportForm() {
   syncImportBooks();
 }
 
+// 人工裁决（产品负责人 2026-09-22 定稿）：疑似重复只是提示，操作者在对比弹窗里逐行定夺：
+//   confirmed ＝「确认是同一道题」→ 该行按判重处理（**不重复入库**），随导入请求的 decisions 提交；
+//   dismissed ＝「确认不是重复」→ 只影响本次预览的提示显示，照常入库，但同样随请求留痕。
+// 两条结论都只作用于**本次预览**（导入前可撤销、不写题库）；真正写库的只有 confirmed 行上的「择优补充」。
+function questionImportVerdictOf(index) {
+  const key = Number(index);
+  if ((state.questionImportConfirmedIndexes || []).includes(key)) return "confirmed";
+  if ((state.questionImportDismissedIndexes || []).includes(key)) return "dismissed";
+  return null;
+}
+
+function setQuestionImportVerdict(index, verdict) {
+  const key = Number(index);
+  state.questionImportConfirmedIndexes = (state.questionImportConfirmedIndexes || []).filter((item) => item !== key);
+  state.questionImportDismissedIndexes = (state.questionImportDismissedIndexes || []).filter((item) => item !== key);
+  if (verdict === "confirmed") state.questionImportConfirmedIndexes.push(key);
+  if (verdict === "dismissed") state.questionImportDismissedIndexes.push(key);
+}
+
+// 写后回显（产品负责人 2026-09-23 第八次反馈，原话：「替换后能不能在列表上和按钮上告诉我，已替换，
+// 而不是等我再次替换再告诉我内容一致」）。他点完「替换所选」后在弹窗里只看到一句「两版内容一致，未改动」
+// ——刚才那次成功的写入没有任何痕迹，按钮还停在「替换所选（1）」，于是人会以为没生效、再点一次。
+// 现在每次写入都在**预览行的数据里**留一条记录，列表行、底部按钮、写入状态行三处一起回显。
+const ABSORB_WRITE_LABELS = { correctAnswer: "正确答案", referenceAnswer: "参考答案", sourceLabel: "来源", sourcePage: "来源页码" };
+
+function absorbWriteFieldLabel(field) {
+  // 合并两版会写成 "referenceAnswer(merged)" 这类带后缀的名字，后缀要原样留着（它是"合并"这层信息）
+  return String(field).replace(/^(\w+)(\(.*\))?$/, (_all, name, suffix) => `${ABSORB_WRITE_LABELS[name] || name}${suffix || ""}`);
+}
+
+function questionImportAbsorbWriteOf(item) {
+  const writes = Array.isArray(item?.absorbWrites) ? item.absorbWrites : [];
+  if (!writes.length) return null;
+  const last = writes[writes.length - 1];
+  const labels = (last.labels || []).join("、") || "字段";
+  const verb = last.mode === "merge" ? "已合并" : (last.mode === "fill" ? "已补充" : "已替换");
+  const review = last.answerReviewStatus === "verified" ? "已核对" : "待核对";
+  return {
+    mode: last.mode,
+    labels,
+    text: `${verb} ${labels}`,
+    chip: `${verb} ${labels}`,
+    title: `${verb} ${labels}（写入版本 v${last.version}，答案状态：${review}）；同一个字段不用再写一次`,
+  };
+}
+
+function recordQuestionImportAbsorbWrite(item, { mode, fields, version, answerReviewStatus }) {
+  if (!item) return;
+  const labels = (fields || []).map((field) => absorbWriteFieldLabel(field));
+  item.absorbWrites = [...(Array.isArray(item.absorbWrites) ? item.absorbWrites : []), {
+    mode, fields: [...(fields || [])], labels, version, answerReviewStatus,
+  }];
+  item.absorbLastMode = mode;
+}
+
+function resetQuestionImportVerdicts() {
+  state.questionImportConfirmedIndexes = [];
+  state.questionImportDismissedIndexes = [];
+}
+
 function questionImportRequest(dryRun) {
   return {
     text: document.querySelector("#question-import-text").value,
@@ -4434,10 +6521,33 @@ function questionImportRequest(dryRun) {
       bookId: document.querySelector("#import-book").value,
       chapter: document.querySelector("#import-chapter").value,
     },
+    // 人工裁决必须跟着"导入"这一次请求走：导入接口是按文本重新解析的，前端本地的标记服务端看不见。
+    // 只在真正提交时带（dry run 不带，保持预览请求幂等）。服务端只认它自己标过疑似的行。
+    ...(dryRun ? {} : {
+      decisions: {
+        confirmedDuplicateIndexes: state.questionImportConfirmedIndexes || [],
+        dismissedSuspicionIndexes: state.questionImportDismissedIndexes || [],
+      },
+    }),
   };
 }
 
 function questionImportDuplicateContext(item) {
+  // 疑似重复（DEC-094 ②）也要能对比，称谓按"比较对象在哪"给：本批内 → 本批第 N 道，题库已有 → 平台/公共题库版本。
+  if (item?.suspicion && !item.duplicate) {
+    if (item.suspicion.scope === "batch") {
+      const peerNumber = Number.isInteger(item.suspicion.questionIndex) ? item.suspicion.questionIndex + 1 : null;
+      return {
+        kind: "batch",
+        label: "本批疑似",
+        versionLabel: peerNumber ? `本批第 ${peerNumber} 道` : "本批较早题目",
+      };
+    }
+    if (item?.suspicion?.comparison?.existing?.library === "public") {
+      return { kind: "public", label: "公共已有", versionLabel: "公共题库版本" };
+    }
+    return { kind: "official", label: "平台已有", versionLabel: "平台题库版本" };
+  }
   if (item?.duplicateScope === "batch") {
     const duplicateNumber = Number.isInteger(item.duplicateIndex) ? item.duplicateIndex + 1 : null;
     return {
@@ -4461,16 +6571,98 @@ function renderQuestionImportPreview(payload) {
   const storedDuplicateCount = Number.isFinite(Number(payload.storedDuplicateCount))
     ? Number(payload.storedDuplicateCount)
     : Math.max(0, Number(payload.duplicateCount || 0) - batchDuplicateCount);
-  document.querySelector("#question-import-preview-title").textContent = `识别 ${payload.total} 道 · 可导入 ${payload.validCount} 道 · 题库已有 ${storedDuplicateCount} 道 · 本批重复 ${batchDuplicateCount} 道 · 错误 ${payload.errorCount} 道`;
-  const resultOrder = (item) => (item.duplicate ? 2 : (item.valid ? 1 : 0));
-  const sortedItems = payload.items.slice().sort((left, right) => resultOrder(left) - resultOrder(right) || left.index - right.index);
+  // 待归类是提示，不是错误：这类题照样可导入，但要在预览里跟"需修正"分开显示。
+  const pendingCount = Number.isFinite(Number(payload.pendingClassificationCount))
+    ? Number(payload.pendingClassificationCount)
+    : payload.items.filter((item) => item.valid && item.needsClassification).length;
+  const pendingSummary = pendingCount ? ` · 待归类 ${pendingCount} 道` : "";
+  // 疑似重复是提示而不是错误（DEC-094 ②）：单列计数，避免和"题库已有"混在一起。
+  const suspectedCount = Number.isFinite(Number(payload.suspectedCount))
+    ? Number(payload.suspectedCount)
+    : payload.items.filter((item) => item.valid && item.suspicion).length;
+  // 人工裁决要立刻反映在计数里（产品负责人 2026-09-22）：确认重复的行不再算"可导入"，
+  // 也不再算"待处理的疑似"——否则他明明处理过了，标题上的数字却一动不动。
+  const confirmedCount = payload.items.filter((item) => questionImportVerdictOf(item.index) === "confirmed").length;
+  const dismissedCount = payload.items.filter((item) => questionImportVerdictOf(item.index) === "dismissed").length;
+  const effectiveValidCount = Math.max(0, Number(payload.validCount || 0) - confirmedCount);
+  const openSuspectCount = Math.max(0, suspectedCount - confirmedCount);
+  const suspectedSummary = openSuspectCount ? ` · 疑似重复 ${openSuspectCount} 道` : "";
+  const verdictSummary = confirmedCount || dismissedCount
+    ? `${confirmedCount ? ` · 已确认重复 ${confirmedCount} 道（不导入）` : ""}${dismissedCount ? ` · 已确认不是重复 ${dismissedCount} 道` : ""}`
+    : "";
+  document.querySelector("#question-import-preview-title").textContent = `识别 ${payload.total} 道 · 可导入 ${effectiveValidCount} 道${pendingSummary} · 题库已有 ${storedDuplicateCount} 道 · 本批重复 ${batchDuplicateCount} 道${suspectedSummary}${verdictSummary} · 错误 ${payload.errorCount} 道`;
+  // 「只看疑似重复」：真实录入稿 416 条可导入里分散着 56 条疑似，靠肉眼扫列表找不到（2026-09-22 产品负责人反馈）。
+  const suspectFilterButton = document.querySelector("#question-import-preview-filter-suspect");
+  const suspectFilterActive = state.questionImportPreviewFilter === "suspected" && openSuspectCount > 0;
+  if (suspectFilterButton) {
+    suspectFilterButton.hidden = openSuspectCount < 1;
+    suspectFilterButton.textContent = `只看疑似重复（${openSuspectCount}）`;
+    suspectFilterButton.setAttribute("aria-pressed", suspectFilterActive ? "true" : "false");
+    suspectFilterButton.classList.toggle("is-active", suspectFilterActive);
+  }
+  // 排序（2026-09-22 产品负责人要求「疑似重复聚到一起」）：需修正 → 可导入 → 疑似重复 → 事实相同/本批重复。
+  // 疑似行不再散落在 416 条干净可导入题里，而是聚在列表末尾、紧挨着认过的重复题，逐条对比时不用来回翻。
+  const resultOrder = (item) => ((item.duplicate || questionImportVerdictOf(item.index) === "confirmed") ? 3 : (item.valid ? (item.suspicion && questionImportVerdictOf(item.index) !== "dismissed" ? 2 : 1) : 0));
+  const visibleItems = suspectFilterActive
+    ? payload.items.filter((item) => item.valid && item.suspicion && questionImportVerdictOf(item.index) !== "confirmed")
+    : payload.items;
+  const sortedItems = visibleItems.slice().sort((left, right) => resultOrder(left) - resultOrder(right) || left.index - right.index);
   document.querySelector("#question-import-preview-list").innerHTML = sortedItems.map((item) => {
     const hasSourceRange = Number.isInteger(item.sourceRange?.start) && Number.isInteger(item.sourceRange?.end);
+    // 人工裁决（产品负责人 2026-09-22 定稿）：确认过"就是同一道题"的行按判重处理（不导入），
+    // 确认过"不是重复"的行恢复普通可导入、不再挂疑似色片。
+    const verdict = questionImportVerdictOf(item.index);
+    const verdictConfirmed = verdict === "confirmed";
+    const verdictDismissed = verdict === "dismissed";
     const canLocate = !item.duplicate && hasSourceRange;
-    const canCompare = item.duplicate && item.comparison?.incoming && item.comparison?.existing;
+    const canCompare = (item.duplicate || verdictConfirmed) && item.comparison?.incoming && item.comparison?.existing;
     const duplicateContext = questionImportDuplicateContext(item);
-    const resultLabel = item.duplicate ? duplicateContext.label : (item.valid ? "可导入" : "需修正");
-    const resultClass = item.duplicate ? `duplicate ${duplicateContext.kind}` : (item.valid ? "" : "error");
+    const pendingLabels = item.valid && item.needsClassification ? (item.classification?.missingLabels || []) : [];
+    const pendingClassification = pendingLabels.length ? `缺${pendingLabels.join("、")}` : "";
+    const suspicion = item.valid && !verdictConfirmed && !verdictDismissed ? item.suspicion : null;
+    const suspicionScore = suspicion ? Math.round(Number(suspicion.score || 0) * 100) : 0;
+    const suspicionScopeLabel = suspicion && suspicion.scope === "stored" ? "题库已有" : "本批";
+    // 提示依据（2026-09-22 第二次口径修订）：「选项与答案完全相同」这条强证据下相似度可能只有 36%，
+    // 色片写 36% 会让人以为"就这点像也算重复"，所以改成写字面依据。
+    const suspicionOptionsAnswer = Boolean(suspicion) && suspicion.reason === "options_answer";
+    // 疑似提示单独一个色片（DEC-094 ② 要求"显式提示 + 相似度"）：徽标列在 416 条待归类里全是琥珀色，
+    // 只把提示塞在右侧 meta 文字里等于看不见（2026-09-22 实测：56 条疑似在列表上无法分辨）。
+    // ② 还要求"给出可定位到既有题的入口"：色片本身就是那个入口——题库已有的题打开题目编辑器，
+    // 本批的相似行直接跳到列表里的那一行（同一批还没入库，只有行号可跳）。
+    // 预览接口不下发整题对象，批内相似行只能靠服务端给的序号跳（见 question-store.js 的 suspicion.questionIndex）。
+    const suspicionPeerIndex = suspicion && suspicion.scope === "batch" && Number.isInteger(suspicion.questionIndex)
+      ? suspicion.questionIndex
+      : -1;
+    const suspicionChip = suspicion
+      ? `<button type="button" class="question-import-suspect-chip" data-suspect-scope="${escapeHtml(String(suspicion.scope || ""))}" data-suspect-question-id="${escapeHtml(String(suspicion.questionId || ""))}" data-suspect-peer-index="${suspicionPeerIndex}" title="疑似与${suspicionScopeLabel}题重复：${suspicionOptionsAnswer ? `选项集合与正确答案完全相同${Number.isInteger(suspicion.commonRun) ? `，题干有 ${suspicion.commonRun} 字连续相同片段` : ""}（题干字面相似度 ${suspicionScore}%）` : `题干字面相似度 ${suspicionScore}%`}；只提示，不阻断导入 · 点击${suspicion.scope === "stored" ? "打开这道既有题" : (suspicionPeerIndex >= 0 ? `跳到本批第 ${suspicionPeerIndex + 1} 道` : "查看相似行")}">${suspicionOptionsAnswer ? "疑似重复 · 选项+答案相同" : `疑似${suspicionScopeLabel}题重复 ${suspicionScore}%`}</button>`
+      : "";
+    // 疑似重复的对比入口（2026-09-22 产品负责人定位置）：与"事实相同"那行同一个地方——右侧说明文字，
+    // 写成「疑似与{平台题库版本|本批第 N 道}重复 86% · 点击对比」并可点。**行本身仍然负责"点击定位"**
+    // （整行点击 → 跳到题目文本），所以两个入口不打架：色片=去哪看，右侧文字=逐字段比。
+    const canCompareSuspicion = Boolean(suspicion) && Boolean(item.comparison?.incoming && item.comparison?.existing);
+    const suspicionCompareAction = canCompareSuspicion
+      ? `<button type="button" class="question-import-meta-compare" data-suspect-compare-index="${item.index}" title="逐字段对比本行与${escapeHtml(duplicateContext.versionLabel)}（${suspicionOptionsAnswer ? "选项与答案完全相同" : `相似度 ${suspicionScore}%`}，只提示、不阻断导入）">疑似与${escapeHtml(duplicateContext.versionLabel)}重复${suspicionOptionsAnswer ? "（选项与答案相同）" : ` ${suspicionScore}%`} · 点击对比</button>`
+      : "";
+    // 已裁决的两行同样保留"点击对比"入口——他随时可以打开对完的那道题复核，也能在弹窗里撤销标记。
+    const verdictCompareAction = verdict
+      ? `<button type="button" class="question-import-meta-compare" data-suspect-compare-index="${item.index}" title="重新查看与${escapeHtml(duplicateContext.versionLabel)}的逐字段对照（${verdictConfirmed ? "你已确认这是同一道题，本行不导入；可在此撤销标记" : "你已确认这不是重复，本行照常导入；可在此撤销标记"}）">${verdictConfirmed ? `已确认与${escapeHtml(duplicateContext.versionLabel)}重复 · 不导入 · 点击复核` : "已确认不是重复 · 点击复核"}</button>`
+      : "";
+    const resultLabel = verdictConfirmed
+      ? "已确认重复 · 不导入"
+      : (item.duplicate
+        ? duplicateContext.label
+        : (item.valid ? (pendingClassification ? "可导入 · 待归类" : "可导入") : "需修正"));    const resultClass = verdictConfirmed
+      ? "confirmed-duplicate"
+      : (item.duplicate
+        ? `duplicate ${duplicateContext.kind}`
+        : (item.valid ? (pendingClassification ? "pending" : (suspicion ? "suspect" : "")) : "error"));
+    // 写后回显（2026-09-23 第八次反馈）：这一行被「替换所选/合并两版」写过之后，徽标列多一颗绿色色片、
+    // 右侧说明文字多一句「已替换 参考答案」，列表上不再需要点开弹窗才知道刚才写没写进去。
+    // （说明文字那半句要等 meta 算完才能拼——它俩是同一个 <span> 里的两段。）
+    const absorbWrite = questionImportAbsorbWriteOf(item);
+    const absorbChip = absorbWrite
+      ? `<span class="question-import-absorb-chip" title="${escapeHtml(absorbWrite.title)}">${escapeHtml(absorbWrite.chip)}</span>`
+      : "";
     let errorDescription = friendlyError(item.error);
     if (item.error === "question_choice_answer_invalid") {
       const optionKeys = item.details?.optionKeys || [];
@@ -4491,21 +6683,27 @@ function renderQuestionImportPreview(payload) {
       ? `data-source-start="${item.sourceRange.start}" data-source-end="${item.sourceRange.end}" data-question-index="${item.index}" role="button" tabindex="0" title="定位到题目文本"`
       : (canCompare ? `data-duplicate-index="${item.index}" data-question-index="${item.index}" role="button" tabindex="0" title="与${duplicateContext.versionLabel}对比"` : "");
     const interactionClass = canLocate ? "question-import-preview-item-fixable" : (canCompare ? "question-import-preview-item-comparable" : "");
+    const suspicionClass = `${suspicion ? "question-import-preview-item-suspect" : ""}${verdictConfirmed ? " question-import-preview-item-confirmed-duplicate" : ""}`;
     const scoringHint = item.valid && item.scoringPointStatus && !["not_required", "complete"].includes(item.scoringPointStatus)
       ? ` · ${scoringStructureLabel(item.scoringPointStatus, item.scoringPointCandidateCount)}`
       : "";
-    const meta = item.valid
-      ? `${item.typeLabel} · ${item.maxScore} 分${scoringHint}${canLocate ? " · 点击定位" : ""}`
-      : (item.duplicate ? (canCompare ? `与${duplicateContext.versionLabel}重复 · 点击对比` : `与${duplicateContext.versionLabel}重复`) : errorDescription);
+    const meta = verdictConfirmed
+      ? ""
+      : (item.valid
+        ? `${item.typeLabel} · ${item.maxScore} 分${scoringHint}${pendingClassification ? ` · ${pendingClassification}` : ""}${canLocate ? " · 点击定位" : ""}${(canCompareSuspicion || verdict) ? " · " : ""}`
+        : (item.duplicate ? (canCompare ? `与${duplicateContext.versionLabel}重复 · 点击对比` : `与${duplicateContext.versionLabel}重复`) : errorDescription));
+    // 已裁决的行 meta 本来就是空的（那段说明在右侧的「点击复核」按钮里），所以两种情况下都要带分隔符，
+    // 否则会读成「· 已替换 参考答案已确认与平台题库版本重复」。
+    const absorbMetaText = absorbWrite ? (meta ? ` · ${absorbWrite.text}` : `${absorbWrite.text} · `) : "";
     return `
-    <div class="question-import-preview-item ${interactionClass}" ${interactionAttributes}>
+    <div class="question-import-preview-item ${interactionClass} ${suspicionClass}" ${interactionAttributes}>
       <span class="question-import-index">#${item.index + 1}</span>
-      <span class="question-import-result ${resultClass}">${resultLabel}</span>
+      <span class="question-import-verdict"><span class="question-import-result ${resultClass}">${resultLabel}</span>${suspicionChip}${absorbChip}</span>
       <span class="question-import-stem">${escapeHtml(item.valid ? item.stem : (item.source?.stem || "未识别题干"))}</span>
-      <span class="question-import-meta">${escapeHtml(meta)}</span>
+      <span class="question-import-meta">${escapeHtml(meta + absorbMetaText)}${suspicionCompareAction}${verdictCompareAction}</span>
     </div>`;
   }).join("");
-  document.querySelector("#commit-question-import").disabled = payload.validCount < 1;
+  document.querySelector("#commit-question-import").disabled = effectiveValidCount < 1;
 }
 
 function comparisonQuestionValue(question, field) {
@@ -4546,26 +6744,343 @@ function openQuestionImportComparison(index) {
     normalizedComparisonValue(comparisonQuestionValue(incoming, field))
       !== normalizedComparisonValue(comparisonQuestionValue(existing, field))
   )).length;
-  document.querySelector("#question-import-compare-subtitle").textContent = differences
-    ? `第 ${item.index + 1} 道 · 与${duplicateContext.versionLabel}有 ${differences} 项差异`
-    : `第 ${item.index + 1} 道 · 与${duplicateContext.versionLabel}内容实质相同`;
   document.querySelector("#locate-question-import-compare").disabled = !(
     Number.isInteger(item.sourceRange?.start) && Number.isInteger(item.sourceRange?.end)
   );
-  document.querySelector("#question-import-compare-body").innerHTML = `
-    <div class="question-import-compare-head"><span>字段</span><strong>本次导入</strong><strong>${escapeHtml(duplicateContext.versionLabel)}</strong></div>
-    ${fields.map(([field, label]) => {
-      const incomingValue = comparisonQuestionValue(incoming, field);
-      const existingValue = comparisonQuestionValue(existing, field);
-      const different = normalizedComparisonValue(incomingValue) !== normalizedComparisonValue(existingValue);
+  // 择优补充（DEC-094 ③）：只有当本次导入稿与既有题**事实相同**（题型＋材料＋题干＋选项归一化后全一致）
+  // 才允许把空缺字段补进既有题；有差异时按"相似但不同题"处理，不做任何合并。
+  // 判据唯一在服务端：预览载荷里的 comparison.mergeable 由 questionFingerprint 直接比对得出，
+  // 界面不再自己比较字段——那会和服务端的归一化口径分裂（实测：题干多一个「（　）。」被判成"有差异"）。
+  // 服务端在 fillMissingFields 里还会再核一次（question_merge_requires_identical），这里是前置诚实提示。
+  const mergeButton = document.querySelector("#merge-question-import-duplicate");
+  const mergeable = item.comparison?.mergeable === true;
+  // 疑似重复的对比（2026-09-22 产品负责人要求"疑似重复要给比较"）：同一套逐字段表格，
+  // 但**不提供**择优补充（DEC-094 ③ 明确疑似重复不提供），并把"这是提示不是判重"写在副标题里。
+  const suspicion = item.suspicion && !item.duplicate ? item.suspicion : null;
+  // ── 人工裁决（产品负责人 2026-09-22 定稿）────────────────────────────────────
+  // 对比完必须有落点：确认「就是同一道题」（该行不导入）或确认「不是重复」（照常导入）。
+  // 两个动作都只作用于本次预览、导入前可撤销；撤销后回到"待你定夺"的疑似状态。
+  const verdict = questionImportVerdictOf(item.index);
+  const verdictConfirmed = verdict === "confirmed";
+  const verdictDismissed = verdict === "dismissed";
+  const confirmDuplicateButton = document.querySelector("#confirm-question-import-duplicate");
+  const dismissDuplicateButton = document.querySelector("#dismiss-question-import-duplicate");
+  const undoVerdictButton = document.querySelector("#undo-question-import-verdict");
+  const isSuspicion = Boolean(suspicion);
+  const verdictAttribute = isSuspicion ? String(item.index) : "";
+  for (const [element, visible] of [
+    [confirmDuplicateButton, isSuspicion && !verdict],
+    [dismissDuplicateButton, isSuspicion && !verdict],
+    [undoVerdictButton, isSuspicion && Boolean(verdict)],
+  ]) {
+    if (!element) continue;
+    element.hidden = !visible;
+    element.dataset.verdictIndex = verdictAttribute;
+  }
+  // 「择优补充」只留给**事实相同**的行（指纹一致、只差填空；它不覆盖非空字段，是那道题的"补全"入口）。
+  // 【2026-09-23 00:5x 产品负责人原话：「这个择优补充才是最没用的按钮，可以去掉……虽然两者文字有所区别，
+  //   但无论是答案还是选项，意思是表述相同和相近，但左边的答案明显更好，不能靠文字一模一样来辨别是否是
+  //   同一道题」】——于是把它从疑似对比弹窗里整个撤掉：已人工确认「就是同一道题」的疑似行不再需要"只补
+  //   空缺"这个半吊子动作（他真机上那条两版都没有空缺字段，点下去只会回"未改动"），改为直接给他
+  //   「替换所选」／「合并两版」（把更好的那一版写进既有题）。在此之前这里还有一层 00:2x 的收紧
+  //   （confirmedAbsorbAllowed 要求 suspicion.reason === "options_answer"），那一层同样建立在"文字要一模一样"
+  //   上，已一并撤销：**判"是不是同一道题"的依据是人工确认，不是逐字相同**；服务端仍会独立重算
+  //   "这两版像到会被查重提示"（强证据或模糊判据任一成立）挡掉把内容写到无关题目上的情况。
+  const confirmedFillAllowed = verdictConfirmed && !mergeable && suspicion?.scope === "stored";
+  mergeButton.hidden = !mergeable;
+  mergeButton.dataset.operatorConfirmed = "";
+  // 提示依据（2026-09-22 第二次口径修订）：仅靠"字面相似度"时显示百分比；若是"选项与答案完全一致"这条
+  // 强证据（题干整句改写、相似度可能只有 36%），百分比会误导人，必须把依据写出来。
+  const optionsAnswerReason = Boolean(suspicion) && suspicion.reason === "options_answer";
+  // 写入授权（产品负责人 2026-09-22 第五次口径修订：「疑似重复也需要这种替换和合并」；2026-09-23 00:5x
+  // 第六次修订：撤掉"只补空缺"，已确认的疑似行直接用这两个动作）：
+  // 事实相同 → 指纹授权；已人工确认「就是同一道题」的疑似行（scope=stored）→ operator_confirmed_suspicion。
+  // 本批内的疑似（对照的是同一批还没入库的行）没有"既有题"可写，仍然一个写入入口都不给。
+  const confirmedAbsorbAllowed = confirmedFillAllowed;
+  const absorbAllowed = mergeable || confirmedAbsorbAllowed;
+  const similarity = suspicion ? `相似度 ${Math.round(Number(suspicion.score || 0) * 100)}%` : "";
+  const suspicionEvidence = optionsAnswerReason
+    ? `选项与答案完全相同${Number.isInteger(suspicion.commonRun) ? `，题干有 ${suspicion.commonRun} 字连续相同片段` : ""}（题干字面相似度 ${Math.round(Number(suspicion.score || 0) * 100)}%）`
+    : similarity;
+  document.querySelector("#question-import-compare-title").textContent = isSuspicion ? "疑似重复对比" : "重复题目对比";
+  document.querySelector("#question-import-compare-hint").innerHTML = verdictConfirmed
+    ? `你已确认这是<strong>同一道题</strong>：本行<strong>不导入</strong>。${confirmedFillAllowed
+      ? "在表格里勾选要写的字段，再用底部按钮写进既有题——<strong>替换所选</strong>／<strong>合并两版</strong>会覆盖非空字段（版本 +1、答案降「待核对」）。两版<strong>措辞不同不影响</strong>：判「是不是同一道题」看你的确认，不看文字是否一模一样。题干、选项、归属、分值这里改不了。"
+      : "本批内的这一行不会入库；同一批重复请直接用它对照的那一行。"}可「撤销标记」回到待定夺。`
+    : (verdictDismissed
+      ? "你已确认这<strong>不是重复</strong>：本行照常导入、不再提示。导入前可点「撤销标记」回到待定夺状态。"
+      : (isSuspicion
+        ? "疑似重复只是提示，不是判重：本行仍按可导入处理，不会自动合并、也不会被静默丢弃。请逐字段核对后给出结论——<strong>确认是同一道题</strong>（本行不导入），或<strong>确认不是重复</strong>（照常导入）。导入前都可撤销。"
+        : "择优补充只把既有题<strong>空缺</strong>的字段补进同一道题（版本 +1、保留原答案与审核记录、不覆盖非空字段）；归属（教材/章节/知识点）请用「批次补充归属」。"));
+  // 事实相同但仍有文本差异（如标点、括号、参考答案是否填写）时，必须说明为什么还能择优补充，
+  // 否则「有 3 项差异」和「择优补充到既有题」并排出现会让人以为判重出错。
+  document.querySelector("#question-import-compare-subtitle").textContent = verdictConfirmed
+    ? `第 ${item.index + 1} 道 · 已确认与${duplicateContext.versionLabel}是同一道题 · 本行不导入${confirmedFillAllowed ? " · 可在表格里选字段替换/合并（覆盖非空字段）" : ""}`
+    : (verdictDismissed
+      ? `第 ${item.index + 1} 道 · 你已确认不是重复 · 照常导入（逐字段对照共 ${differences} 项差异）`
+      : (isSuspicion
+        ? `第 ${item.index + 1} 道 · 疑似与${duplicateContext.versionLabel}重复（${suspicionEvidence}）· 逐字段对照共 ${differences} 项差异 · 只提示，不阻断导入`
+        : (mergeable
+          ? `第 ${item.index + 1} 道 · 与${duplicateContext.versionLabel}有 ${differences} 项文本差异；判重看归一化后的事实（题型＋材料＋题干＋选项），事实相同才提供择优补充`
+          : (differences
+            ? `第 ${item.index + 1} 道 · 与${duplicateContext.versionLabel}有 ${differences} 项差异`
+            : `第 ${item.index + 1} 道 · 与${duplicateContext.versionLabel}内容实质相同`))));
+  mergeButton.dataset.duplicateIndex = item.index;
+  mergeButton.dataset.existingId = existing.id;
+  // 按钮文案（产品负责人 2026-09-22 第六次反馈「优化下页面的按钮，简洁文案」）：标签压到 4～6 字、一行放得下，
+  // 原来写在标签里的限定条件（"只补空缺""用导入稿"）挪到 title 提示里，信息不丢、只换位置。
+  // 2026-09-23 00:5x：这颗按钮现在**只服务"事实相同"的行**（疑似行改用两个覆盖动作，见上），
+  // 所以标签统一为 4 字的「择优补充」，限定条件仍旧挂在 title 上。
+  mergeButton.textContent = "择优补充";
+  mergeButton.title = "只把既有题空缺的字段补进去，不覆盖非空字段（事实相同的重复稿才用这个）";
+  // 处置能力开关（事实相同，或已人工确认为同一道题的疑似行）：底部两个按钮的可见性由它统一控制
+  dialog.dataset.absorbEnabled = absorbAllowed ? "true" : "";
+  // 写入时随身携带的授权依据：事实相同＝identical_fingerprint；已人工确认的疑似＝operator_confirmed_suspicion
+  dialog.dataset.absorbAuthorization = confirmedAbsorbAllowed ? "operator_confirmed_suspicion" : "identical_fingerprint";
+  const compareRows = fields.map(([field, label]) => {
+    const incomingValue = comparisonQuestionValue(incoming, field);
+    const existingValue = comparisonQuestionValue(existing, field);
+    const different = normalizedComparisonValue(incomingValue) !== normalizedComparisonValue(existingValue);
+    // 可勾选的字段＝服务端 absorbComparisonFields 的白名单字段（正确答案／参考答案／来源名＋页码）。
+    // 其它字段（题干、选项、归属、分值）在这里改不了：改题干是"换一道题"，归属走「批次补充归属」（DEC-093），
+    // 都必须在题目管理里有版本与审核记录的入口里做。
+    const pickable = absorbAllowed && different && QUESTION_IMPORT_ABSORB_FIELDS.has(field);
+    if (!pickable) {
       return `<div class="question-import-compare-row ${different ? "is-different" : ""}"><strong>${label}</strong><div>${escapeHtml(incomingValue)}</div><div>${escapeHtml(existingValue)}</div></div>`;
-    }).join("")}`;
+    }
+    // 选择留在表格里（产品负责人 2026-09-22：勾选或点格子选中"用导入稿这版"），操作放到底部按钮。
+    return `<div class="question-import-compare-row is-different is-pickable" data-absorb-row="${field}">
+        <strong><label class="question-import-compare-pick"><input type="checkbox" data-absorb-field="${field}"><span>${label}</span></label></strong>
+        <div class="question-import-compare-cell" data-absorb-cell="${field}" role="button" tabindex="0" title="点这一格＝${label}用导入稿这版（也可勾左边的方框）">${escapeHtml(incomingValue)}</div>
+        <div>${escapeHtml(existingValue)}</div>
+      </div>`;
+  }).join("");
+  const pickHint = absorbAllowed && /is-pickable/.test(compareRows)
+    ? `<p class="question-import-compare-pick-hint">${confirmedFillAllowed ? "你已确认是<strong>同一道题</strong>，两版不一样的字段也可以写：" : ""}勾选（或点「本次导入」那一格）要写进既有题的字段，再用底部 <strong>替换所选</strong>／<strong>合并两版</strong> 决定写法。</p>`
+    : "";
+  document.querySelector("#question-import-compare-body").innerHTML = `${pickHint}
+    <div class="question-import-compare-head"><span>字段</span><strong>本次导入</strong><strong>${escapeHtml(duplicateContext.versionLabel)}</strong></div>
+    ${compareRows}`;
+  const writeStatus = document.querySelector("#question-import-compare-write-status");
+  if (writeStatus) writeStatus.textContent = "";
+  syncQuestionImportAbsorbActions();
   dialog.showModal();
+}
+
+// ── 两版不一样时的处置：选择留在表格里、操作放到底部按钮（产品负责人 2026-09-22 第二次定稿）──────
+// 上一版把"勾选框 + 两版长文 + 覆盖/合并单选 + 写入按钮"堆成一块独立面板（绿框），与上面刚看过的
+// 表格内容重复一遍，他明确不喜欢。现在：差异行的「本次导入」格可点、行首可勾选（选中即高亮），
+// 底部只留两个动作按钮——「替换所选」与「合并两版」（产品负责人 2026-09-22 第六次反馈压到 4～6 字）；动作集合与服务端白名单一致。
+const QUESTION_IMPORT_ABSORB_FIELDS = new Set(["correctAnswer", "referenceAnswer", "source"]);
+
+// 勾选 → 服务端字段名（「来源」一格对应来源名 + 页码两个字段，与服务端 fillMissingFields 同一分组口径）
+function questionImportAbsorbSelection() {
+  const fields = [];
+  document.querySelectorAll("#question-import-compare-body input[data-absorb-field]:checked").forEach((input) => {
+    const field = input.dataset.absorbField;
+    if (field === "source") fields.push("sourceLabel", "sourcePage");
+    else fields.push(field);
+  });
+  return fields;
+}
+
+// 底部两个按钮的可见/可用与行内高亮，全部跟着表格里的勾选走（单一状态源＝勾选框本身）
+function syncQuestionImportAbsorbActions() {
+  const dialog = document.querySelector("#question-import-compare-dialog");
+  const replaceButton = document.querySelector("#absorb-question-import-replace");
+  const mergeButton = document.querySelector("#absorb-question-import-merge");
+  const rows = [...document.querySelectorAll("#question-import-compare-body .question-import-compare-row.is-pickable")];
+  const checked = [...document.querySelectorAll("#question-import-compare-body input[data-absorb-field]:checked")];
+  const absorbEnabled = dialog.dataset.absorbEnabled === "true" && rows.length > 0;
+  const referenceChecked = checked.some((input) => input.dataset.absorbField === "referenceAnswer");
+  const hasReferenceRow = rows.some((row) => row.dataset.absorbRow === "referenceAnswer");
+  // 写后回显（2026-09-23 第八次反馈）：这一行写过之后，没勾任何字段时按钮上写「已替换 ✓」/「已合并 ✓」，
+  // 而不是退回「替换所选」——否则人看不出刚才那一下到底生效没有（他原话：「而不是等我再次替换再告诉我
+  // 内容一致」）。一旦他又勾了新字段，标签立刻回到「替换所选（N）」，动作不受影响。
+  const dialogItem = state.questionImportPreview?.items?.find((entry) => Number(entry.index) === Number(dialog.dataset.questionIndex));
+  const lastWrite = Array.isArray(dialogItem?.absorbWrites) && dialogItem.absorbWrites.length
+    ? dialogItem.absorbWrites[dialogItem.absorbWrites.length - 1]
+    : null;
+  // 「已替换 ✓」只挂在**替换**那颗按钮上、「已合并 ✓」只挂在合并那颗上：一次合并写完之后，替换按钮不能
+  // 跟着显示"已合并"（它俩是两个不同的动作，标签混了会让人以为替换也做过）。
+  const writeFields = (lastWrite?.labels || []).join("、");
+  const replaceDone = lastWrite?.mode === "replace" ? `已替换 ${writeFields}（v${lastWrite.version}）` : "";
+  const mergeDone = lastWrite?.mode === "merge" ? `已合并 ${writeFields}（v${lastWrite.version}）` : "";
+  for (const row of rows) {
+    const input = row.querySelector("input[data-absorb-field]");
+    const cell = row.querySelector("[data-absorb-cell]");
+    if (cell) cell.classList.toggle("is-selected", Boolean(input && input.checked));
+  }
+  // 悬停提示在任何状态下都要写清"点下去会发生什么"（版本 +1、答案状态降级、合并会不会丢原文）——
+  // 只写"先勾选字段"会让人看不出后果（S15 的验收就盯着这一条）。
+  const absorbConsequence = "写入会覆盖非空字段：既有题版本 +1、答案状态降级「待核对」";
+  const mergeConsequence = "合并＝既有那版 + 追加导入稿那版（原文不丢）；同时勾选的其它字段按导入稿写入";
+  if (replaceButton) {
+    replaceButton.hidden = !absorbEnabled;
+    replaceButton.disabled = checked.length === 0;
+    replaceButton.textContent = checked.length ? `替换所选（${checked.length}）` : (replaceDone ? "已替换 ✓" : "替换所选");
+    replaceButton.classList.toggle("is-done", checked.length === 0 && Boolean(replaceDone));
+    replaceButton.title = checked.length
+      ? `把勾选的字段换成导入稿这版；${absorbConsequence}`
+      : (replaceDone ? `这一行已经替换过了：${replaceDone}。再勾一个字段可以继续写；${absorbConsequence}` : `先在表格里勾选要写进既有题的字段；${absorbConsequence}`);
+  }
+  if (mergeButton) {
+    mergeButton.hidden = !absorbEnabled || !hasReferenceRow;
+    mergeButton.disabled = !referenceChecked;
+    mergeButton.textContent = referenceChecked ? "合并两版" : (mergeDone ? "已合并 ✓" : "合并两版");
+    mergeButton.classList.toggle("is-done", !referenceChecked && Boolean(mergeDone));
+    mergeButton.title = referenceChecked
+      ? mergeConsequence
+      : (mergeDone ? `这一行已经合并过了：${mergeDone}` : `先在表格里勾选（或点选）「参考答案」这一行；${mergeConsequence}`);
+  }
+}
+
+// 点「本次导入」那一格＝勾上这一行（再点一次取消）
+function toggleQuestionImportAbsorbCell(cell) {
+  const row = cell.closest(".question-import-compare-row");
+  const input = row?.querySelector("input[data-absorb-field]");
+  if (!input) return;
+  input.checked = !input.checked;
+  syncQuestionImportAbsorbActions();
+}
+
+// 两版不一样时的写入（服务端 absorbComparisonFields 是唯一判据：必须事实相同、字段白名单、动答案即降级待核对）。
+// 为什么不做自由编辑：题库答案的正规编辑入口在题目管理，那里有完整校验与审核状态机（DEC-090/091）；
+// 在对比弹窗里再开一个自由文本写入口，等于给"改已发布题的答案"开后门。这里的动作有限、可审计。
+// mode="replace"：所选字段全部用导入稿这版；mode="merge"：参考答案＝既有 + 追加导入稿那版。
+async function absorbQuestionImportComparison(button, mode) {
+  const status = document.querySelector("#question-import-compare-write-status");
+  const dialog = document.querySelector("#question-import-compare-dialog");
+  const item = state.questionImportPreview?.items?.find((entry) => Number(entry.index) === Number(dialog.dataset.questionIndex));
+  if (!item?.comparison?.incoming || !item?.comparison?.existing) return;
+  const fields = questionImportAbsorbSelection();
+  if (!fields.length) {
+    if (status) status.textContent = "请先在表格里勾选（或点「本次导入」那一格）要用导入稿写入的字段。";
+    return;
+  }
+  const mergeReferenceAnswer = mode === "merge";
+  const label = button.textContent;
+  if (status) status.textContent = "";
+  button.disabled = true;
+  button.textContent = "写入中";
+  try {
+    const result = await requestJson("/api/admin/questions/merge-duplicate", {
+      method: "POST",
+      body: JSON.stringify({
+        existingQuestionId: item.comparison.existing.id,
+        question: item.comparison.incoming,
+        mode: "absorb",
+        fields,
+        mergeReferenceAnswer,
+        // 已确认「就是同一道题」**且依据是强证据**的疑似行（两版题干不同 → 完整指纹天然不同）带上人工确认
+        // 标记：服务端不会只信它——absorbComparisonFields 会用与预览提示同一个 strongEvidenceBetween()
+        // 重新独立判定证据，判不成立照旧 422（question_merge_requires_identical）。界面已在打开对比时
+        // 用同一个判据挡掉"模糊路径"的行（那类行这里根本进不来，2026-09-23 修正）。
+        ...(dialog.dataset.absorbAuthorization === "operator_confirmed_suspicion"
+          ? { operatorConfirmedSuspicion: { reason: item.suspicion?.reason || "", score: item.suspicion?.score || 0, commonRun: item.suspicion?.commonRun || 0 } }
+          : {}),
+      }),
+    });
+    const written = [...(result.overwritten || []), ...(result.filled || [])];
+    // 回执文案（产品负责人 2026-09-22 第六次反馈「简洁文案」）：字段名翻成界面上的中文（原来直接回显
+    // referenceAnswer、sourceLabel 这类服务端字段名，读起来像报错），并把"合并两版"这层信息折进括号里。
+    const writtenLabel = written.map((name) => absorbWriteFieldLabel(name)).join("、");
+    // 「未改动」分两种（2026-09-23 第八次反馈）：一种是这一行**刚刚**被这次勾选写过（他再去点同一格时的
+    // 正常结果），另一种是两版本来就一样。前者要明确说"已经写过了"，不能让他以为没生效。
+    const previousWrites = Array.isArray(item.absorbWrites) ? item.absorbWrites : [];
+    const alreadyWritten = previousWrites.some((write) => fields.every((field) => (write.fields || []).includes(field)));
+    const summary = result.updated
+      ? `✅ 已写入 ${writtenLabel}${mergeReferenceAnswer ? "（参考答案合并两版）" : ""}（版本 v${result.version}，答案状态：${result.answerReviewStatus === "verified" ? "已核对" : "待核对"}）`
+      : (alreadyWritten ? "这一行刚才已经写过了，两版内容一致，未改动" : "两版内容一致，未改动");
+    if (status) status.textContent = summary;
+    if (result.updated) {
+      // 写进去的字段在库里已经等于导入稿这版，勾选留在表格里只会诱导"再点一次"（他截图里那次「未改动」
+      // 就是这么来的）——写入成功后清掉勾选，同时把这次写入记在行数据上，让列表与按钮都显示"已替换"。
+      recordQuestionImportAbsorbWrite(item, {
+        mode: mergeReferenceAnswer ? "merge" : "replace",
+        fields,
+        version: result.version,
+        answerReviewStatus: result.answerReviewStatus,
+      });
+      for (const input of [...document.querySelectorAll("#question-import-compare-body input[data-absorb-field]:checked")]) input.checked = false;
+      renderQuestionImportPreview(state.questionImportPreview);
+    }
+    window.alert(`${summary}。\n这一行不会新建题（题库已有该题）；改动可到题目管理复核。`);
+  } catch (error) {
+    if (status) status.textContent = `写入失败：${friendlyError(error)}`;
+    window.alert(`写入既有题失败：${friendlyError(error)}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+    syncQuestionImportAbsorbActions();
+  }
 }
 
 function closeQuestionImportComparison() {
   const dialog = document.querySelector("#question-import-compare-dialog");
   if (dialog.open) dialog.close();
+}
+
+// 择优补充（DEC-094 ③）：事实相同的重复稿不新建题，只把既有题空缺的字段补进同一道题。
+// 服务端是唯一判据：本次导入稿的完整指纹必须与既有题一致，否则拒绝（question_merge_requires_identical）。
+async function mergeQuestionImportDuplicate() {
+  const button = document.querySelector("#merge-question-import-duplicate");
+  const item = state.questionImportPreview?.items?.find((entry) => Number(entry.index) === Number(button.dataset.duplicateIndex));
+  if (!item?.comparison?.incoming || !button.dataset.existingId) return;
+  button.disabled = true;
+  const label = button.textContent;
+  button.textContent = "补充中";
+  try {
+    const result = await requestJson("/api/admin/questions/merge-duplicate", {
+      method: "POST",
+      body: JSON.stringify({
+        existingQuestionId: button.dataset.existingId,
+        question: item.comparison.incoming,
+        // 已确认「就是同一道题」的改写型疑似：两版题干不同、完整指纹天然不同，服务端要靠这个标记
+        // 走"人工确认"这条授权（**只补空缺**）。服务端不会只信这个布尔值——它会独立复核"这两版确实
+        // 像到会被查重提示"（强证据或模糊判据任一成立），判不成立照旧拒绝（question_merge_requires_identical）。
+        ...(button.dataset.operatorConfirmed === "true"
+          ? { operatorConfirmedSuspicion: { reason: item.suspicion?.reason || "", score: item.suspicion?.score || 0, commonRun: item.suspicion?.commonRun || 0 } }
+          : {}),
+      }),
+    });
+    const filledText = result.filled.length ? `补充了 ${result.filled.length} 项空缺：${result.filled.join("、")}` : "既有题没有空缺字段，未改动";
+    const conflictText = result.conflicts.length ? `；${result.conflicts.length} 项已有内容未被覆盖：${result.conflicts.join("、")}` : "";
+    const authorizationText = result.authorization === "operator_confirmed_suspicion"
+      ? "（依据：你确认的「同一道题」，只补空缺）"
+      : "";
+    window.alert(`${result.updated ? "已择优补充" : "未改动"}${authorizationText}（版本 v${result.version}）：${filledText}${conflictText}。\n本次导入的这一行仍然不会新建题（题库已有该题），补充后请到题目管理里复核。`);
+    closeQuestionImportComparison();
+    await previewQuestionImport();
+  } catch (error) {
+    window.alert(`择优补充失败：${friendlyError(error)}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+// 人工裁决（产品负责人 2026-09-22 定稿）：对比完给出结论——「确认是同一道题」（本行不导入）或
+// 「确认不是重复」（照常导入）。结论只改**本次预览**的呈现与提交内容，导入前随时可撤销；不写题库。
+// 唯一会写库的动作仍是「择优补充到既有题」，且只补空缺（服务端重新判定授权）。
+function applyQuestionImportVerdict(index, verdict) {
+  const item = state.questionImportPreview?.items?.find((entry) => Number(entry.index) === Number(index));
+  if (!item?.suspicion) return;
+  setQuestionImportVerdict(index, verdict);
+  closeQuestionImportComparison();
+  renderQuestionImportPreview(state.questionImportPreview);
+  setSmallDialogStatus("#question-import-status", verdict === "confirmed"
+    ? `第 ${Number(index) + 1} 道已按「同一道题」处理：本行不导入（在对比弹窗里可撤销）`
+    : `第 ${Number(index) + 1} 道已按「不是重复」处理：照常导入（在对比弹窗里可撤销）`, "success");
+}
+
+function clearQuestionImportVerdict(index) {
+  const item = state.questionImportPreview?.items?.find((entry) => Number(entry.index) === Number(index));
+  if (!item?.suspicion) return;
+  setQuestionImportVerdict(index, null);
+  closeQuestionImportComparison();
+  renderQuestionImportPreview(state.questionImportPreview);
+  setSmallDialogStatus("#question-import-status", `已撤销第 ${Number(index) + 1} 道的标记，回到疑似待定夺状态`, "success");
 }
 
 function locateComparedQuestionImportSource() {
@@ -4635,7 +7150,58 @@ function locateQuestionImportRange(startValue, endValue, questionIndex, previewI
   if (previewItem) window.setTimeout(() => previewItem.classList.remove("question-import-preview-item-target"), 1200);
 }
 
+// 「疑似重复」色片兼作定位入口（DEC-094 ②）：
+// - 题库已有（stored）：打开那道既有题的编辑器（题目可能不在当前筛选里，走后端单题详情接口取）；
+// - 本批（batch）：跳到本批里相似的那一行（还在预览里，没有 id 可开，只能跳行）。
+async function openSuspectedQuestion(chip) {
+  const scope = chip.dataset.suspectScope;
+  const questionId = chip.dataset.suspectQuestionId || "";
+  const peerIndex = Number(chip.dataset.suspectPeerIndex);
+  if (scope === "stored") {
+    if (!questionId) return;
+    try {
+      await openQuestionEditor(questionId);
+    } catch (error) {
+      setSmallDialogStatus("#question-import-status", `打开既有题失败：${friendlyError(error)}`, "error");
+    }
+    return;
+  }
+  if (!Number.isInteger(peerIndex) || peerIndex < 0) return;
+  // 相似行可能被「只看疑似重复」筛掉了：先切回全量再定位。
+  if (state.questionImportPreviewFilter !== "all") {
+    state.questionImportPreviewFilter = "all";
+    renderQuestionImportPreview(state.questionImportPreview);
+  }
+  const target = document.querySelector(`#question-import-preview-list .question-import-preview-item[data-question-index="${peerIndex}"]`);
+  if (!target) return;
+  target.scrollIntoView({ block: "center" });
+  target.classList.add("question-import-preview-item-target");
+  window.setTimeout(() => target.classList.remove("question-import-preview-item-target"), 1600);
+  setSmallDialogStatus("#question-import-status", `已跳到本批第 ${peerIndex + 1} 道（疑似相似行）`, "success");
+}
+
 function jumpToQuestionImportSource(event) {
+  const metaCompare = event.target.closest(".question-import-meta-compare");
+  if (metaCompare) {
+    // 疑似重复的逐字段对比（2026-09-22 产品负责人定位置：右侧说明文字里，像"事实相同"那行一样）。
+    // 必须 stopPropagation + preventDefault：否则整行点击会把页面滚去定位原文。
+    event.stopPropagation();
+    if (event.type === "click") {
+      event.preventDefault();
+      openQuestionImportComparison(Number(metaCompare.dataset.suspectCompareIndex));
+    }
+    return;
+  }
+  const suspectChip = event.target.closest(".question-import-suspect-chip");
+  if (suspectChip) {
+    // 色片是真按钮：键盘激活交给浏览器原生 click，别在这里重复触发一次。
+    event.stopPropagation();
+    if (event.type === "click") {
+      event.preventDefault();
+      openSuspectedQuestion(suspectChip);
+    }
+    return;
+  }
   if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") return;
   const comparableItem = event.target.closest(".question-import-preview-item-comparable");
   if (comparableItem) {
@@ -4652,10 +7218,19 @@ function jumpToQuestionImportSource(event) {
 function invalidateQuestionImportPreview() {
   if (!state.questionImportPreview) return;
   state.questionImportPreview = null;
+  state.questionImportPreviewFilter = "all";
+  resetQuestionImportVerdicts();
   document.querySelector("#question-import-preview").hidden = true;
   document.querySelector("#question-import-preview-list").innerHTML = "";
   document.querySelector("#commit-question-import").disabled = true;
   setSmallDialogStatus("#question-import-status", "文本已修改，请重新解析预览", "loading");
+}
+
+// 「只看疑似重复」开关：只切换列表筛选，不重新请求、不影响可导入计数与提交内容。
+function toggleQuestionImportSuspectedFilter() {
+  if (!state.questionImportPreview) return;
+  state.questionImportPreviewFilter = state.questionImportPreviewFilter === "suspected" ? "all" : "suspected";
+  renderQuestionImportPreview(state.questionImportPreview);
 }
 
 async function previewQuestionImport() {
@@ -4667,6 +7242,9 @@ async function previewQuestionImport() {
       method: "POST",
       body: JSON.stringify(questionImportRequest(true)),
     });
+    state.questionImportPreviewFilter = "all";
+    // 重新解析＝上一轮的裁决作废（行号可能整体错位），必须清空，否则会把裁决写到别的行上。
+    resetQuestionImportVerdicts();
     renderQuestionImportPreview(payload);
     setSmallDialogStatus("#question-import-status", "解析完成；题库已有和本批重复题目不会重复写入", payload.errorCount ? "error" : "success");
   } catch (error) {
@@ -4679,6 +7257,7 @@ async function previewQuestionImport() {
 }
 
 async function commitQuestionImport() {
+  const confirmedCount = (state.questionImportConfirmedIndexes || []).length;
   if (!state.questionImportPreview?.validCount) return;
   const button = document.querySelector("#commit-question-import");
   button.disabled = true;
@@ -4692,9 +7271,11 @@ async function commitQuestionImport() {
     resetQuestionImport();
     await openView("平台题库");
     await loadOverview();
-    window.alert(`已导入 ${payload.createdCount} 道题目${payload.storedDuplicateCount ? `，跳过 ${payload.storedDuplicateCount} 道题库已有题目` : ""}${payload.batchDuplicateCount ? `，跳过 ${payload.batchDuplicateCount} 道本批重复题目` : ""}${payload.errorCount ? `，跳过 ${payload.errorCount} 道错误项` : ""}。`);
+    window.alert(`已导入 ${payload.createdCount} 道题目${payload.storedDuplicateCount ? `，跳过 ${payload.storedDuplicateCount} 道题库已有题目` : ""}${payload.batchDuplicateCount ? `，跳过 ${payload.batchDuplicateCount} 道本批重复题目` : ""}${payload.confirmedDuplicateCount ? `，按你的确认跳过 ${payload.confirmedDuplicateCount} 道已确认重复的题目` : ""}${payload.errorCount ? `，跳过 ${payload.errorCount} 道错误项` : ""}。${payload.pendingClassificationCount ? `\n其中 ${payload.pendingClassificationCount} 道待归类（缺教材/章节/知识点），已存入平台题库但不会自动发布到用户端；可在题目管理的「待归类」筛选里按批次补充归属。` : ""}`);
   } catch (error) {
-    setSmallDialogStatus("#question-import-status", `导入失败：${friendlyError(error)}`, "error");
+    setSmallDialogStatus("#question-import-status", confirmedCount
+      ? `导入失败：${friendlyError(error)}（已确认重复的 ${confirmedCount} 道仍按不导入处理，可重试）`
+      : `导入失败：${friendlyError(error)}`, "error");
   } finally {
     button.disabled = false;
     button.textContent = "导入平台题库";
@@ -4764,17 +7345,61 @@ function editProvider(providerId) {
   showProviderDialog();
 }
 
-function renderProviders() {
-  const list = document.querySelector("#provider-list");
-  const providers = state.aiConfig.providers;
-  if (!providers.length) {
-    list.innerHTML = '<div class="provider-empty"><strong>尚未配置模型供应商</strong><br />新增供应商后即可测试连接并绑定评分路由。</div>';
-    return;
+function readProviderGroups() {
+  try {
+    const parsed = JSON.parse(globalThis.localStorage?.getItem(PROVIDER_GROUP_STORAGE_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((group) => group && typeof group === "object" && Array.isArray(group.memberIds))
+      .map((group) => ({
+        id: String(group.id || ""),
+        name: String(group.name || "").slice(0, 80),
+        memberIds: group.memberIds.map(String),
+        collapsed: group.collapsed !== false,
+      })).filter((group) => group.id);
+  } catch (error) {
+    return [];
   }
-  list.innerHTML = providers.map((provider) => {
-    const testTarget = providerTestTarget(provider);
-    return `
-    <div class="provider-row">
+}
+
+function writeProviderGroups() {
+  try {
+    globalThis.localStorage?.setItem(PROVIDER_GROUP_STORAGE_KEY, JSON.stringify(state.providerGroups));
+  } catch (error) {
+    // 浏览器禁用本地存储时，本次会话的分组仍可使用。
+  }
+}
+
+function reconcileProviderGroups() {
+  const available = new Set(state.aiConfig.providers.map((provider) => provider.id));
+  const assigned = new Set();
+  const groupIds = new Set();
+  const previous = JSON.stringify(state.providerGroups);
+  state.providerGroups = state.providerGroups.map((group) => {
+    if (groupIds.has(group.id)) return null;
+    const memberIds = [...new Set(group.memberIds)].filter((id) => available.has(id) && !assigned.has(id));
+    if (memberIds.length < 2) return null;
+    groupIds.add(group.id);
+    memberIds.forEach((id) => assigned.add(id));
+    return { ...group, memberIds };
+  }).filter(Boolean);
+  state.selectedProviderIds = new Set([...state.selectedProviderIds].filter((id) => available.has(id)));
+  if (JSON.stringify(state.providerGroups) !== previous) writeProviderGroups();
+}
+
+function renderProviderSelectionTools() {
+  const count = state.selectedProviderIds.size;
+  document.querySelector("#provider-selection-tools").hidden = !count;
+  document.querySelector("#provider-selection-count").textContent = `已选 ${count} 个`;
+  document.querySelector("#group-selected-providers").disabled = count < 2;
+}
+
+function renderProviderRow(provider) {
+  const testTarget = providerTestTarget(provider);
+  return `
+    <div class="provider-row ${state.selectedProviderIds.has(provider.id) ? "is-selected" : ""}">
+      <label class="provider-select" title="选择 ${escapeHtml(provider.name)}">
+        <input type="checkbox" data-select-provider="${escapeHtml(provider.id)}" aria-label="选择 ${escapeHtml(provider.name)} ${escapeHtml(provider.apiKeyMasked)}" ${state.selectedProviderIds.has(provider.id) ? "checked" : ""} />
+      </label>
       <div class="provider-row-main">
         <div class="provider-name-line">
           <span class="provider-name">${escapeHtml(provider.name)}</span>
@@ -4789,7 +7414,56 @@ function renderProviders() {
         <button class="icon-text-action danger" data-action="delete" data-id="${escapeHtml(provider.id)}">删除</button>
       </div>
     </div>`;
+}
+
+function renderProviders() {
+  const list = document.querySelector("#provider-list");
+  const providers = state.aiConfig.providers;
+  reconcileProviderGroups();
+  renderProviderSelectionTools();
+  if (!providers.length) {
+    list.innerHTML = '<div class="provider-empty"><strong>尚未配置模型供应商</strong><br />新增供应商后即可测试连接并绑定评分路由。</div>';
+    return;
+  }
+  const byId = new Map(providers.map((provider) => [provider.id, provider]));
+  const groupByMember = new Map(state.providerGroups.flatMap((group) => group.memberIds.map((id) => [id, group])));
+  const renderedGroups = new Set();
+  list.innerHTML = providers.map((provider) => {
+    const group = groupByMember.get(provider.id);
+    if (!group) return renderProviderRow(provider);
+    if (renderedGroups.has(group.id)) return "";
+    renderedGroups.add(group.id);
+    return `<div class="provider-group">
+      <div class="provider-group-head">
+        <button class="provider-group-toggle" type="button" data-group-action="toggle" data-group-id="${escapeHtml(group.id)}" aria-expanded="${!group.collapsed}" title="${group.collapsed ? "展开" : "收起"}${escapeHtml(group.name)}">
+          <span class="provider-group-caret" aria-hidden="true">›</span><strong>${escapeHtml(group.name)}</strong><span class="provider-group-count">${group.memberIds.length} 个供应商</span>
+        </button>
+        <div class="provider-group-actions">
+          <button class="icon-text-action" type="button" data-group-action="rename" data-group-id="${escapeHtml(group.id)}">重命名</button>
+          <button class="icon-text-action" type="button" data-group-action="dissolve" data-group-id="${escapeHtml(group.id)}">解散分组</button>
+        </div>
+      </div>
+      <div class="provider-group-members" ${group.collapsed ? "hidden" : ""}>${group.memberIds.map((id) => renderProviderRow(byId.get(id))).join("")}</div>
+    </div>`;
   }).join("");
+}
+
+function groupSelectedProviders() {
+  const memberIds = state.aiConfig.providers.filter((provider) => state.selectedProviderIds.has(provider.id)).map((provider) => provider.id);
+  if (memberIds.length < 2) return;
+  const hosts = new Set(state.aiConfig.providers.filter((provider) => state.selectedProviderIds.has(provider.id))
+    .map((provider) => {
+      try { return new URL(provider.baseUrl).hostname; } catch (error) { return ""; }
+    }));
+  const name = hosts.size === 1 && !hosts.has("") ? [...hosts][0] : `供应商组 ${state.providerGroups.length + 1}`;
+  state.providerGroups = state.providerGroups.map((group) => ({
+    ...group,
+    memberIds: group.memberIds.filter((id) => !state.selectedProviderIds.has(id)),
+  })).filter((group) => group.memberIds.length >= 2);
+  state.providerGroups.push({ id: `provider-group-${Date.now()}-${Math.random().toString(36).slice(2)}`, name, memberIds, collapsed: true });
+  state.selectedProviderIds.clear();
+  writeProviderGroups();
+  renderProviders();
 }
 
 function populateProviderOptions(selectedId = "") {
@@ -5117,7 +7791,9 @@ async function testSavedProvider(providerId, button = null) {
       method: "POST",
       body: JSON.stringify({ providerId, model: target.model, viaTestRoute: target.viaTestRoute }),
     });
-    setConfigStatus(`连接成功 · ${payload.result.model} · ${payload.result.latencyMs} ms · ${payload.result.preview}${target.viaTestRoute ? "（模型取自供应商连通性测试路由）" : ""}`, "success");
+    // 结构化判定上游（Typesafe/Jev System One）能给连通性结论，但不生成文本、不能绑场景，必须说清。
+    const note = payload.result.notConversational ? "（该上游是结构化判定接口，不生成文本；不能绑定到 AI 场景路由）" : "";
+    setConfigStatus(`连接成功 · ${payload.result.model} · ${payload.result.latencyMs} ms · ${payload.result.preview}${note}${target.viaTestRoute ? "（模型取自供应商连通性测试路由）" : ""}`, "success");
   } catch (error) {
     setConfigStatus(`连接失败：${friendlyError(error)}`, "error");
   } finally {
@@ -5192,6 +7868,264 @@ async function loadProviderModels() {
   } finally {
     button.disabled = false;
     button.textContent = "读取模型";
+  }
+}
+
+const PROVIDER_BATCH_MAX_TEXT_BYTES = 256 * 1024;
+
+const providerBatchStatusLabels = {
+  passed: "测试通过",
+  failed: "测试失败",
+  invalid: "文档不完整",
+  duplicate: "重复条目",
+  skipped: "未测试",
+  pending: "待测试",
+};
+
+let providerBatchPollTimer = null;
+
+function setProviderBatchStatus(message = "", tone = "") {
+  const element = document.querySelector("#provider-batch-status");
+  element.hidden = !message;
+  element.className = `provider-form-status ${tone}`.trim();
+  element.textContent = message;
+}
+
+function providerBatchPayload() {
+  return {
+    baseUrl: document.querySelector("#provider-batch-base-url").value.trim(),
+    protocol: document.querySelector("#provider-batch-protocol").value,
+    model: document.querySelector("#provider-batch-model").value.trim(),
+    concurrency: Number(document.querySelector("#provider-batch-concurrency").value) || 3,
+    timeoutMs: Number(document.querySelector("#provider-batch-timeout").value) || 20000,
+    savePassed: document.querySelector("#provider-batch-save-passed").checked,
+  };
+}
+
+// 批量测试的失败原因可能是「provider_models_unavailable:」套着一条上游错误，这里拆开再交给 friendlyError。
+function providerBatchErrorText(code) {
+  const value = String(code || "");
+  const prefix = "provider_models_unavailable:";
+  if (value.startsWith(prefix)) return `读不到上游模型列表：${friendlyError(value.slice(prefix.length))}`;
+  return friendlyError(value);
+}
+
+function openProviderBatchDialog() {
+  const dialog = document.querySelector("#provider-batch-dialog");
+  if (!dialog.open) dialog.showModal();
+  setProviderBatchStatus();
+  renderProviderBatchSummary();
+  document.querySelector("#provider-batch-text").focus();
+}
+
+function closeProviderBatchDialog() {
+  const dialog = document.querySelector("#provider-batch-dialog");
+  if (dialog.open) dialog.close();
+}
+
+function stopProviderBatchPolling() {
+  if (!providerBatchPollTimer) return;
+  clearInterval(providerBatchPollTimer);
+  providerBatchPollTimer = null;
+}
+
+function providerBatchSummaryText() {
+  const batch = state.providerBatch;
+  const summary = batch.job ? batch.job.summary : batch.summary;
+  if (!summary) return "尚未解析。点「解析预览」先看这次会测哪些接口。";
+  if (!batch.job) {
+    return `解析结果：共 ${summary.total} 条 · 可测 ${summary.valid} 条 · 文档不完整 ${summary.invalid} 条 · 重复 ${summary.duplicates} 条`
+      + (summary.skipped ? ` · 跳过说明文字 ${summary.skipped} 行` : "");
+  }
+  const job = batch.job;
+  const parts = [`批量测试：共 ${summary.total} 条 · 已处理 ${job.done} 条 · 通过 ${summary.passed} 条 · 失败 ${summary.failed} 条`];
+  if (summary.invalid) parts.push(`文档不完整 ${summary.invalid} 条`);
+  if (summary.duplicates) parts.push(`重复条目 ${summary.duplicates} 条`);
+  if (summary.untouched) parts.push(`未测试 ${summary.untouched} 条`);
+  if (job.savePassed) {
+    parts.push(summary.created || summary.updated
+      ? `已保留通过项：新增 ${summary.created} 个、更新 ${summary.updated} 个供应商`
+      : "没有测试通过的接口，供应商列表未改动");
+  } else {
+    parts.push("本次未写入供应商列表");
+  }
+  if (job.error) parts.push(`写入失败：${providerBatchErrorText(job.error)}`);
+  return parts.join(" · ");
+}
+
+function renderProviderBatchSummary() {
+  document.querySelector("#provider-batch-summary").textContent = providerBatchSummaryText();
+}
+
+function providerBatchRowHtml(row, mode) {
+  const status = mode === "preview"
+    ? ((row.errors && row.errors.length) ? "invalid" : "pending")
+    : row.status;
+  const label = providerBatchStatusLabels[status] || status;
+  const meta = [`${row.baseUrl || "（缺 Base URL）"} · ${row.apiKeyMasked || "（缺密钥）"}`];
+  if (row.model) meta.push(`模型 ${row.model}`);
+  if (mode === "result") {
+    if (row.modelCount) meta.push(`上游模型 ${row.modelCount} 个`);
+    if (row.latencyMs) meta.push(`${row.latencyMs} ms`);
+    if (row.preview) meta.push(`返回「${row.preview}」`);
+  }
+  const notes = [
+    ...(row.warnings || []),
+    ...(row.note ? [row.note] : []),
+    ...((row.errors || []).map((code) => errorLabels[code] || code)),
+  ];
+  const error = mode === "result" && row.errorCode
+    ? `<div class="provider-batch-row-error">${escapeHtml(providerBatchErrorText(row.errorCode))}</div>`
+    : "";
+  return `
+    <div class="provider-batch-row ${escapeHtml(status)}">
+      <div class="provider-batch-row-line">
+        <span class="provider-batch-row-name">第 ${row.lineNumber} 行 · ${escapeHtml(row.name || "未命名")}</span>
+        <span class="provider-batch-badge ${escapeHtml(status)}">${escapeHtml(label)}</span>
+      </div>
+      <div class="provider-batch-row-meta">${meta.map((item) => escapeHtml(item)).join(" · ")}</div>
+      ${notes.length ? `<div class="provider-batch-row-note">${notes.map((item) => escapeHtml(item)).join("；")}</div>` : ""}
+      ${error}
+    </div>`;
+}
+
+function renderProviderBatchPreview() {
+  const list = document.querySelector("#provider-batch-preview");
+  const candidates = state.providerBatch.candidates || [];
+  list.hidden = !candidates.length;
+  list.innerHTML = candidates.length
+    ? candidates.map((row) => providerBatchRowHtml(row, "preview")).join("")
+    : '<div class="provider-batch-empty">解析后会在这里列出每一条接口（密钥只显示掩码）。</div>';
+  renderProviderBatchSummary();
+}
+
+function renderProviderBatchJob() {
+  const job = state.providerBatch.job;
+  const list = document.querySelector("#provider-batch-results");
+  const progress = document.querySelector("#provider-batch-progress");
+  if (!job) {
+    list.hidden = true;
+    list.innerHTML = "";
+    progress.hidden = true;
+    renderProviderBatchSummary();
+    return;
+  }
+  const running = job.status === "running";
+  list.hidden = !job.results.length;
+  list.innerHTML = job.results.map((row) => providerBatchRowHtml(row, "result")).join("");
+  progress.hidden = !job.results.length && !running;
+  document.querySelector("#provider-batch-bar").value = job.total ? Math.round((job.done / job.total) * 100) : 0;
+  document.querySelector("#provider-batch-progress-text").textContent = running
+    ? `已处理 ${job.done}/${job.total} 条`
+    : (job.status === "cancelled" ? `已取消，处理 ${job.done}/${job.total} 条` : `已完成 ${job.done}/${job.total} 条`);
+  renderProviderBatchSummary();
+}
+
+function finishProviderBatchJob(job) {
+  stopProviderBatchPolling();
+  state.providerBatch.running = false;
+  document.querySelector("#cancel-provider-batch").hidden = true;
+  const button = document.querySelector("#start-provider-batch");
+  button.disabled = false;
+  button.textContent = "开始批量测试";
+  const passed = job.summary ? job.summary.passed : 0;
+  setProviderBatchStatus(providerBatchSummaryText(), job.error ? "error" : (passed ? "success" : "error"));
+  if (job.save && ((job.save.created || []).length || (job.save.updated || []).length)) {
+    return loadAiConfig(`批量测试完成：新增 ${job.save.created.length} 个、更新 ${job.save.updated.length} 个供应商，测试通过的已写入列表`);
+  }
+  return null;
+}
+
+async function pollProviderBatchJob() {
+  const batch = state.providerBatch;
+  if (!batch.jobId) return;
+  try {
+    const payload = await requestJson(`/api/admin/ai/provider-batch/${encodeURIComponent(batch.jobId)}`);
+    batch.job = payload.job;
+    renderProviderBatchJob();
+    if (payload.job.status !== "running") await finishProviderBatchJob(payload.job);
+  } catch (error) {
+    stopProviderBatchPolling();
+    batch.running = false;
+    document.querySelector("#cancel-provider-batch").hidden = true;
+    setProviderBatchStatus(`读取批量测试进度失败：${friendlyError(error)}`, "error");
+  }
+}
+
+async function previewProviderBatch() {
+  const text = document.querySelector("#provider-batch-text").value;
+  if (!text.trim()) {
+    setProviderBatchStatus("请先选择文档或粘贴接口清单", "error");
+    return;
+  }
+  const button = document.querySelector("#preview-provider-batch");
+  button.disabled = true;
+  button.textContent = "解析中";
+  setProviderBatchStatus("正在解析接口清单", "loading");
+  try {
+    const payload = await requestJson("/api/admin/ai/provider-batch/parse", {
+      method: "POST",
+      body: JSON.stringify({ text, ...providerBatchPayload() }),
+    });
+    const batch = state.providerBatch;
+    batch.candidates = payload.candidates || [];
+    batch.summary = payload.summary;
+    batch.warnings = payload.warnings || [];
+    batch.results = [];
+    renderProviderBatchPreview();
+    setProviderBatchStatus(providerBatchSummaryText(), payload.summary.valid ? "success" : "error");
+  } catch (error) {
+    setProviderBatchStatus(`解析失败：${friendlyError(error)}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "解析预览";
+  }
+}
+
+async function startProviderBatchTest() {
+  const text = document.querySelector("#provider-batch-text").value;
+  if (!text.trim()) {
+    setProviderBatchStatus("请先选择文档或粘贴接口清单", "error");
+    return;
+  }
+  const button = document.querySelector("#start-provider-batch");
+  button.disabled = true;
+  button.textContent = "测试中";
+  document.querySelector("#cancel-provider-batch").hidden = false;
+  setProviderBatchStatus("正在批量测试，逐条结果会实时刷新", "loading");
+  try {
+    const payload = await requestJson("/api/admin/ai/provider-batch", {
+      method: "POST",
+      body: JSON.stringify({ text, ...providerBatchPayload() }),
+    });
+    const batch = state.providerBatch;
+    batch.jobId = payload.job.id;
+    batch.job = payload.job;
+    batch.running = true;
+    document.querySelector("#provider-batch-preview").hidden = true;
+    renderProviderBatchJob();
+    stopProviderBatchPolling();
+    providerBatchPollTimer = setInterval(pollProviderBatchJob, 900);
+  } catch (error) {
+    setProviderBatchStatus(`批量测试未能启动：${friendlyError(error)}`, "error");
+    document.querySelector("#cancel-provider-batch").hidden = true;
+    button.disabled = false;
+    button.textContent = "开始批量测试";
+  }
+}
+
+async function cancelProviderBatchTest() {
+  const batch = state.providerBatch;
+  if (!batch.jobId) return;
+  const button = document.querySelector("#cancel-provider-batch");
+  button.disabled = true;
+  try {
+    await requestJson(`/api/admin/ai/provider-batch/${encodeURIComponent(batch.jobId)}`, { method: "DELETE" });
+    setProviderBatchStatus("已请求取消：正在等当前条目结束，已测结果照常保留", "loading");
+  } catch (error) {
+    setProviderBatchStatus(`取消失败：${friendlyError(error)}`, "error");
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -6148,9 +9082,10 @@ function renderQuestionScoringStructure(question) {
   if (!notice) return;
   const candidates = question?.scoringPointCandidates || [];
   const status = question?.scoringPointStatus || "needs_split";
-  notice.hidden = false;
+  const label = scoringStructureLabel(status, candidates.length);
+  notice.hidden = !label;
   notice.className = `scoring-structure-notice ${status}`;
-  notice.innerHTML = `<span>${escapeHtml(scoringStructureLabel(status, candidates.length))}</span>${status === "needs_score_allocation" ? '<button type="button" id="apply-question-scoring-candidates">填入待配分项</button>' : ""}`;
+  notice.innerHTML = label ? `<span>${escapeHtml(label)}</span>${status === "needs_score_allocation" ? '<button type="button" id="apply-question-scoring-candidates">填入待配分项</button>' : ""}` : "";
 }
 
 function scoringCandidateDraftText(candidates) {
@@ -6276,7 +9211,7 @@ function renderExamReview(draft, preview = []) {
         <label><span>题型</span><select data-exam-field="type">${typeOptions}</select></label>
         <label><span>章节路径</span><input data-exam-field="chapter" value="${escapeHtml(question.chapter)}" placeholder="章·节·三级标题" /></label>
         <label><span>分值</span><input data-exam-field="maxScore" type="number" min="0.5" max="100" step="0.5" value="${escapeHtml(question.maxScore)}" /></label>
-        ${question.type === "material_analysis" ? `<label><span>作答方式</span><select data-exam-field="responseMode"><option value="text">文字作答</option><option value="annotation">句子标记</option></select></label><label class="two-wide"><span>作答标记原文</span><textarea data-exam-field="annotationText" placeholder="仅在需要用户亲自标记句子时填写">${escapeHtml(question.annotationText || "")}</textarea></label>` : (question.type === "classical_word_explanation" ? `<label><span>加点字词</span><input data-exam-field="annotationText" value="${escapeHtml(question.annotationText || "")}" placeholder="例如：客" /></label><input data-exam-field="responseMode" type="hidden" value="text" />` : `<input data-exam-field="responseMode" type="hidden" value="text" /><input data-exam-field="annotationText" type="hidden" value="" />`)}
+        ${question.type === "classical_word_explanation" ? `<label><span>加点字词</span><input data-exam-field="annotationText" value="${escapeHtml(question.annotationText || "")}" placeholder="例如：客" /></label>` : `<input data-exam-field="annotationText" type="hidden" value="${escapeHtml(question.annotationText || "")}" />`}
         <label class="wide"><span>题干</span><textarea data-exam-field="stem">${escapeHtml(question.stem)}</textarea></label>
         <label class="two-wide"><span>选项（每行一项）</span><textarea data-exam-field="options" placeholder="A. 选项内容">${escapeHtml(questionOptionsText(question.options))}</textarea></label>
         <label><span>正确答案</span><input data-exam-field="correctAnswer" value="${escapeHtml((question.correctAnswer || []).join("、"))}" placeholder="A 或 A、B" /></label>
@@ -6303,7 +9238,6 @@ function renderExamReview(draft, preview = []) {
     const answerSource = card?.querySelector('[data-exam-field="answerSource"]');
     const answerReviewStatusSelect = card?.querySelector('[data-exam-field="answerReviewStatus"]');
     const scoringMode = card?.querySelector('[data-exam-field="scoringMode"]');
-    const responseMode = card?.querySelector('[data-exam-field="responseMode"]');
     if (answerSource) answerSource.value = question.answerSource || (question.referenceAnswer ? "ai_supplement" : "missing");
     if (answerReviewStatusSelect) answerReviewStatusSelect.value = answerReviewStatus(question);
     if (scoringMode) {
@@ -6315,7 +9249,6 @@ function renderExamReview(draft, preview = []) {
         if (oneCorrectScore.disabled) oneCorrectScore.value = "0";
       }
     }
-    if (responseMode) responseMode.value = question.responseMode === "annotation" ? "annotation" : "text";
   });
   renderExamReviewFilterBar();
 }
@@ -6615,7 +9548,7 @@ function collectExamReview() {
       materialMarks,
       materialGroupId: original.materialGroupId && usesSharedMaterial ? original.materialGroupId : "",
       usesSharedMaterial,
-      responseMode: value("responseMode"),
+      responseMode: "text",
       annotationText: value("annotationText"),
       sourcePage: value("sourcePage"),
     };
@@ -7458,9 +10391,241 @@ async function handleAnnouncementAction(id, action) {
   } catch (error) { window.alert(`操作失败：${friendlyError(error)}`); }
 }
 
+const platformContentStatusLabels = { published: "用户端可见", draft: "草稿", retired: "历史版本" };
+
+/** 用户端当前读到什么：只认"已发布"那一版；没有就是「尚未发布」（与用户端页面同一口径）。 */
+function platformContentCurrentText(item) {
+  if (!item || !item.currentVersion) return "尚未发布";
+  const effective = item.effectiveDate ? `生效 ${item.effectiveDate}` : "未填生效日期";
+  return `版本 ${item.currentVersion} · ${effective}`;
+}
+
+function platformContentStatusBadge(item) {
+  if (item.currentVersion) return { label: "用户端可见", className: "published" };
+  if (item.versionCount > 0) return { label: "有版本但未发布", className: "offline" };
+  return { label: "尚未发布", className: "draft" };
+}
+
+/** 下一个版本号建议：纯数字版号（1.0 / 2）自增末位，其余情况给 1.0 让运营自己改。 */
+function nextPlatformContentVersion(currentVersion) {
+  const match = String(currentVersion || "").match(/^(\d+(?:\.\d+)*)$/);
+  if (!match) return "1.0";
+  const parts = match[1].split(".");
+  parts[parts.length - 1] = String(Number(parts[parts.length - 1]) + 1);
+  return parts.join(".");
+}
+
+/** 已有版本里最大的那个（数字段比较；没有纯数字版号时取最新一条）。用于预填下一版版本号。 */
+function latestPlatformContentVersion(versions) {
+  const list = (versions || []).map((value) => String(value || "")).filter(Boolean);
+  const numeric = list.filter((value) => /^\d+(\.\d+)*$/.test(value));
+  if (!numeric.length) return list[0] || "";
+  return numeric.reduce((best, value) => (comparePlatformContentVersion(value, best) > 0 ? value : best));
+}
+
+function comparePlatformContentVersion(left, right) {
+  const a = String(left).split(".").map(Number);
+  const b = String(right).split(".").map(Number);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const diff = (a[index] || 0) - (b[index] || 0);
+    if (diff) return diff;
+  }
+  return 0;
+}
+
+function renderPlatformContentSummary() {
+  const items = state.platformContent.documents || [];
+  const published = items.filter((item) => item.currentVersion).length;
+  const drafts = items.reduce((total, item) => total + Number(item.draftCount || 0), 0);
+  const versions = items.reduce((total, item) => total + Number(item.versionCount || 0), 0);
+  document.querySelector("#platform-content-summary").innerHTML = [
+    ["文档", `${items.length}`, "协议、隐私、退款、注销、主体与个人信息共 7 份"],
+    ["用户端可见", `${published}`, published ? "已发布并生效的文档数" : "全部尚未发布，用户端会显示「尚未发布」"],
+    ["待发布草稿", `${drafts}`, drafts ? "草稿不影响用户端" : "没有未发布的草稿"],
+    ["版本总数", `${versions}`, "含历史版本，只增不减"],
+  ].map(([label, value, detail]) => `<div class="operation-summary-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></div>`).join("");
+}
+
+function renderPlatformContentTable() {
+  const body = document.querySelector("#platform-content-table-body");
+  const items = state.platformContent.documents || [];
+  if (!items.length) {
+    body.innerHTML = `<tr><td colspan="6" class="question-table-empty">还没有读取到平台文本，请点「刷新」。</td></tr>`;
+    return;
+  }
+  body.innerHTML = items.map((item) => {
+    const badge = platformContentStatusBadge(item);
+    return `
+    <tr>
+      <td><div class="platform-content-name"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.key)}</small></div></td>
+      <td><span class="status-pill ${escapeHtml(badge.className)}">${escapeHtml(badge.label)}</span>${item.currentVersion ? `<div class="platform-content-current-copy">${escapeHtml(platformContentCurrentText(item))}</div>` : ""}</td>
+      <td>${escapeHtml(String(item.versionCount || 0))}</td>
+      <td>${escapeHtml(String(item.draftCount || 0))}</td>
+      <td>${escapeHtml(item.updatedAt ? formatTaskTime(item.updatedAt) : "—")}</td>
+      <td><button type="button" class="icon-text-action" data-platform-content-action="edit" data-key="${escapeHtml(item.key)}">编辑 / 发布</button></td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadPlatformContent() {
+  try {
+    const payload = await requestJson("/api/admin/platform-content");
+    state.platformContent.documents = payload.documents || [];
+    state.platformContent.definitions = payload.definitions || [];
+    renderPlatformContentSummary();
+    renderPlatformContentTable();
+  } catch (error) {
+    document.querySelector("#platform-content-table-body").innerHTML = `<tr><td colspan="6" class="question-table-empty">读取失败：${escapeHtml(friendlyError(error))}</td></tr>`;
+  }
+}
+
+function renderPlatformContentHistory() {
+  const body = document.querySelector("#platform-content-history");
+  const items = state.platformContent.history || [];
+  if (!items.length) {
+    body.innerHTML = `<tr><td colspan="6" class="question-table-empty">这份文本还没有任何版本，填写正文并保存即为第 1 版。</td></tr>`;
+    return;
+  }
+  body.innerHTML = items.map((item) => {
+    // 这三个按钮在 <form> 内部，必须显式 type="button"：否则点击会连带提交表单，
+    // 把当前表单内容当成一次"保存草稿"（2026-10-05 实测：点「载入正文」会悄悄存出一版草稿）。
+    const actions = [`<button type="button" class="icon-text-action" data-platform-content-action="load" data-version="${escapeHtml(item.version)}">载入正文</button>`];
+    if (item.status !== "published") actions.push(`<button type="button" class="icon-text-action" data-platform-content-action="publish" data-version="${escapeHtml(item.version)}">发布此版</button>`);
+    else actions.push(`<button type="button" class="icon-text-action danger" data-platform-content-action="unpublish" data-version="${escapeHtml(item.version)}">下架</button>`);
+    return `
+    <tr>
+      <td><strong>${escapeHtml(item.version)}</strong></td>
+      <td><span class="status-pill ${escapeHtml(item.status === "published" ? "published" : item.status === "draft" ? "draft" : "offline")}">${escapeHtml(platformContentStatusLabels[item.status] || item.status)}</span></td>
+      <td>${escapeHtml(item.effectiveDate || "—")}</td>
+      <td>${escapeHtml(item.updatedAt ? `更新 ${formatTaskTime(item.updatedAt)}` : (item.createdAt ? formatTaskTime(item.createdAt) : "—"))}</td>
+      <td>${escapeHtml(item.note || "—")}${item.status === "draft" && item.updatedAt ? '<small class="platform-content-edited-mark">草稿已修改</small>' : ""}</td>
+      <td>${actions.join("")}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderPlatformContentCurrent() {
+  const item = state.platformContent.documents.find((document) => document.key === state.platformContent.activeKey);
+  const target = document.querySelector("#platform-content-current");
+  if (!item) { target.textContent = ""; return; }
+  target.innerHTML = `<span>用户端当前可见</span><strong>${escapeHtml(platformContentCurrentText(item))}</strong>`
+    + `<small>${item.currentVersion ? "改版请填新版本号：保存后是新草稿，发布才会替换用户端看到的内容；旧版本会保留在历史里。" : "还没有发布过：保存并发布后用户端才会显示这份文本。"}</small>`;
+}
+
+/** 打开编辑器：正文与版本号按"下一版"预填（版本号取自历史里的最大版本），历史列表带出每一版用于「载入正文」。 */
+async function openPlatformContentEditor(key) {
+  const dialog = document.querySelector("#platform-content-editor-dialog");
+  const summary = state.platformContent.documents.find((document) => document.key === key);
+  state.platformContent.activeKey = key;
+  document.querySelector("#platform-content-editor-form").reset();
+  document.querySelector("#platform-content-key").value = key;
+  const initialVersion = nextPlatformContentVersion(summary && summary.currentVersion);
+  document.querySelector("#platform-content-version").value = initialVersion;
+  document.querySelector("#platform-content-effective-date").value = "";
+  document.querySelector("#platform-content-note").value = "";
+  document.querySelector("#platform-content-body").value = "";
+  document.querySelector("#platform-content-editor-title").textContent = summary ? `编辑：${summary.title}` : "编辑平台文本";
+  document.querySelector("#platform-content-editor-copy").textContent = summary ? `${summary.title}（${key}）· 草稿可反复修改，发布后正文与生效日期即锁死` : "";
+  setSmallDialogStatus("#platform-content-editor-status");
+  renderPlatformContentCurrent();
+  renderPlatformContentHistory();
+  if (!dialog.open) dialog.showModal();
+  try {
+    const payload = await requestJson(`/api/admin/platform-content/${encodeURIComponent(key)}`);
+    state.platformContent.history = (payload.history || []).slice();
+    renderPlatformContentHistory();
+    // 历史里有更大的版本号时（例如已存过 1.0 草稿），把建议版本号推到它的下一版，避免撞版本号。
+    const versionInput = document.querySelector("#platform-content-version");
+    if (versionInput.value === initialVersion) {
+      versionInput.value = nextPlatformContentVersion(latestPlatformContentVersion(state.platformContent.history.map((item) => item.version)));
+    }
+  } catch (error) {
+    setSmallDialogStatus("#platform-content-editor-status", `历史版本读取失败：${friendlyError(error)}`, "error");
+  }
+}
+
+function closePlatformContentEditor() {
+  const dialog = document.querySelector("#platform-content-editor-dialog");
+  if (dialog.open) dialog.close();
+}
+
+async function savePlatformContentVersion(event) {
+  event.preventDefault();
+  const key = document.querySelector("#platform-content-key").value;
+  const saveButton = document.querySelector("#save-platform-version");
+  saveButton.disabled = true;
+  try {
+    const payload = await requestJson(`/api/admin/platform-content/${encodeURIComponent(key)}/versions`, {
+      method: "POST",
+      body: JSON.stringify({
+        version: document.querySelector("#platform-content-version").value.trim(),
+        effectiveDate: document.querySelector("#platform-content-effective-date").value.trim(),
+        note: document.querySelector("#platform-content-note").value.trim(),
+        body: document.querySelector("#platform-content-body").value,
+      }),
+    });
+    const saved = payload.version || {};
+    await loadPlatformContent();
+    await openPlatformContentEditor(key);
+    setSmallDialogStatus("#platform-content-editor-status", `已保存版本 ${saved.version} 的草稿${saved.effectiveDate ? `（生效日期 ${saved.effectiveDate}）` : "（还没填生效日期，发布前补上即可）"}。用户端仍显示上一版，发布后才会替换。`, "success");
+  } catch (error) {
+    setSmallDialogStatus("#platform-content-editor-status", `保存失败：${friendlyError(error)}`, "error");
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function publishPlatformContentVersion(version) {
+  const key = state.platformContent.activeKey;
+  if (!version) { setSmallDialogStatus("#platform-content-editor-status", "请先在上方历史版本里选择要发布的版本", "error"); return; }
+  const effectiveDate = document.querySelector("#platform-content-effective-date").value.trim();
+  if (!window.confirm(`确认把《${key}》的版本 ${version} 发布给用户端吗？旧版本会保留在历史里。`)) return;
+  try {
+    await requestJson(`/api/admin/platform-content/${encodeURIComponent(key)}/publish`, { method: "POST", body: JSON.stringify({ version, effectiveDate }) });
+    await loadPlatformContent();
+    await openPlatformContentEditor(key);
+    setSmallDialogStatus("#platform-content-editor-status", `已发布版本 ${version}，用户端现在读这一版。`, "success");
+  } catch (error) {
+    setSmallDialogStatus("#platform-content-editor-status", `发布失败：${friendlyError(error)}`, "error");
+  }
+}
+
+async function unpublishPlatformContent() {
+  const key = state.platformContent.activeKey;
+  if (!window.confirm(`确认下架《${key}》的当前版本吗？用户端会回到「尚未发布」，历史版本不会删除。`)) return;
+  try {
+    await requestJson(`/api/admin/platform-content/${encodeURIComponent(key)}/unpublish`, { method: "POST", body: JSON.stringify({}) });
+    await loadPlatformContent();
+    await openPlatformContentEditor(key);
+    setSmallDialogStatus("#platform-content-editor-status", "已下架当前版本，用户端显示「尚未发布」；历史版本仍保留。", "success");
+  } catch (error) {
+    setSmallDialogStatus("#platform-content-editor-status", `下架失败：${friendlyError(error)}`, "error");
+  }
+}
+
+function handlePlatformContentAction(button) {
+  const action = button.dataset.platformContentAction;
+  if (action === "edit") { openPlatformContentEditor(button.dataset.key); return; }
+  if (action === "load") {
+    const item = state.platformContent.history.find((version) => version.version === button.dataset.version);
+    if (!item) return;
+    document.querySelector("#platform-content-version").value = nextPlatformContentVersion(item.version);
+    // 正文、备注、生效日期一起带过来：这样"载入旧版 → 改正文 → 再存"不会把已定的生效日期弄丢。
+    document.querySelector("#platform-content-effective-date").value = item.effectiveDate || "";
+    document.querySelector("#platform-content-note").value = item.note || "";
+    document.querySelector("#platform-content-body").value = item.body || "";
+    setSmallDialogStatus("#platform-content-editor-status", `已把版本 ${item.version} 的正文载入编辑框（版本号已预填为下一版）。`, "success");
+    return;
+  }
+  if (action === "publish") { publishPlatformContentVersion(button.dataset.version); return; }
+  if (action === "unpublish") { unpublishPlatformContent(); }
+}
+
 const moderationStatusLabels = {
   pending: "待处理",
   processing: "处理中",
+  awaiting_reply: "待用户补充",
+  user_replied: "用户已补充",
   resolved: "已处理",
   rejected: "不成立",
 };
@@ -7488,11 +10653,16 @@ function renderModerationSummary() {
 }
 
 function moderationActions(report) {
+  const hasMessages = Array.isArray(report.messages) && report.messages.length > 0;
+  const conversation = hasMessages
+    ? `<button class="icon-text-action" data-moderation-action="ask" data-id="${escapeHtml(report.id)}">沟通记录</button>`
+    : report.canAsk ? `<button class="icon-text-action" data-moderation-action="ask" data-id="${escapeHtml(report.id)}">追问</button>` : "";
   if (["resolved", "rejected"].includes(report.status)) {
-    return `<span class="operation-resolution">${escapeHtml(report.resolution || "已结案")}</span>`;
+    return `<div class="question-row-actions"><span class="operation-resolution">${escapeHtml(report.resolution || "已结案")}</span>${conversation}</div>`;
   }
   const buttons = [];
   if (report.status === "pending") buttons.push(`<button class="icon-text-action" data-moderation-action="take" data-id="${escapeHtml(report.id)}">领取</button>`);
+  if (conversation) buttons.push(conversation);
   buttons.push(`<button class="icon-text-action" data-moderation-action="resolve" data-id="${escapeHtml(report.id)}">${report.targetType === "app_feedback" ? "完成" : "保留"}</button>`);
   if (report.targetType !== "app_feedback") buttons.push(`<button class="icon-text-action danger" data-moderation-action="offline" data-id="${escapeHtml(report.id)}">下架</button>`);
   if (report.reportedUser) {
@@ -7505,6 +10675,18 @@ function moderationActions(report) {
   return `<div class="question-row-actions">${buttons.join("")}</div>`;
 }
 
+function moderationConversationHtml(report) {
+  const messages = Array.isArray(report.messages) ? report.messages.slice(-3) : [];
+  const state = report.waitingForUser ? "待用户补充" : report.userReplied ? "用户已补充" : "";
+  if (!messages.length && !state) return "";
+  const transcript = messages.map((message) => `
+    <div class="moderation-message ${message.role === "staff" ? "staff" : "user"}">
+      <span>${message.role === "staff" ? "后台追问" : "用户补充"}</span>
+      <p>${escapeHtml(message.content || "")}</p>
+    </div>`).join("");
+  return `<div class="moderation-conversation"><span class="moderation-conversation-state">${state}</span>${transcript}</div>`;
+}
+
 function renderModerationTable() {
   const body = document.querySelector("#moderation-table-body");
   if (!state.moderationReports.length) {
@@ -7515,11 +10697,82 @@ function renderModerationTable() {
     <tr>
       <td><div class="moderation-badges"><span class="risk-badge ${escapeHtml(report.risk)}">${escapeHtml(moderationRiskLabels[report.risk] || report.risk)}</span><span class="review-status ${escapeHtml(report.status)}">${escapeHtml(moderationStatusLabels[report.status] || report.status)}</span></div></td>
       <td><div class="operation-target"><strong>${escapeHtml(report.targetTitle)}</strong><span>${escapeHtml(report.targetType)} · ${escapeHtml(report.targetId)}</span></div></td>
-      <td><div class="moderation-reason"><strong>${escapeHtml(moderationTypeLabels[report.type] || report.type)} · ${escapeHtml(report.reason)}</strong><span>${escapeHtml(report.detail || "未补充说明")}</span>${report.contact ? `<small>联系方式：${escapeHtml(report.contact)}</small>` : ""}${Array.isArray(report.attachments) && report.attachments.length ? `<div class="moderation-attachments">${report.attachments.map((source, index) => `<a href="${escapeHtml(source)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(source)}" alt="反馈截图 ${index + 1}" /></a>`).join("")}</div>` : ""}</div></td>
+      <td><div class="moderation-reason"><strong>${escapeHtml(moderationTypeLabels[report.type] || report.type)} · ${escapeHtml(report.reason)}</strong><span>${escapeHtml(report.detail || "未补充说明")}</span>${moderationConversationHtml(report)}${report.contact ? `<small>联系方式：${escapeHtml(report.contact)}</small>` : ""}${report.questionId ? `<div class="moderation-question-context"><span class="nl-source">题目反馈</span><small>题目：${escapeHtml(report.questionStemPreview || report.clientStemPreview || report.questionId)}${report.feedbackType ? `（${escapeHtml(report.feedbackType === "correction" ? "题目纠错" : "问题反馈")}）` : ""}</small><button class="text-action" data-moderation-question="${escapeHtml(report.questionId)}" type="button">跳转题目</button><span class="nl-pending" data-moderation-question-status="${escapeHtml(report.questionId)}"></span></div>` : ""}${Array.isArray(report.attachments) && report.attachments.length ? `<div class="moderation-attachments">${report.attachments.map((source, index) => `<a href="${escapeHtml(source)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(source)}" alt="反馈截图 ${index + 1}" /></a>`).join("")}</div>` : ""}</div></td>
       <td><div class="operation-target"><strong>${escapeHtml(report.reporter?.nickname || "系统")}</strong><span>${report.reportedUser ? `被举报：${escapeHtml(report.reportedUser.nickname)}` : "无被举报用户"}</span></div></td>
       <td><div class="operation-time">${escapeHtml(formatTaskTime(report.updatedAt))}<span>${escapeHtml(report.handler || (report.source === "system_review" ? "系统初筛" : "等待领取"))}</span></div></td>
       <td>${moderationActions(report)}</td>
     </tr>`).join("");
+}
+
+// 题目反馈 →「跳转题目」：打开该题详情；打不开（已删除/下架/不存在/不属于当前范围）时**给明确提示**，
+// 而不是静默失败或打开题库首页（2026-10-01 产品负责人要求）。
+async function jumpToFeedbackQuestion(questionId) {
+  const statuses = [...document.querySelectorAll("[data-moderation-question-status]")]
+    .filter((element) => element.dataset.moderationQuestionStatus === String(questionId));
+  const status = statuses.find((element) => element.closest?.("#feedback-chat-dialog")?.open) || statuses[0];
+  const setStatus = (text, bad = true) => { if (status) { status.textContent = text; status.className = bad ? "nl-pending" : "nl-table-count"; } };
+  if (!questionId) { setStatus("这条反馈没带题目 ID"); return; }
+  setStatus("正在定位…", false);
+  try {
+    // 精确读取，不受题族视图、教材目录、分页或旧列表缓存影响。
+    const payload = await requestJson(`/api/admin/questions/${encodeURIComponent(questionId)}`);
+    if (!payload.question || String(payload.question.id) !== String(questionId)) {
+      setStatus("这道题不存在或已删除，无法跳转");
+      return;
+    }
+    await openQuestionEditor(String(questionId), { question: payload.question });
+    document.querySelector("#question-stem")?.scrollIntoView({ block: "center" });
+    setStatus("已打开对应题目", false);
+  } catch (error) {
+    setStatus(`打不开：${friendlyError(error)}`);
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-moderation-question]");
+  if (button) jumpToFeedbackQuestion(button.dataset.moderationQuestion);
+});
+
+// 「查看/裁决」归属确认栏的整洁化（产品负责人 2026-10-01：把说明改为 hover 提示）──────
+// 该栏由 JS 渲染，同一段说明会重复出现（截图里那句"尚无巡检结论…"出现 3 次），
+// 所以用"渲染后统一收拢"的做法：文本较长的说明段 → 收成一个 ? 提示点，内容原文进 title（hover 可见）。
+// 只处理归属确认这一栏，且只处理 .enrichment-muted，避免误伤其他说明与表单。
+const REVIEW_HINT_MIN_LENGTH = 30;
+// 只收"说明类"或"**重复出现**"的长段；**数据类一律保留可见**（自验抓到过：题目 ID、
+// "当前：语法 > 词类(上) > …" 这类信息被误收进 hover，反而把关键信息藏了）。
+const REVIEW_HELP_PREFIXES = ["尚无巡检结论", "无巡检结论", "依据本题现有信息", "这道题还没有巡检结论", "可选择已有题族", "题族归属可以", "体检项未跑", "下面展示"];
+function isReviewDataText(text) {
+  return /question-[0-9a-f]{6}/i.test(text) || /^当前：/.test(text) || /^\d+\s*道/.test(text);
+}
+function compactReviewHelpText(root = document) {
+  const pane = root.querySelector("#question-review-classification");
+  if (!pane) return;
+  const seen = new Set();
+  [...pane.querySelectorAll("p.enrichment-muted, .enrichment-muted")].forEach((element) => {
+    if (element.dataset.compacted === "1") return;
+    const text = String(element.textContent || "").trim();
+    if (text.length < REVIEW_HINT_MIN_LENGTH) return;
+    if (isReviewDataText(text)) return;                       // 数据类：保留平铺
+    const isHelp = REVIEW_HELP_PREFIXES.some((prefix) => text.startsWith(prefix));
+    const isDuplicate = seen.has(text);                        // 同句重复：只留第一处可见
+    seen.add(text);
+    // 产品负责人的口径是"说明一律改 hover"：只要不是数据类就收；重复的同样收（原文进 title）。
+    void isHelp; void isDuplicate;
+    const dot = document.createElement("span");
+    dot.className = "review-hint-dot";
+    dot.textContent = "?";
+    dot.title = text;
+    dot.setAttribute("aria-label", text);
+    element.dataset.compacted = "1";
+    element.replaceWith(dot);
+  });
+}
+function watchReviewHelpText() {
+  const pane = document.querySelector("#question-review-classification");
+  if (!pane || pane.dataset.hintWatched === "1") return;
+  pane.dataset.hintWatched = "1";
+  compactReviewHelpText();
+  new MutationObserver(() => compactReviewHelpText()).observe(pane, { childList: true, subtree: true });
 }
 
 async function loadModeration() {
@@ -7547,6 +10800,177 @@ const moderationRestrictionActions = {
   ban_user: { type: "ban", label: "账号封禁" },
 };
 
+let feedbackChat = null;
+const feedbackChatDrafts = new Map();
+
+function feedbackChatWritable(report) {
+  return report && !["resolved", "rejected"].includes(report.status)
+    && report.source !== "system_review" && report.reporter?.id
+    && !["system", "anonymous"].includes(report.reporter.id);
+}
+
+function feedbackChatTime(value) {
+  const date = new Date(Number(value));
+  return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : "";
+}
+
+function feedbackChatCurrent(chat) {
+  return feedbackChat === chat && chat.token === adminToken() && document.querySelector("#feedback-chat-dialog").open;
+}
+
+function renderFeedbackChatControls(chat) {
+  if (!feedbackChatCurrent(chat)) return;
+  const writable = !chat.report || feedbackChatWritable(chat.report);
+  document.querySelector("#feedback-chat-compose").hidden = !writable;
+  document.querySelector("#feedback-chat-readonly").hidden = Boolean(writable);
+  document.querySelector("#feedback-chat-readonly").textContent = ["resolved", "rejected"].includes(chat.report?.status)
+    ? "已结案，沟通记录只读" : "提交账号不可联系，沟通记录只读";
+  const input = document.querySelector("#feedback-chat-input");
+  input.disabled = !chat.loaded || chat.sending || !writable;
+  document.querySelector("#send-feedback-chat").disabled = input.disabled || chat.loading || !chat.draft.text.trim();
+  document.querySelector("#send-feedback-chat").textContent = chat.sending ? "发送中…" : "发送";
+  document.querySelector("#refresh-feedback-chat").disabled = chat.loading || chat.sending;
+  document.querySelector("#feedback-chat-count").textContent = `${chat.draft.text.length} / 1000`;
+  const status = document.querySelector("#feedback-chat-status");
+  status.textContent = chat.error || (chat.loading ? "正在读取沟通记录…" : chat.notice || "");
+  status.className = `feedback-chat-status${chat.error ? " error" : ""}`;
+}
+
+function renderFeedbackChat(chat, toBottom = false) {
+  if (!feedbackChatCurrent(chat) || !chat.report) return;
+  const report = chat.report;
+  const scroll = document.querySelector("#feedback-chat-scroll");
+  const nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+  const previousTop = scroll.scrollTop;
+  const messages = [...(report.messages || [])].sort((a, b) => Number(a.createdAt) - Number(b.createdAt));
+  const label = ["resolved", "rejected"].includes(report.status) ? "已结案"
+    : messages[messages.length - 1]?.role === "staff" ? "待用户补充"
+      : messages.length ? "用户已补充" : moderationStatusLabels[report.status] || report.status;
+  document.querySelector("#feedback-chat-meta").textContent = `${report.reporter?.nickname || "用户"} · ${report.targetTitle || "反馈"} · ${label}`;
+  // Avoid replacing history on every poll while someone is reading or selecting text.
+  const signature = JSON.stringify(report);
+  if (signature !== chat.signature) {
+    chat.signature = signature;
+    const questionId = report.questionId || (report.targetType === "question" ? report.targetId : "");
+    const attachments = (report.attachments || []).filter((source) => /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(source));
+    document.querySelector("#feedback-chat-original").innerHTML = `
+      <h3>原始反馈</h3><small>${escapeHtml(feedbackChatTime(report.createdAt))}</small>
+      <p>${escapeHtml(report.detail || report.reason || "")}</p>
+      ${questionId ? `<p>相关题目：${escapeHtml(report.questionStemPreview || report.clientStemPreview || questionId)}</p><button class="text-action" data-moderation-question="${escapeHtml(questionId)}" type="button">查看题目</button><span data-moderation-question-status="${escapeHtml(questionId)}"></span>` : ""}
+      ${attachments.length ? `<div class="moderation-attachments">${attachments.map((source, index) => `<a href="${escapeHtml(source)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(source)}" alt="反馈截图 ${index + 1}" /></a>`).join("")}</div>` : ""}`;
+    document.querySelector("#feedback-chat-history").innerHTML = messages.map((message) => `
+      <article class="feedback-chat-entry ${message.role === "staff" ? "staff" : "user"}" data-message-id="${escapeHtml(message.id)}">
+        <header>${message.role === "staff" ? "平台回复" : "用户补充"} · ${escapeHtml(feedbackChatTime(message.createdAt))}</header>
+        <p>${escapeHtml(message.content || "")}</p>
+      </article>`).join("") || '<p class="feedback-chat-empty">暂无沟通记录</p>';
+    if (["resolved", "rejected"].includes(report.status)) {
+      document.querySelector("#feedback-chat-history").insertAdjacentHTML("beforeend",
+        `<p class="feedback-chat-result">${escapeHtml(report.resolution || "已结案")}</p>`);
+    }
+    scroll.scrollTop = toBottom || nearBottom ? scroll.scrollHeight : previousTop;
+  }
+  renderFeedbackChatControls(chat);
+}
+
+async function refreshFeedbackChat(chat = feedbackChat) {
+  if (!chat || !feedbackChatCurrent(chat) || chat.loading || chat.sending) return;
+  chat.loading = true;
+  renderFeedbackChatControls(chat);
+  try {
+    const payload = await requestJson(`/api/admin/moderation/${encodeURIComponent(chat.id)}/messages`, { signal: AbortSignal.timeout(15000) });
+    if (!feedbackChatCurrent(chat)) return;
+    if (!payload.report || payload.report.id !== chat.id) throw new Error("moderation_not_found");
+    const first = !chat.loaded;
+    chat.report = payload.report;
+    chat.loaded = true;
+    chat.error = "";
+    renderFeedbackChat(chat, first);
+  } catch (error) {
+    if (feedbackChatCurrent(chat)) {
+      chat.loaded = false;
+      chat.error = `读取失败：${friendlyError(error)}。请点击刷新重试。`;
+    }
+  } finally {
+    chat.loading = false;
+    if (feedbackChatCurrent(chat)) renderFeedbackChatControls(chat);
+  }
+}
+
+function closeFeedbackChat() {
+  if (feedbackChat) clearInterval(feedbackChat.timer);
+  feedbackChat = null;
+  const dialog = document.querySelector("#feedback-chat-dialog");
+  if (dialog.open) dialog.close();
+}
+
+async function openFeedbackChat(reportId) {
+  closeFeedbackChat();
+  const token = adminToken();
+  const key = `${token}:${reportId}`;
+  if (!feedbackChatDrafts.has(key)) feedbackChatDrafts.set(key, { text: "", pending: null });
+  const chat = feedbackChat = { id: reportId, token, draft: feedbackChatDrafts.get(key), loaded: false, loading: false, sending: false };
+  document.querySelector("#feedback-chat-meta").textContent = "";
+  document.querySelector("#feedback-chat-original").innerHTML = "";
+  document.querySelector("#feedback-chat-history").innerHTML = "";
+  document.querySelector("#feedback-chat-input").value = chat.draft.text;
+  document.querySelector("#feedback-chat-dialog").showModal();
+  await refreshFeedbackChat(chat);
+  if (!feedbackChatCurrent(chat)) return;
+  chat.timer = setInterval(() => {
+    if (!document.hidden && document.querySelector("#feedback-chat-dialog").matches(":modal")) refreshFeedbackChat(chat);
+  }, 10000);
+}
+
+async function sendFeedbackChat(event) {
+  event.preventDefault();
+  const chat = feedbackChat;
+  if (!chat || !feedbackChatCurrent(chat) || !chat.loaded || chat.sending || chat.loading || !feedbackChatWritable(chat.report)) return;
+  const content = chat.draft.text.trim();
+  if (!content || content.length > 1000) return;
+  if (!chat.draft.pending || chat.draft.pending.content !== content) {
+    chat.draft.pending = { content, clientMessageId: `admin-${crypto.randomUUID()}` };
+  }
+  const pending = chat.draft.pending;
+  const reportId = chat.id;
+  chat.sending = true;
+  chat.error = "";
+  renderFeedbackChatControls(chat);
+  try {
+    const payload = await requestJson(`/api/admin/moderation/${encodeURIComponent(reportId)}/messages`, {
+      method: "POST", body: JSON.stringify(pending), signal: AbortSignal.timeout(15000),
+    });
+    if (!feedbackChatCurrent(chat)) return;
+    chat.report = payload.report;
+    chat.draft.text = "";
+    chat.draft.pending = null;
+    document.querySelector("#feedback-chat-input").value = "";
+    chat.notice = "已发送";
+    renderFeedbackChat(chat, true);
+    await loadModeration();
+  } catch (error) {
+    if (!feedbackChatCurrent(chat)) return;
+    chat.error = `发送失败：${friendlyError(error)}。输入已保留。`;
+    if (["moderation_already_closed", "feedback_recipient_unavailable", "moderation_not_found"].includes(error.message)) {
+      chat.loaded = false;
+      chat.sending = false;
+      await refreshFeedbackChat(chat);
+    }
+  } finally {
+    chat.sending = false;
+    if (feedbackChatCurrent(chat)) renderFeedbackChatControls(chat);
+  }
+}
+
+document.querySelector("#close-feedback-chat").addEventListener("click", closeFeedbackChat);
+document.querySelector("#feedback-chat-dialog").addEventListener("cancel", (event) => { event.preventDefault(); closeFeedbackChat(); });
+document.querySelector("#refresh-feedback-chat").addEventListener("click", () => refreshFeedbackChat());
+document.querySelector("#feedback-chat-compose").addEventListener("submit", sendFeedbackChat);
+document.querySelector("#feedback-chat-input").addEventListener("input", (event) => {
+  if (!feedbackChat) return;
+  feedbackChat.draft.text = event.target.value;
+  renderFeedbackChatControls(feedbackChat);
+});
+
 async function handleModerationAction(reportId, action) {
   const report = state.moderationReports.find((item) => item.id === reportId);
   const isFeedback = report && report.targetType === "app_feedback";
@@ -7562,6 +10986,10 @@ async function handleModerationAction(reportId, action) {
       title: `${restriction.label}：${report && report.reportedUser ? report.reportedUser.nickname || report.reportedUser.id : "未知用户"}`,
       copy: `${report ? report.targetTitle : ""} · 限制到期自动失效，提前解除仅限超级管理员`,
     });
+    return;
+  }
+  if (action === "ask") {
+    await openFeedbackChat(reportId);
     return;
   }
   const labels = {
@@ -7587,13 +11015,34 @@ async function handleModerationAction(reportId, action) {
 const billingProductTypeLabels = {
   project_subscription: "项目套餐",
   subject_subscription: "单科订阅",
+  bean_pack: "豆币充值",
+  // 历史数据（迁移前）仍可能带旧类型值
   ai_credit_pack: "额度充值",
 };
 
 const billingTransactionLabels = {
-  grant: "额度入账",
+  grant: "豆币入账",
   consume: "AI 消费",
+  revoke: "退款扣回",
 };
+
+function setBillingTab(tab, options = {}) {
+  const validTabs = new Set(["products", "account", "ledger", "orders"]);
+  const nextTab = validTabs.has(tab) ? tab : "products";
+  state.billingTab = nextTab;
+  document.querySelectorAll("[data-billing-tab]").forEach((button) => {
+    const active = button.dataset.billingTab === nextTab;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll("[data-billing-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.billingPanel !== nextTab;
+  });
+  if (options.focus) document.querySelector(`[data-billing-tab="${nextTab}"]`)?.focus();
+  if (nextTab === "account") loadBillingUsers(state.billingUsersPage);
+  if (nextTab === "orders") loadBillingOrders(state.billingOrdersPage);
+}
 
 function formatMoney(cents) {
   return `¥${(Number(cents || 0) / 100).toFixed(2)}`;
@@ -7605,113 +11054,431 @@ function formatBillingExpiry(timestamp) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function formatBillingDuration(days) {
+  return Number(days) === 0 ? "永久" : `${Number(days)} 天`;
+}
+
+function formatBillingValidity(days) {
+  return Number(days) === 0 ? "长期有效" : `${Number(days)} 天有效`;
+}
+
 function renderBillingSummary() {
   const counts = state.billingCounts || {};
   const account = state.billingAccount || {};
   const items = [
     ["在售商品", counts.activeProducts || 0, `${state.billingProducts.length} 个商品配置`],
-    ["有效订阅", counts.activeSubscriptions || 0, "订阅权与 AI 额度分账"],
-    ["AI 额度余额", counts.creditBalance || 0, `${account.permanentCredits || 0} 点长期有效`],
-    ["额度流水", counts.transactions || 0, "发放与消费均可追溯"],
+    ["有效订阅", counts.activeSubscriptions || 0, "套餐订单与赠送豆币分账"],
+    ["豆币余额", counts.beanBalance || 0, `${account.permanentBeans || 0} 豆币长期有效`],
+    ["豆币流水", counts.transactions || 0, "发放与消费均可追溯"],
   ];
   document.querySelector("#billing-summary").innerHTML = items.map(([label, value, detail]) => `<div class="operation-summary-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></div>`).join("");
 }
 
 function billingProductActions(product) {
-  return `<div class="question-row-actions"><button class="icon-text-action" data-billing-product-action="edit" data-id="${escapeHtml(product.id)}">编辑</button><button class="icon-text-action ${product.active ? "danger" : ""}" data-billing-product-action="${product.active ? "disable" : "enable"}" data-id="${escapeHtml(product.id)}">${product.active ? "停用" : "上架"}</button></div>`;
+  return `<div class="question-row-actions"><button class="icon-text-action" data-billing-product-action="edit" data-id="${escapeHtml(product.id)}">编辑${product.productType === "bean_pack" ? "" : "规格"}</button><button class="icon-text-action ${product.active ? "danger" : ""}" data-billing-product-action="${product.active ? "disable" : "enable"}" data-id="${escapeHtml(product.id)}">${product.active ? "停用" : "上架"}</button></div>`;
+}
+
+function isBeanPackProduct(product) {
+  return product.productType === "bean_pack" || product.productType === "ai_credit_pack";
+}
+
+// 豆币充值也按套餐组呈现（2026-10-11 产品负责人确认）：全组只有一个固定标识，组名可在「编辑组」里改。
+// 服务端 app/api/src/billing-store.js 会把豆币商品的 packageKey 定死在这个组，这里只读不写。
+function billingBeanPackageKey() {
+  return state.billingProducts.find(isBeanPackProduct)?.packageKey || "bean-recharge";
+}
+
+function billingBeanPackageName() {
+  return state.billingProducts.find(isBeanPackProduct)?.packageName || "豆币充值";
+}
+
+// 套餐组表头 + 组内规格行。订阅组与豆币组共用一套：差别只在「类型/范围、订阅权益」两列的文案，
+// 以及组内排序（订阅按期限、豆币按豆币数量）。
+function billingPackageGroupRows(key, products, kind) {
+  const bean = kind === "bean";
+  const first = products[0];
+  const expanded = !state.billingCollapsedPackages?.has(key);
+  const prices = products.map((item) => item.priceCents);
+  const priceRange = Math.min(...prices) === Math.max(...prices)
+    ? formatMoney(prices[0])
+    : `${formatMoney(Math.min(...prices))}–${formatMoney(Math.max(...prices))}`;
+  const typeText = bean ? "豆币充值" : (billingProductTypeLabels[first.productType] || first.productType);
+  const scopeText = bean ? "独立豆币账户" : (first.scopeLabel || "未填写范围");
+  const header = `<tr class="billing-package-row">
+      <td><div class="content-title-cell"><strong>${escapeHtml(first.packageName || first.name)}</strong><span>${escapeHtml(key)}</span></div></td>
+      <td><div class="operation-target"><strong>${escapeHtml(typeText)}</strong><span>${escapeHtml(scopeText)}</span></div></td>
+      <td><span class="billing-price billing-price-range">${escapeHtml(priceRange)}</span></td>
+      <td>${products.length} 个规格</td>
+      <td>按规格配置</td>
+      <td><span class="content-status ${products.some((item) => item.active) ? "published" : "offline"}">${products.some((item) => item.active) ? "在售" : "全部停用"}</span></td>
+      <td><div class="question-row-actions"><button class="icon-text-action" data-billing-product-action="toggle" data-package-key="${escapeHtml(key)}" aria-expanded="${expanded}">${expanded ? "收起" : "展开"}规格</button><button class="icon-text-action" data-billing-product-action="group" data-package-key="${escapeHtml(key)}">编辑组</button><button class="icon-text-action" data-billing-product-action="copy" data-id="${escapeHtml(first.id)}">新增规格</button></div></td>
+    </tr>`;
+  if (!expanded) return header;
+  const sorted = bean
+    ? products.slice().sort((a, b) => a.beanAmount - b.beanAmount)
+    : products.slice().sort((a, b) => a.durationDays - b.durationDays);
+  return header + sorted.map((product) => (bean ? `<tr class="billing-variant-row">
+      <td><div class="content-title-cell"><strong>↳ ${escapeHtml(product.name)}</strong><span>${escapeHtml(product.id)}</span></div></td>
+      <td>豆币充值</td>
+      <td><span class="billing-price">${escapeHtml(formatMoney(product.priceCents))}</span></td>
+      <td>独立豆币账户</td>
+      <td>${escapeHtml(`${product.beanAmount} 豆币 · 长期有效`)}</td>
+      <td><span class="content-status ${product.active ? "published" : "offline"}">${product.active ? "在售" : "停用"}</span></td>
+      <td>${billingProductActions(product)}</td>
+    </tr>` : `<tr class="billing-variant-row">
+      <td><div class="content-title-cell"><strong>↳ ${escapeHtml(formatBillingDuration(product.durationDays))}规格</strong><span>${escapeHtml(product.name)} · ${escapeHtml(product.id)}</span></div></td>
+      <td>${escapeHtml(product.scopeLabel || "继承套餐组课程范围")}</td>
+      <td><span class="billing-price">${escapeHtml(formatMoney(product.priceCents))}</span></td>
+      <td>${escapeHtml(formatBillingDuration(product.durationDays))}</td>
+      <td>${escapeHtml(`${product.bonusBeans} 豆币 · ${formatBillingValidity(product.bonusValidityDays ?? product.durationDays)}`)}</td>
+      <td><span class="content-status ${product.active ? "published" : "offline"}">${product.active ? "在售" : "停用"}</span></td>
+      <td>${billingProductActions(product)}</td>
+    </tr>`)).join("");
 }
 
 function renderBillingProducts() {
   const body = document.querySelector("#billing-product-table-body");
-  body.innerHTML = state.billingProducts.map((product) => {
-    const subscription = product.productType !== "ai_credit_pack";
-    const creditText = subscription
-      ? `${product.bonusAiCredits} 点 · ${product.bonusValidityDays || product.durationDays} 天有效`
-      : `${product.creditAmount} 点 · 长期有效`;
-    return `<tr>
-      <td><div class="content-title-cell"><strong>${escapeHtml(product.name)}</strong><span>${escapeHtml(product.id)}</span></div></td>
-      <td><div class="operation-target"><strong>${escapeHtml(billingProductTypeLabels[product.productType] || product.productType)}</strong><span>${escapeHtml(product.scopeLabel || "未填写范围")}</span></div></td>
-      <td><span class="billing-price">${escapeHtml(formatMoney(product.priceCents))}</span></td>
-      <td>${subscription ? `${escapeHtml(product.durationDays)} 天` : "独立额度账户"}</td>
-      <td>${escapeHtml(creditText)}</td>
-      <td><span class="content-status ${product.active ? "published" : "offline"}">${product.active ? "在售" : "停用"}</span></td>
-      <td>${billingProductActions(product)}</td>
-    </tr>`;
-  }).join("") || '<tr><td colspan="7" class="question-table-empty">尚未配置商品</td></tr>';
+  const groups = new Map();
+  const rechargeGroups = new Map();
+  state.billingProducts.forEach((product) => {
+    const target = isBeanPackProduct(product) ? rechargeGroups : groups;
+    const key = product.packageKey || product.id;
+    if (!target.has(key)) target.set(key, []);
+    target.get(key).push(product);
+  });
+  const groupRows = [...groups].map(([key, products]) => billingPackageGroupRows(key, products, "subscription")).join("");
+  // 豆币充值组排在订阅套餐组之后（沿用原来的位置关系），组表头与订阅组同一套交互。
+  const rechargeRows = [...rechargeGroups].map(([key, products]) => billingPackageGroupRows(key, products, "bean")).join("");
+  body.innerHTML = groupRows + rechargeRows || '<tr><td colspan="7" class="question-table-empty">尚未配置商品</td></tr>';
 }
 
 function renderBillingAccount() {
-  const account = state.billingAccount || { subscriptions: [], creditLots: [], transactions: [] };
-  document.querySelector("#billing-account-copy").textContent = `${account.userId || "test-user"} · ${account.nickname || "薯考同学"} · 当前 ${account.creditBalance || 0} 点`;
-  document.querySelector("#billing-entitlements").innerHTML = account.subscriptions.length
-    ? account.subscriptions.map((item) => `<div class="billing-entitlement-row"><div><strong>${escapeHtml(item.product?.name || item.productId)}</strong><span>${escapeHtml(item.source)}</span></div><span>有效至 ${escapeHtml(formatBillingExpiry(item.expiresAt))}</span></div>`).join("")
-    : '<div class="billing-empty">当前没有有效订阅</div>';
-  document.querySelector("#billing-lot-table-body").innerHTML = account.creditLots.map((lot) => `<tr><td><div class="billing-source-cell"><strong>${escapeHtml(lot.sourceLabel)}</strong><span>${escapeHtml(lot.source)}</span></div></td><td>${escapeHtml(lot.remainingAmount)} / ${escapeHtml(lot.grantedAmount)}</td><td>${escapeHtml(formatBillingExpiry(lot.expiresAt))}</td></tr>`).join("") || '<tr><td colspan="3" class="question-table-empty">暂无额度批次</td></tr>';
-  document.querySelector("#billing-ledger-table-body").innerHTML = account.transactions.map((item) => `<tr><td>${escapeHtml(formatTaskTime(item.createdAt))}</td><td><div class="billing-source-cell"><strong>${escapeHtml(billingTransactionLabels[item.transactionType] || item.transactionType)}</strong><span>${escapeHtml(item.description || item.source)}</span></div></td><td><span class="billing-amount ${item.amount >= 0 ? "positive" : "negative"}">${item.amount >= 0 ? "+" : ""}${escapeHtml(item.amount)}</span></td><td>${escapeHtml(item.balanceAfter)}</td></tr>`).join("") || '<tr><td colspan="4" class="question-table-empty">暂无额度流水</td></tr>';
+  const account = state.billingAccount || { subscriptions: [], beanLots: [], transactions: [] };
+  state.billingUserId = account.publicId || account.userId || state.billingUserId || "test-user";
+  document.querySelector("#billing-user-id").value = state.billingUserId;
+  document.querySelector("#billing-account-copy").textContent = `${account.publicId || account.userId || state.billingUserId} · ${account.nickname || "薯考同学"} · 当前 ${account.beanBalance || 0} 豆币`;
+  const rights = (type, label) => {
+    const items = account.subscriptions.filter((item) => (item.product?.productType === "membership_subscription") === (type === "member"));
+    return `<div class="billing-rights-group"><strong>${label}</strong>${items.length
+      ? items.map((item) => `<div class="billing-entitlement-row"><div><strong>${escapeHtml(item.product?.packageName || item.product?.name || item.productId)}</strong><span>${escapeHtml(item.source)}</span></div><span>有效至 ${escapeHtml(formatBillingExpiry(item.expiresAt))}</span></div>`).join("")
+      : '<div class="billing-empty">暂无有效权益</div>'}</div>`;
+  };
+  document.querySelector("#billing-entitlements").innerHTML = rights("member", "会员权益") + rights("library", "题库权益");
+  document.querySelector("#billing-lot-table-body").innerHTML = account.beanLots.map((lot) => `<tr><td><div class="billing-source-cell"><strong>${escapeHtml(lot.sourceLabel)}</strong><span>${escapeHtml(lot.source)}</span></div></td><td>${escapeHtml(lot.remainingAmount)} / ${escapeHtml(lot.grantedAmount)}</td><td>${escapeHtml(formatBillingExpiry(lot.expiresAt))}</td></tr>`).join("") || '<tr><td colspan="3" class="question-table-empty">暂无豆币批次</td></tr>';
+  document.querySelector("#billing-ledger-table-body").innerHTML = account.transactions.map((item) => `<tr><td>${escapeHtml(formatTaskTime(item.createdAt))}</td><td><div class="billing-source-cell"><strong>${escapeHtml(billingTransactionLabels[item.transactionType] || item.transactionType)}</strong><span>${escapeHtml(item.description || item.source)}</span></div></td><td><span class="billing-amount ${item.amount >= 0 ? "positive" : "negative"}">${item.amount >= 0 ? "+" : ""}${escapeHtml(item.amount)}</span></td><td>${escapeHtml(item.balanceAfter)}</td></tr>`).join("") || '<tr><td colspan="4" class="question-table-empty">暂无豆币流水</td></tr>';
+  document.querySelector("#billing-grant-product").disabled = false;
+  document.querySelector("#billing-grant-credits").disabled = false;
 }
 
-async function loadBilling() {
+function openBillingAccountDialog(userId = state.billingUserId) {
+  const dialog = document.querySelector("#billing-account-dialog");
+  document.querySelector("#billing-user-id").value = userId || "";
+  document.querySelector("#billing-account-copy").textContent = "正在读取账号";
+  document.querySelector("#billing-entitlements").innerHTML = "";
+  document.querySelector("#billing-lot-table-body").innerHTML = "";
+  document.querySelector("#billing-grant-product").disabled = true;
+  document.querySelector("#billing-grant-credits").disabled = true;
+  setSmallDialogStatus("#billing-account-status", "正在读取账号", "loading");
+  if (!dialog.open) dialog.showModal();
+  if (userId) loadBilling(userId);
+  else {
+    setSmallDialogStatus("#billing-account-status", "请输入用户 ID", "error");
+    document.querySelector("#billing-user-id").focus();
+  }
+}
+
+function renderBillingUsers() {
+  const body = document.querySelector("#billing-users-body");
+  const rights = (subscriptions, membership) => {
+    const items = subscriptions.filter((item) => (item.productType === "membership_subscription") === membership);
+    return items.length
+      ? `<div class="billing-rights-list">${items.map((item) => `<span>${escapeHtml(item.name)} · ${escapeHtml(formatBillingExpiry(item.expiresAt))}</span>`).join("")}</div>`
+      : "—";
+  };
+  body.innerHTML = state.billingUsers.map((user) => `<tr>
+    <td><strong>${escapeHtml(user.publicId || "待分配")}</strong></td>
+    <td>${escapeHtml(user.nickname)}</td>
+    <td>${rights(user.subscriptions, true)}</td>
+    <td>${rights(user.subscriptions, false)}</td>
+    <td>${escapeHtml(user.beanBalance)}</td>
+    <td>${escapeHtml(user.orderCount)}</td>
+    <td><button class="icon-text-action" data-billing-view-user="${escapeHtml(user.publicId || user.userId)}">查看</button></td>
+  </tr>`).join("") || '<tr><td colspan="7" class="question-table-empty">没有匹配的用户</td></tr>';
+  document.querySelector("#billing-users-page-label").textContent = `第 ${state.billingUsersPage} 页 · 共 ${state.billingUsersTotal} 位用户`;
+  document.querySelector("#billing-users-prev").disabled = state.billingUsersPage <= 1;
+  document.querySelector("#billing-users-next").disabled = state.billingUsersPage * 20 >= state.billingUsersTotal;
+}
+
+async function loadBillingUsers(page = 1) {
+  const query = document.querySelector("#billing-users-search").value.trim();
   try {
-    const payload = await requestJson("/api/admin/billing?userId=test-user");
+    const result = await requestJson(`/api/admin/billing/users?query=${encodeURIComponent(query)}&page=${page}&pageSize=20`);
+    state.billingUsers = result.users;
+    state.billingUsersPage = result.page;
+    state.billingUsersTotal = result.total;
+    renderBillingUsers();
+  } catch (error) {
+    document.querySelector("#billing-users-body").innerHTML = `<tr><td colspan="7" class="question-table-empty">读取失败：${escapeHtml(friendlyError(error))}</td></tr>`;
+  }
+}
+
+function billingOrderBeanText(order, account) {
+  const lot = (account.beanLots || []).find((item) => item.id === order.beanLotId);
+  if (!lot) return "无赠币";
+  return `${lot.remainingAmount} / ${lot.grantedAmount}`;
+}
+
+function billingOrderEntitlementText(order, account) {
+  if (!order.entitlementId) return "非订阅订单";
+  if (order.status === "refunded" && order.refundMode === "revoke") return "已收回";
+  const entitlement = (account.subscriptions || []).find((item) => item.id === order.entitlementId);
+  if (!entitlement) return "权益记录缺失";
+  return entitlement.expiresAt ? `有效至 ${formatBillingExpiry(entitlement.expiresAt)}` : "永久有效";
+}
+
+function billingOrderStatusCell(order) {
+  if (order.status !== "refunded") {
+    return `<div class="question-row-actions"><button class="icon-text-action danger" data-billing-order-action="refund" data-id="${escapeHtml(order.id)}">退款</button><button class="icon-text-action" data-billing-order-action="refund_only" data-id="${escapeHtml(order.id)}">仅退款</button></div>`;
+  }
+  const label = order.refundMode === "refund_only" ? "已退款 · 仅退款" : "已退款 · 已收回";
+  return `<span class="content-status offline">${escapeHtml(label)}</span>`;
+}
+
+function renderBillingOrders() {
+  document.querySelector("#billing-order-table-body").innerHTML = state.billingOrders.map((order) => `<tr>
+      <td>${escapeHtml(formatTaskTime(order.createdAt))}</td>
+      <td><strong>${escapeHtml(order.publicId || order.userId)}</strong><br>${escapeHtml(order.nickname || "")}</td>
+      <td><div class="billing-source-cell"><strong>${escapeHtml(order.productName || order.productId)}${order.channel === "user_test_simulation" ? " · 测试订单" : ""}</strong><span>${escapeHtml(order.id)}</span></div></td>
+      <td><span class="billing-price">${escapeHtml(formatMoney(order.priceCents))}</span></td>
+      <td>${order.beanLotId ? escapeHtml(`${order.beanRemaining} / ${order.beanGranted}`) : "无赠币"}</td>
+      <td>${!order.entitlementId ? "非订阅订单" : order.entitlementRevoked ? "已收回" : escapeHtml(formatBillingExpiry(order.entitlementExpiresAt))}</td>
+      <td>${billingOrderStatusCell(order)}</td>
+    </tr>`).join("") || '<tr><td colspan="7" class="question-table-empty">暂无订单</td></tr>';
+  document.querySelector("#billing-orders-page-label").textContent = `第 ${state.billingOrdersPage} 页 · 共 ${state.billingOrdersTotal} 笔订单`;
+  document.querySelector("#billing-orders-prev").disabled = state.billingOrdersPage <= 1;
+  document.querySelector("#billing-orders-next").disabled = state.billingOrdersPage * 20 >= state.billingOrdersTotal;
+}
+
+async function loadBillingOrders(page = 1) {
+  const query = document.querySelector("#billing-orders-search").value.trim();
+  const status = document.querySelector("#billing-orders-status").value;
+  try {
+    const result = await requestJson(`/api/admin/billing/orders?query=${encodeURIComponent(query)}&status=${encodeURIComponent(status)}&page=${page}&pageSize=20`);
+    state.billingOrders = result.orders;
+    state.billingOrdersPage = result.page;
+    state.billingOrdersTotal = result.total;
+    renderBillingOrders();
+  } catch (error) {
+    document.querySelector("#billing-order-table-body").innerHTML = `<tr><td colspan="7" class="question-table-empty">读取失败：${escapeHtml(friendlyError(error))}</td></tr>`;
+  }
+}
+
+async function refundBillingOrder(orderId, mode) {
+  const modeLabel = mode === "refund_only" ? "仅退款（不收回订阅权、不扣回未消费赠币）" : "退款（收回订阅权 + 扣回未消费赠币）";
+  if (!window.confirm(`确认对订单执行「${modeLabel}」吗？操作会写入日志。`)) return;
+  try {
+    await requestJson(`/api/admin/billing/orders/${encodeURIComponent(orderId)}/refund`, {
+      method: "POST",
+      body: JSON.stringify({ mode, reason: `后台操作：${modeLabel}` }),
+    });
+    await Promise.all([loadBilling(), loadBillingOrders(state.billingOrdersPage), loadBillingUsers(state.billingUsersPage)]);
+  } catch (error) {
+    window.alert(`退款失败：${friendlyError(error)}`);
+  }
+}
+
+async function loadBilling(userId = state.billingUserId) {
+  const nextUserId = String(userId || "").trim();
+  if (!nextUserId) {
+    window.alert("请先填写用户 ID");
+    return;
+  }
+  const sequence = ++state.billingLoadSequence;
+  try {
+    const payload = await requestJson(`/api/admin/billing?userId=${encodeURIComponent(nextUserId)}`);
+    if (sequence !== state.billingLoadSequence) return;
+    state.billingUserId = nextUserId;
     state.billingProducts = payload.products;
     state.billingAccount = payload.account;
     state.billingCounts = payload.counts;
     renderBillingSummary();
     renderBillingProducts();
     renderBillingAccount();
+    setSmallDialogStatus("#billing-account-status");
   } catch (error) {
-    document.querySelector("#billing-product-table-body").innerHTML = `<tr><td colspan="7" class="question-table-empty">读取失败：${escapeHtml(friendlyError(error))}</td></tr>`;
+    if (sequence !== state.billingLoadSequence) return;
+    state.billingUserId = "";
+    state.billingAccount = null;
+    document.querySelector("#billing-account-copy").textContent = "未选择用户";
+    document.querySelector("#billing-entitlements").innerHTML = "";
+    document.querySelector("#billing-lot-table-body").innerHTML = "";
+    document.querySelector("#billing-ledger-table-body").innerHTML = "";
+    document.querySelector("#billing-grant-product").disabled = true;
+    document.querySelector("#billing-grant-credits").disabled = true;
+    if (document.querySelector("#billing-account-dialog").open) {
+      setSmallDialogStatus("#billing-account-status", `读取失败：${friendlyError(error)}`, "error");
+    } else window.alert(`读取账号失败：${friendlyError(error)}`);
   }
 }
 
+function billingScopeSelection(selector) {
+  return [...document.querySelectorAll(`${selector} input:checked`)].map((input) => input.value);
+}
+
+function renderBillingScopeOptions(selector, options, selected, emptyText) {
+  const container = document.querySelector(`${selector} .billing-scope-options`);
+  const known = new Set(options.map((option) => option.id));
+  const entries = [
+    ...options,
+    ...selected.filter((id) => !known.has(id)).map((id) => ({ id, name: `原有选项（${id}）` })),
+  ];
+  container.innerHTML = entries.length
+    ? entries.map((option) => `<label><input type="checkbox" value="${escapeHtml(option.id)}" ${selected.includes(option.id) ? "checked" : ""} /><span>${escapeHtml(option.name)}</span></label>`).join("")
+    : `<p>${escapeHtml(emptyText)}</p>`;
+}
+
+function renderBillingBooks(selected = []) {
+  const project = state.questionCatalog?.projects?.find((item) => item.id === document.querySelector("#billing-product-project").value);
+  const subjectIds = new Set(billingScopeSelection("#billing-product-subjects"));
+  const available = project && subjectIds.size
+    ? state.questionCatalog.books.filter((book) => project.subjects.some((subject) => subject.id === book.subjectId) && subjectIds.has(book.subjectId))
+    : [];
+  renderBillingScopeOptions("#billing-product-books",
+    available.map((book) => ({ id: book.id, name: `${book.title}${book.volume ? ` · ${book.volume}` : ""}` })),
+    selected, project ? "请先选择科目" : "请先选择考试项目");
+}
+
+function renderBillingSubjects(selected = [], selectedBooks = []) {
+  const project = state.questionCatalog?.projects?.find((item) => item.id === document.querySelector("#billing-product-project").value);
+  renderBillingScopeOptions("#billing-product-subjects", project?.subjects || [], selected,
+    "请先选择考试项目");
+  renderBillingBooks(selectedBooks);
+}
+
 function syncBillingProductType() {
-  const isRecharge = document.querySelector("#billing-product-type").value === "ai_credit_pack";
-  ["#billing-product-duration", "#billing-product-bonus", "#billing-product-bonus-validity", "#billing-product-subjects", "#billing-product-books"].forEach((selector) => { document.querySelector(selector).disabled = isRecharge; });
+  const productType = document.querySelector("#billing-product-type").value;
+  // 兼容旧页签仍提交 ai_credit_pack：两者都是「豆币充值」形态（订阅字段禁用、充值数量可填）。
+  const isRecharge = productType === "bean_pack" || productType === "ai_credit_pack";
+  ["#billing-product-duration", "#billing-product-bonus", "#billing-product-bonus-validity", "#billing-product-project", "#billing-product-subjects", "#billing-product-books"].forEach((selector) => { document.querySelector(selector).disabled = isRecharge; });
+  if (isRecharge) {
+    document.querySelector("#billing-product-project").value = "";
+    renderBillingSubjects();
+  }
   document.querySelector("#billing-product-credit-amount").disabled = !isRecharge;
 }
 
-function openBillingProductEditor(productId = "") {
-  const product = state.billingProducts.find((item) => item.id === productId);
+let billingCatalogLoadSequence = 0;
+function openBillingProductEditor(productId = "", copy = false, groupKey = "", recharge = false) {
+  const sequence = ++billingCatalogLoadSequence;
+  const product = state.billingProducts.find((item) => item.id === productId)
+    || state.billingProducts.find((item) => item.packageKey === groupKey);
+  // 「编辑组」点进豆币组走 bean-group：只有组名可改；点某条豆币规格（含组内「新增规格」）走 recharge。
+  const beanGroup = Boolean(!productId && groupKey && product && isBeanPackProduct(product));
+  const mode = beanGroup ? "bean-group" : recharge || isBeanPackProduct(product || {}) ? "recharge" : groupKey ? "group" : copy ? "variant-new" : product ? "variant-edit" : "new";
+  state.billingEditorMode = mode;
+  state.billingEditorPackageKey = groupKey || product?.packageKey || "";
   document.querySelector("#billing-product-form").reset();
-  document.querySelector("#billing-product-id").value = product?.id || "";
-  document.querySelector("#billing-product-name").value = product?.name || "";
-  document.querySelector("#billing-product-type").value = product?.productType || "project_subscription";
+  document.querySelector("#billing-product-id").value = copy ? "" : product?.id || "";
+  document.querySelector("#billing-product-package-name").value = mode === "recharge" ? billingBeanPackageName() : product?.packageName || product?.name || "";
+  document.querySelector("#billing-product-package-key").value = mode === "recharge" ? billingBeanPackageKey() : product?.packageKey || "";
+  document.querySelector("#billing-product-project").innerHTML = '<option value="">正在加载考试项目…</option>';
+  document.querySelector("#billing-product-type").value = product?.productType || (recharge ? "bean_pack" : "project_subscription");
+  [...document.querySelector("#billing-product-type").options].forEach((option) => {
+    option.disabled = mode === "recharge" || mode === "bean-group" ? option.value !== "bean_pack" : option.value === "bean_pack";
+  });
   document.querySelector("#billing-product-scope").value = product?.scopeLabel || "";
-  document.querySelector("#billing-product-price").value = product ? (product.priceCents / 100).toFixed(2) : "";
-  document.querySelector("#billing-product-duration").value = product?.durationDays || 365;
-  document.querySelector("#billing-product-bonus").value = product?.bonusAiCredits || 0;
-  document.querySelector("#billing-product-bonus-validity").value = product?.bonusValidityDays || 365;
-  document.querySelector("#billing-product-credit-amount").value = product?.creditAmount || 0;
-  document.querySelector("#billing-product-subjects").value = (product?.subjectIds || []).join(", ");
-  document.querySelector("#billing-product-books").value = (product?.bookIds || []).join(", ");
+  document.querySelector("#billing-product-price").value = product && !(mode === "recharge" && copy) ? (product.priceCents / 100).toFixed(2) : "";
+  const usedDurations = state.billingProducts.filter((item) => item.packageKey === product?.packageKey).map((item) => item.durationDays);
+  const nextDuration = [30, 180, 365, 0].find((days) => !usedDurations.includes(days));
+  document.querySelector("#billing-product-name").value = mode === "recharge"
+    ? (copy ? "" : product?.name || "")
+    : copy ? `${product?.packageName || product?.name} ${formatBillingDuration(nextDuration ?? 30)}权益` : product?.name || "";
+  document.querySelector("#billing-product-duration").value = copy ? nextDuration ?? 30 : product?.durationDays ?? 365;
+  document.querySelector("#billing-product-bonus").value = product?.bonusBeans || 0;
+  document.querySelector("#billing-product-bonus-validity").value = product?.bonusValidityDays ?? 365;
+  document.querySelector("#billing-product-credit-amount").value = mode === "recharge" && product && !copy ? product.beanAmount : 0;
+  renderBillingScopeOptions("#billing-product-subjects", [], [], "正在加载科目…");
+  renderBillingScopeOptions("#billing-product-books", [], [], "正在加载教材…");
   document.querySelector("#billing-product-active").checked = product?.active !== false;
-  document.querySelector("#billing-product-title").textContent = product ? "编辑商品" : "新增商品";
+  const editingBeanSpec = mode === "recharge" && Boolean(product) && !copy;
+  document.querySelector("#billing-product-title").textContent = mode === "group" ? "编辑套餐组" : mode === "bean-group" ? "编辑豆币充值组" : mode === "variant-new" ? "新增套餐规格" : mode === "variant-edit" ? "编辑规格" : mode === "recharge" ? (editingBeanSpec ? "编辑豆币充值" : "新增豆币充值规格") : "新增套餐组";
+  document.querySelector("#billing-product-description").textContent = mode === "group" ? "修改将同步到组内所有规格；价格和期限请单独编辑规格" : mode === "bean-group" ? "豆币充值组只有组名；单价与豆币数量请单独编辑规格" : mode.startsWith("variant") ? "规格继承套餐组的课程范围，只配置期限、价格和赠币" : mode === "recharge" ? `规格固定归入「${billingBeanPackageName()}」组，只配置单价和豆币数量` : "先填写套餐组资料和第一个规格，保存后可继续新增规格";
+  document.querySelector("#billing-product-group-fields").hidden = mode.startsWith("variant");
+  document.querySelector("#billing-product-subscription-fields").hidden = mode === "bean-group" || mode === "recharge";
+  document.querySelector("#billing-product-variant-fields").hidden = mode === "group" || mode === "bean-group";
+  document.querySelector("#billing-product-project").required = mode === "group" || mode === "new";
+  document.querySelector("#billing-product-package-key").readOnly = mode === "group" || mode === "bean-group" || mode === "recharge";
+  document.querySelector("#billing-product-package-name").readOnly = mode === "recharge";
+  document.querySelector("#billing-product-package-name").required = mode === "group" || mode === "bean-group" || mode === "new";
+  document.querySelector("#billing-product-name").required = mode !== "group" && mode !== "bean-group";
+  document.querySelector("#billing-product-price").required = mode !== "group" && mode !== "bean-group";
+  document.querySelector("#save-billing-product").textContent = mode === "group" || mode === "bean-group" ? "保存套餐组" : "保存规格";
   setSmallDialogStatus("#billing-product-status");
   syncBillingProductType();
-  document.querySelector("#billing-product-dialog").showModal();
+  const dialog = document.querySelector("#billing-product-dialog");
+  dialog.showModal();
+  const saveButton = document.querySelector("#save-billing-product");
+  saveButton.disabled = false;
+  if (mode.startsWith("variant") || mode === "recharge" || mode === "bean-group") return;
+  saveButton.disabled = true;
+  loadQuestionCatalog().then((catalog) => {
+    if (!dialog.open || sequence !== billingCatalogLoadSequence) return;
+    const projects = catalog.projects || [];
+    const projectId = product?.projectId || "";
+    const known = projects.some((item) => item.id === projectId);
+    const choices = projectId && !known ? [{ id: projectId, name: `原有项目（${projectId}）` }, ...projects] : projects;
+    document.querySelector("#billing-product-project").innerHTML = '<option value="">请选择考试项目</option>'
+      + choices.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml([item.region, item.examType, item.name].filter(Boolean).join(" · "))}</option>`).join("");
+    document.querySelector("#billing-product-project").value = projectId;
+    renderBillingSubjects(product?.subjectIds || [], product?.bookIds || []);
+    if (!projects.length) throw new Error("暂无可选考试项目");
+    saveButton.disabled = false;
+  }).catch((error) => {
+    if (dialog.open && sequence === billingCatalogLoadSequence) setSmallDialogStatus("#billing-product-status", `目录读取失败：${friendlyError(error)}，请关闭后重试`, "error");
+  });
 }
 
-function closeBillingProductEditor() { document.querySelector("#billing-product-dialog").close(); }
+function closeBillingProductEditor() {
+  billingCatalogLoadSequence += 1;
+  document.querySelector("#billing-product-dialog").close();
+}
 
 async function saveBillingProduct(event) {
   event.preventDefault();
   const button = document.querySelector("#save-billing-product");
   button.disabled = true;
   try {
-    await requestJson("/api/admin/billing/products", { method: "POST", body: JSON.stringify({
-      id: document.querySelector("#billing-product-id").value,
-      name: document.querySelector("#billing-product-name").value,
+    const mode = state.billingEditorMode;
+    const proposedKey = document.querySelector("#billing-product-package-key").value.trim();
+    if (mode === "new" && proposedKey && state.billingProducts.some((item) => item.packageKey === proposedKey)) {
+      throw new Error("套餐组标识已存在，请使用该组的「新增规格」");
+    }
+    const groupFields = {
+      packageName: document.querySelector("#billing-product-package-name").value,
+      projectId: document.querySelector("#billing-product-project").value,
       productType: document.querySelector("#billing-product-type").value,
       scopeLabel: document.querySelector("#billing-product-scope").value,
+      subjectIds: billingScopeSelection("#billing-product-subjects"),
+      bookIds: billingScopeSelection("#billing-product-books"),
+    };
+    const inherited = state.billingProducts.find((item) => item.packageKey === state.billingEditorPackageKey);
+    const payload = mode === "group" || mode === "bean-group" ? groupFields : {
+      id: document.querySelector("#billing-product-id").value,
+      name: document.querySelector("#billing-product-name").value,
+      ...groupFields,
+      packageKey: mode.startsWith("variant") ? state.billingEditorPackageKey : document.querySelector("#billing-product-package-key").value,
       priceCents: Math.round(Number(document.querySelector("#billing-product-price").value) * 100),
       durationDays: Number(document.querySelector("#billing-product-duration").value),
-      bonusAiCredits: Number(document.querySelector("#billing-product-bonus").value),
+      bonusBeans: Number(document.querySelector("#billing-product-bonus").value),
       bonusValidityDays: Number(document.querySelector("#billing-product-bonus-validity").value),
-      creditAmount: Number(document.querySelector("#billing-product-credit-amount").value),
-      subjectIds: document.querySelector("#billing-product-subjects").value,
-      bookIds: document.querySelector("#billing-product-books").value,
+      beanAmount: Number(document.querySelector("#billing-product-credit-amount").value),
       active: document.querySelector("#billing-product-active").checked,
-    }) });
+    };
+    if (mode.startsWith("variant") && inherited) Object.assign(payload, {
+      packageName: inherited.packageName, projectId: inherited.projectId, productType: inherited.productType,
+      scopeLabel: inherited.scopeLabel, subjectIds: inherited.subjectIds, bookIds: inherited.bookIds,
+    });
+    await requestJson(mode === "group" || mode === "bean-group" ? `/api/admin/billing/packages/${encodeURIComponent(state.billingEditorPackageKey)}` : "/api/admin/billing/products", { method: "POST", body: JSON.stringify(payload) });
     closeBillingProductEditor();
     await loadBilling();
   } catch (error) { setSmallDialogStatus("#billing-product-status", `保存失败：${friendlyError(error)}`, "error"); }
@@ -7720,6 +11487,7 @@ async function saveBillingProduct(event) {
 
 function openBillingGrantProduct() {
   const products = state.billingProducts.filter((item) => item.active);
+  document.querySelector("#billing-grant-product-user").value = state.billingUserId;
   document.querySelector("#billing-grant-product-select").innerHTML = products.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} · ${escapeHtml(formatMoney(product.priceCents))}</option>`).join("");
   setSmallDialogStatus("#billing-grant-product-status");
   document.querySelector("#billing-grant-product-dialog").showModal();
@@ -7728,18 +11496,20 @@ function openBillingGrantProduct() {
 async function grantBillingProduct(event) {
   event.preventDefault();
   try {
-    await requestJson("/api/admin/billing/users/test-user/grant-product", { method: "POST", body: JSON.stringify({ productId: document.querySelector("#billing-grant-product-select").value }) });
+    if (!state.billingUserId) throw new Error("请先读取目标用户");
+    await requestJson(`/api/admin/billing/users/${encodeURIComponent(state.billingUserId)}/grant-product`, { method: "POST", body: JSON.stringify({ productId: document.querySelector("#billing-grant-product-select").value }) });
     document.querySelector("#billing-grant-product-dialog").close();
-    await loadBilling();
+    await Promise.all([loadBilling(), loadBillingUsers(state.billingUsersPage), loadBillingOrders(state.billingOrdersPage)]);
   } catch (error) { setSmallDialogStatus("#billing-grant-product-status", `开通失败：${friendlyError(error)}`, "error"); }
 }
 
 async function grantBillingCredits(event) {
   event.preventDefault();
   try {
-    await requestJson("/api/admin/billing/users/test-user/grant-credits", { method: "POST", body: JSON.stringify({ amount: Number(document.querySelector("#billing-grant-amount").value), source: document.querySelector("#billing-grant-source").value, validityDays: Number(document.querySelector("#billing-grant-validity").value), description: document.querySelector("#billing-grant-description").value }) });
+    if (!state.billingUserId) throw new Error("请先读取目标用户");
+    await requestJson(`/api/admin/billing/users/${encodeURIComponent(state.billingUserId)}/grant-beans`, { method: "POST", body: JSON.stringify({ amount: Number(document.querySelector("#billing-grant-amount").value), source: document.querySelector("#billing-grant-source").value, validityDays: Number(document.querySelector("#billing-grant-validity").value), description: document.querySelector("#billing-grant-description").value }) });
     document.querySelector("#billing-grant-credits-dialog").close();
-    await loadBilling();
+    await Promise.all([loadBilling(), loadBillingUsers(state.billingUsersPage)]);
   } catch (error) { setSmallDialogStatus("#billing-grant-credits-status", `发放失败：${friendlyError(error)}`, "error"); }
 }
 
@@ -7751,7 +11521,7 @@ const operationCategoryLabels = {
   exam: "模拟考试",
   pack: "题包",
   announcement: "公告",
-  billing: "订阅额度",
+  billing: "订阅豆币",
   system: "系统",
 };
 
@@ -7804,6 +11574,9 @@ const operationActionLabels = {
   "billing.product_enable": "上架商品",
   "billing.product_disable": "停用商品",
   "billing.product_grant": "模拟开通",
+  "billing.bean_grant": "发放豆币",
+  "billing.order_refund": "退款扣回",
+  // 历史日志里的旧动作名
   "billing.credit_grant": "发放额度",
 };
 
@@ -7939,9 +11712,13 @@ function knowledgeInspectionPrimaryNodeRole(result = {}) {
   );
 }
 
-function knowledgeInspectionRequiredNodes(result = {}) {
+// structureNodes：调用方可以传"这道题该看的那棵树"的节点（2026-09-27）。
+// 归属确认弹窗按题目自己的教材加载树，而题库页那棵树由另一个教材筛选驱动——不显式传就会用错册，
+// 结论里的节点只能显示成裸 id。
+function knowledgeInspectionRequiredNodes(result = {}, structureNodes = null) {
   const agent2 = knowledgeInspectionAgent(result, 3);
-  const nodeMap = new Map((state.knowledgeStructure?.nodes || []).map((node) => [node.id, node]));
+  const sourceNodes = Array.isArray(structureNodes) ? structureNodes : (state.knowledgeStructure?.nodes || []);
+  const nodeMap = new Map(sourceNodes.map((node) => [node.id, node]));
   const supplied = knowledgeInspectionArray(agent2.requiredNodes);
   const nodes = supplied.length ? supplied.map((node) => ({
     id: String(node?.id || node?.nodeId || ""),
@@ -8387,7 +12164,7 @@ function renderKnowledgeDossierDeltas() {
 }
 
 function renderKnowledgeDossiers() {
-  const selectedNode = state.knowledgeStructure?.nodes?.find((node) => node.id === state.selectedKnowledgeNodeId);
+  const selectedNode = libraryWorkspace.dossierNode();
   document.querySelector("#knowledge-dossier-scope").textContent = selectedNode
     ? `当前范围：${selectedNode.path}`
     : "选择左侧目录，编译或审核该范围内的规范知识概念";
@@ -8398,9 +12175,11 @@ function renderKnowledgeDossiers() {
   renderKnowledgeDossierDeltas();
 }
 
+let knowledgeDossierLoadSequence = 0;
 async function loadKnowledgeDossiers() {
+  const sequence = ++knowledgeDossierLoadSequence;
   const bookId = document.querySelector("#question-book-filter").value;
-  if (!bookId || bookId === "all") {
+  if (!bookId || bookId === "all" || libraryWorkspace.needsDossierSelection()) {
     state.knowledgeDossiers = [];
     state.knowledgeDossierSummary = null;
     state.knowledgeDossierTreeSummary = null;
@@ -8408,16 +12187,21 @@ async function loadKnowledgeDossiers() {
     state.knowledgeDossierRelationTargets = [];
     renderKnowledgeDossiers();
     renderKnowledgeTree();
+    if (libraryWorkspace.needsDossierSelection()) {
+      document.querySelector("#knowledge-dossier-list").innerHTML = '<div class="knowledge-tree-empty">请先选择左侧高亮的档案节点；没有映射时可点击「映射编辑」。</div>';
+    }
     return;
   }
   try {
     const params = new URLSearchParams({
       bookId,
+      directory: "source",
       status: document.querySelector("#knowledge-dossier-status").value,
       query: document.querySelector("#knowledge-dossier-search").value.trim(),
     });
-    if (state.selectedKnowledgeNodeId) params.set("nodeId", state.selectedKnowledgeNodeId);
+    if (libraryWorkspace.dossierNodeId()) params.set("nodeId", libraryWorkspace.dossierNodeId());
     const payload = await requestJson(`/api/admin/knowledge-dossiers?${params}`);
+    if (sequence !== knowledgeDossierLoadSequence) return;
     state.knowledgeDossiers = payload.items || [];
     state.knowledgeDossierSummary = payload.summary || null;
     state.knowledgeDossierTreeSummary = payload.treeSummary || null;
@@ -8429,6 +12213,7 @@ async function loadKnowledgeDossiers() {
     renderKnowledgeDossiers();
     renderKnowledgeTree();
   } catch (error) {
+    if (sequence !== knowledgeDossierLoadSequence) return;
     state.knowledgeDossierTreeSummary = null;
     renderKnowledgeTree();
     setKnowledgeDossierFeedback(`读取失败：${friendlyError(error)}`, "error");
@@ -8437,7 +12222,7 @@ async function loadKnowledgeDossiers() {
 
 async function compileKnowledgeDossiers() {
   const bookId = document.querySelector("#question-book-filter").value;
-  if (!bookId || bookId === "all" || !state.selectedKnowledgeNodeId) {
+  if (!bookId || bookId === "all" || !libraryWorkspace.dossierNodeId()) {
     setKnowledgeDossierFeedback("请先选择一本教材和左侧目录范围。", "error");
     return;
   }
@@ -8447,7 +12232,7 @@ async function compileKnowledgeDossiers() {
   try {
     const payload = await requestJson("/api/admin/knowledge-dossiers/compile", {
       method: "POST",
-      body: JSON.stringify({ bookId, nodeId: state.selectedKnowledgeNodeId }),
+      body: JSON.stringify({ bookId, nodeId: libraryWorkspace.dossierNodeId(), directory: "source" }),
     });
     setKnowledgeDossierFeedback(`编译完成：新增 ${payload.dossiers?.length || 0} 份草稿，生成 ${payload.deltas?.length || 0} 条待审核增量。`);
     await loadKnowledgeDossiers();
@@ -8704,16 +12489,58 @@ function renderKnowledgeInspectionSummary() {
     for (const key of keys) if (summary[key] != null) return summary[key];
     return fallback;
   };
-  const metrics = [
-    ["待人工确认", value(["pendingReview", "pending_review", "pending"], results.filter(knowledgeInspectionCanReview).length)],
-    ["正在巡检", value(["running", "inProgress"], results.filter((item) => knowledgeInspectionStatus(item).includes("running")).length)],
-    ["高风险", value(["highRisk", "high"], results.filter((item) => item.risk === "high").length)],
-    ["已人工采纳", value(["applied"], results.filter((item) => knowledgeInspectionStatus(item) === "applied").length)],
-    ["已拒绝", value(["rejected"], results.filter((item) => knowledgeInspectionStatus(item) === "rejected").length)],
+  // DEC-100（产品手册 §4.6.12）：记录状态四态的口径来自 summary.auditReviewCounts；
+  // 后端还没提供该字段时降级显示 0（不报错），也不再回落到已废止的旧人工结论计数。
+  const auditCounts = summary.auditReviewCounts && typeof summary.auditReviewCounts === "object" ? summary.auditReviewCounts : {};
+  const auditCount = (auditState) => (Number.isFinite(Number(auditCounts[auditState])) ? Number(auditCounts[auditState]) : 0);
+  const recordMetrics = ["pending_review", "reviewed", "repaired", "ignored"].map((auditState) => ({
+    auditState,
+    label: knowledgeInspectionAuditStateLabels[auditState],
+    hint: knowledgeInspectionAuditStateHints[auditState],
+    count: auditCount(auditState),
+  }));
+  // 「正在巡检」「高风险」保留为过程／风险展示，不是记录状态。
+  const processMetrics = [
+    { label: "正在巡检", hint: "过程：Agent 1–3 是否还在跑", count: value(["running", "inProgress"], results.filter((item) => knowledgeInspectionStatus(item).includes("running")).length) },
+    { label: "高风险", hint: "风险展示：问题的影响面", count: value(["highRisk", "high"], results.filter((item) => item.risk === "high").length) },
   ];
-  document.querySelector("#knowledge-inspection-summary").innerHTML = metrics.map(([label, count]) => `
-    <div class="knowledge-inspection-metric"><strong>${escapeHtml(count || 0)}</strong><span>${escapeHtml(label)}</span></div>
-  `).join("");
+  // 确定性体检项（DEC-100）：summary.ruleFindingsByCode 是 code→计数，summary.ruleFindingsPassed 是通过留档的行数。
+  // 中文标题从后端下发的词表取（前端不另写一份 map，见 AGENTS §5）；两个字段都缺失时整组不渲染，不留空壳。
+  const ruleCountsByCode = summary.ruleFindingsByCode && typeof summary.ruleFindingsByCode === "object" ? summary.ruleFindingsByCode : {};
+  const ruleCounts = Object.entries(ruleCountsByCode)
+    .map(([code, count]) => ({ code, count: Number.isFinite(Number(count)) ? Number(count) : 0 }))
+    .filter((item) => item.count > 0);
+  const rulePassed = Number.isFinite(Number(summary.ruleFindingsPassed)) ? Number(summary.ruleFindingsPassed) : null;
+  // 没体检成的书：后端给 summary.ruleFindingsUnavailable = { reason, books }——必须在摘要里说得出来，
+  // 否则"未体检"会看起来像"没有数据"甚至"通过"。
+  const ruleUnavailable = summary.ruleFindingsUnavailable && typeof summary.ruleFindingsUnavailable === "object" ? summary.ruleFindingsUnavailable : null;
+  const ruleUnavailableBooks = ruleUnavailable && Array.isArray(ruleUnavailable.books) ? ruleUnavailable.books.map((book) => String(book || "")).filter(Boolean) : [];
+  const hasRuleMetricCards = ruleCounts.length > 0 || rulePassed != null;
+  const hasRuleFindings = hasRuleMetricCards || Boolean(ruleUnavailable);
+  const ruleGroup = !hasRuleFindings ? "" : `
+    <div class="knowledge-inspection-metric-group is-rule-findings">
+      <span class="knowledge-inspection-metric-group-label">确定性体检项<small>服务端规则算出，与 AI 结论分开</small></span>
+      ${hasRuleMetricCards ? `<div class="knowledge-inspection-metric-row is-rule-findings">
+        ${ruleCounts.map((item) => `<div class="knowledge-inspection-metric is-rule" data-rule-code="${escapeHtml(item.code)}" title="${escapeHtml(knowledgeInspectionRuleFindingTitleByCode(item.code))}"><strong>${escapeHtml(item.count)}</strong><span>${escapeHtml(knowledgeInspectionRuleFindingTitleByCode(item.code))}</span><small>规则项 · ${escapeHtml(item.code)}</small></div>`).join("")}
+        ${rulePassed == null ? "" : `<div class="knowledge-inspection-metric is-rule is-pass" data-rule-code="confirmed"><strong>${escapeHtml(rulePassed)}</strong><span>通过留档</span><small>无规则项命中 · 已留档</small></div>`}
+      </div>` : ""}
+      ${ruleUnavailable ? `<p class="knowledge-inspection-rule-findings-unavailable">有${ruleUnavailableBooks.length ? escapeHtml(ruleUnavailableBooks.length) : "若干"}本教材没体检成（<b>未体检 ≠ 通过</b>）：${escapeHtml(String(ruleUnavailable.reason || "该教材还没有可检索的正文／知识结构"))}${ruleUnavailableBooks.length ? `（${escapeHtml(ruleUnavailableBooks.join("、"))}）` : ""}</p>` : ""}
+    </div>`;
+  document.querySelector("#knowledge-inspection-summary").innerHTML = `
+    <div class="knowledge-inspection-metric-group">
+      <span class="knowledge-inspection-metric-group-label">记录状态<small>人工处理进度，只有这四态</small></span>
+      <div class="knowledge-inspection-metric-row">${recordMetrics.map((metric) => `
+        <div class="knowledge-inspection-metric is-record" data-audit-state="${escapeHtml(metric.auditState)}"><strong>${escapeHtml(metric.count || 0)}</strong><span>${escapeHtml(metric.label)}</span><small>${escapeHtml(metric.hint)}</small></div>
+      `).join("")}</div>
+    </div>
+    <div class="knowledge-inspection-metric-group is-process">
+      <span class="knowledge-inspection-metric-group-label">过程与风险<small>不是记录状态</small></span>
+      <div class="knowledge-inspection-metric-row is-process">${processMetrics.map((metric) => `
+        <div class="knowledge-inspection-metric is-process"><strong>${escapeHtml(metric.count || 0)}</strong><span>${escapeHtml(metric.label)}</span><small>${escapeHtml(metric.hint)}</small></div>
+      `).join("")}</div>
+    </div>
+    ${ruleGroup}
+  `;
 }
 
 function setKnowledgeInspectionFeedback(message = "", tone = "") {
@@ -8759,6 +12586,10 @@ function renderKnowledgeInspectionTable() {
   body.innerHTML = state.knowledgeInspectionResults.map((result) => {
     const question = knowledgeInspectionQuestion(result);
     const status = knowledgeInspectionStatus(result);
+    // DEC-100（产品手册 §4.6.12）：列表状态列显示的是**记录状态四态**（auditReview.state）；
+    // 过程状态（正在巡检／过期／失败）与「题目已变更、旧结论作废」另起徽标，避免把过程当记录状态。
+    const audit = knowledgeInspectionAuditReview(result);
+    const isProcessStatus = ["queued", "running", "agent1_running", "agent2_running", "processing", "stale", "failed", "interrupted"].includes(status);
     const risk = String(result.risk || result.riskLevel || "medium");
     const issues = knowledgeInspectionIssues(result);
     const suggestedPath = knowledgeInspectionSuggestedPath(result);
@@ -8768,10 +12599,10 @@ function renderKnowledgeInspectionTable() {
       : (result.agreement === false || result.hasDisagreement ? "Agent 2 与 Agent 3 存在分歧" : "等待人工综合判断");
     return `<tr>
       <td><div class="knowledge-inspection-question-cell"><strong>${escapeHtml(question.stem || "题目内容暂不可用")}</strong>${questionOptionListHtml(question.options, "compact")}<span>${escapeHtml(question.id || result.questionId || "")} · ${escapeHtml(questionBookName(question.bookId || result.bookId || ""))}${question.version ? ` · v${escapeHtml(question.version)}` : ""}</span><small>当前：${escapeHtml(knowledgeInspectionCurrentPath(result) || "未归属")}</small></div></td>
-      <td><div class="knowledge-inspection-suggestion-cell"><strong>${escapeHtml(suggestedPath || "尚未形成可采纳建议")}</strong>${requiredNodes.length > 1 ? `<span class="knowledge-inspection-required-summary">最小充分知识集 ${requiredNodes.length} 项</span><small>${escapeHtml(requiredNodes.map((node) => node.path).join(" · "))}</small>` : ""}<span>${escapeHtml(agreement)}</span><small>建议只供人工审核，不会自动修改题库</small></div></td>
-      <td><div class="knowledge-inspection-tags"><span class="risk ${escapeHtml(risk)}">${escapeHtml(knowledgeInspectionRiskLabels[risk] || risk)}</span>${issues.map((issue) => `<span>${escapeHtml(knowledgeInspectionIssueLabels[issue] || issue)}</span>`).join("") || "<span>知识归类复核</span>"}</div></td>
-      <td><div class="knowledge-inspection-state"><span class="${escapeHtml(status)}">${escapeHtml(knowledgeInspectionStatusLabels[status] || status)}</span><small>${escapeHtml(formatTaskTime(result.updatedAt || result.createdAt))}</small></div></td>
-      <td><button class="secondary-action" data-knowledge-inspection-action="review" data-question-id="${escapeHtml(question.id || result.questionId || "")}" data-result-id="${escapeHtml(result.id || result.resultId || "")}" type="button">${result.isHistoricalRecord ? "查看旧记录" : (result.answerConflict ? "处理冲突" : (knowledgeInspectionCanReview(result) ? "审核建议" : "查看详情"))}</button><button class="adjudication-hint" data-open-adjudication="${escapeHtml(question.id || result.questionId || "")}" type="button" title="在裁决台中查看这道题的建议">裁决台</button></td>
+      <td><div class="knowledge-inspection-suggestion-cell"><strong>${escapeHtml(suggestedPath || "尚未形成明确建议")}</strong>${requiredNodes.length > 1 ? `<span class="knowledge-inspection-required-summary">最小充分知识集 ${requiredNodes.length} 项</span><small>${escapeHtml(requiredNodes.map((node) => node.path).join(" · "))}</small>` : ""}<span class="knowledge-inspection-source-tag is-ai">AI</span><span>${escapeHtml(agreement)}</span><small>只诊断不改库：采纳与改库请在「完善题目」里完成</small></div></td>
+      <td><div class="knowledge-inspection-tags"><span class="risk ${escapeHtml(risk)}">${escapeHtml(knowledgeInspectionRiskLabels[risk] || risk)}</span>${issues.map((issue) => `<span>${escapeHtml(knowledgeInspectionIssueLabel(issue, issue === result.issue ? result.issueLabel : ""))}</span>`).join("") || "<span>知识归类复核</span>"}</div>${knowledgeInspectionRuleFindingsHtml(result)}</td>
+      <td><div class="knowledge-inspection-state"><span class="${escapeHtml(audit.state)}">${escapeHtml(knowledgeInspectionAuditStateLabels[audit.state])}</span>${audit.invalidated ? '<span class="knowledge-inspection-invalidated-flag">题目已变更，旧结论作废</span>' : ""}${isProcessStatus ? `<span class="${escapeHtml(status)}">${escapeHtml(knowledgeInspectionStatusLabels[status] || status)}</span>` : ""}<small>${escapeHtml(audit.at ? `${knowledgeInspectionAuditActorLabel(audit) || "人工"} · ${formatTaskTime(audit.at)}` : formatTaskTime(result.updatedAt || result.createdAt))}</small></div></td>
+      <td><button class="secondary-action" data-knowledge-inspection-action="review" data-question-id="${escapeHtml(question.id || result.questionId || "")}" data-result-id="${escapeHtml(result.id || result.resultId || "")}" type="button">${result.isHistoricalRecord ? "查看旧记录" : (result.answerConflict ? "查看冲突" : "查看结论")}</button></td>
     </tr>`;
   }).join("");
 }
@@ -9770,11 +13601,9 @@ async function openBlindGoldFormalFamilyManager() {
   if (bookFilter && questionBookId && [...bookFilter.options].some((option) => option.value === questionBookId)) {
     bookFilter.value = questionBookId;
   }
-  const statusFilter = document.querySelector("#question-family-status");
-  const memberStatusFilter = document.querySelector("#question-family-member-status");
+  const statusFilter = document.querySelector("#question-status-filter");
   const search = document.querySelector("#question-family-search");
-  if (statusFilter) statusFilter.value = "all";
-  if (memberStatusFilter) memberStatusFilter.value = target.membershipPending ? "pending_fit" : "all";
+  if (statusFilter) statusFilter.value = target.membershipPending ? "pending" : "all";
   if (search) search.value = target.familyName;
   await loadQuestionFamilies();
   let family = state.questionFamilies.find((candidate) => candidate.id === target.familyId);
@@ -13651,6 +17480,7 @@ function knowledgeInspectionQuery() {
     status: document.querySelector("#knowledge-inspection-status").value,
     risk: document.querySelector("#knowledge-inspection-risk").value,
     issue: document.querySelector("#knowledge-inspection-issue").value,
+    family: document.querySelector("#knowledge-inspection-family").value,
     query: document.querySelector("#knowledge-inspection-search").value.trim(),
     includeHistory: document.querySelector("#knowledge-inspection-show-history").checked,
     page: state.knowledgeInspectionPage,
@@ -13688,6 +17518,10 @@ async function loadKnowledgeInspections() {
     const payload = await requestJson(`/api/admin/knowledge-classification/results?${knowledgeInspectionQuery()}`);
     state.knowledgeInspectionResults = payload.results || payload.items || [];
     state.knowledgeInspectionSummary = payload.summary || {};
+    // 体检项词表由后端原样下发（code → { title, source, severity, suggestion }）——只有摘要卡按 code 计数时
+    // 需要它来显示中文标题；详情/列表一律直接用每行自带的 title。AGENTS §5：不在前端再维护第二份 map。
+    if (payload.issueLabels && typeof payload.issueLabels === "object") state.knowledgeInspectionIssueLabels = payload.issueLabels;
+    syncKnowledgeInspectionIssueOptions();
     state.knowledgeInspectionTotal = Number(payload.total ?? state.knowledgeInspectionResults.length);
     state.knowledgeInspectionPage = Number(payload.page) || 1;
     state.knowledgeInspectionPageCount = Number(payload.pageCount) || Math.max(1, Math.ceil(state.knowledgeInspectionTotal / (Number(payload.pageSize) || 50)));
@@ -13898,6 +17732,7 @@ function knowledgeInspectionUniqueKnowledgeNodeIds(values = [], result = state.c
 }
 
 function knowledgeInspectionFamilyCoverageNodes(family = {}, result = state.currentKnowledgeInspection || {}) {
+  if (!family || typeof family !== "object") return [];
   const declaredNodes = [
     ...knowledgeInspectionArray(family.coverageKnowledge || family.requiredKnowledge),
     ...knowledgeInspectionArray(family.coverageKnowledgeNodes || family.requiredKnowledgeNodes),
@@ -14312,7 +18147,11 @@ function knowledgeInspectionSelectionAdjusted() {
 }
 
 function syncKnowledgeInspectionAdjustmentReason() {
-  document.querySelector("#knowledge-inspection-adjustment-reason").hidden = !knowledgeInspectionSelectionAdjusted();
+  // DEC-100：只读弹窗里已没有「调整依据」输入框（勾选与提交都在「完善题目」里做）；
+  // 这里补空值兜底，避免旧写路径在元素缺失时抛错。
+  const element = document.querySelector("#knowledge-inspection-adjustment-reason");
+  if (!element) return;
+  element.hidden = !knowledgeInspectionSelectionAdjusted();
 }
 
 function knowledgeInspectionRefreshFamilyContributionRow(row, options = {}) {
@@ -14447,6 +18286,10 @@ function handleKnowledgeInspectionDialogInput(event) {
 }
 
 function updateKnowledgeInspectionApplyButton() {
+  // DEC-100（产品手册 §4.6.12）：巡检弹窗已改成只读，不再有「采纳所选」按钮，
+  // 这个函数保留（write path 与静态契约仍在），但页面上再无任何入口能调用它。
+  const button = document.querySelector("#apply-knowledge-inspection");
+  if (!button) return;
   const count = document.querySelectorAll("#knowledge-inspection-choices [data-knowledge-node-choice]:checked").length;
   const hasPrimary = Boolean(document.querySelector("#knowledge-inspection-choices [data-knowledge-primary-choice]:checked"));
   const familyMemberships = knowledgeInspectionSelectedFamilyMemberships();
@@ -14456,7 +18299,6 @@ function updateKnowledgeInspectionApplyButton() {
   const candidateDraftError = createCandidateFamily ? knowledgeInspectionCandidateFamilyDraftError() : "";
   const familyCoverageError = knowledgeInspectionFamilyCoverageError();
   const familyChoiceValid = (createCandidateFamily ? !candidateDraftError : (familyMemberships.length ? hasPrimaryFamily : deferred)) && !familyCoverageError;
-  const button = document.querySelector("#apply-knowledge-inspection");
   const result = state.currentKnowledgeInspection || {};
   const blockReason = knowledgeInspectionApplyBlockReason(result);
   if (knowledgeInspectionApplyGuard.currentRequest()) {
@@ -14587,53 +18429,266 @@ function handleKnowledgeInspectionCandidateFamilyDraftInput(event) {
   syncKnowledgeInspectionAdjustmentReason();
 }
 
-function renderKnowledgeInspectionCandidateFamilyDraft(result, canApply) {
+// ── DEC-100（产品手册 §4.6.12）：巡检弹窗的只读渲染 ────────────────────────────────
+// 巡检只诊断、不改库：知识依据与题族归属都只展示 AI 结论与证据。
+// 原来这里的 checkbox／radio／select／textarea／角色按钮全部不再渲染；改库一律在「完善题目」里做。
+function renderKnowledgeInspectionReadonlyKnowledge(result, offeredKnowledgeNodes, requiredNodes, suggestedPrimaryNodeId, primaryNodeRole) {
+  const roleElement = document.querySelector("#knowledge-inspection-primary-node-role");
+  if (roleElement) {
+    roleElement.innerHTML = `<span>题目知识焦点角色（只读展示）：</span><span class="knowledge-inspection-readonly-mark">${escapeHtml(primaryNodeRole === "scope_anchor" ? "范围锚点（不计入最小充分知识集）" : "作答核心（计入最小充分知识集）")}</span><span>最小充分知识集（${escapeHtml(requiredNodes.length)}）</span>`;
+  }
+  const container = document.querySelector("#knowledge-inspection-choices");
+  if (!container) return;
+  container.innerHTML = offeredKnowledgeNodes.map((node) => {
+    const suggestedPrimary = node.id === suggestedPrimaryNodeId;
+    const isRequired = requiredNodes.some((requiredNode) => requiredNode.id === node.id);
+    const marks = [isRequired ? "最小充分知识集" : "", suggestedPrimary ? "题目知识焦点" : ""].filter(Boolean);
+    return `<div class="knowledge-inspection-node-readonly ${suggestedPrimary ? "is-primary" : ""}" data-inspection-node-row="${escapeHtml(node.id)}">
+      <div><strong>${escapeHtml(node.path || node.id)}</strong><small>${escapeHtml(suggestedPrimary ? (primaryNodeRole === "scope_anchor" ? "Agent 3 建议作为范围锚点，不计入最小充分知识" : "Agent 3 建议作为作答核心，已计入最小充分知识") : "Agent 3 判断为作答必需知识")}</small><em>${escapeHtml(marks.join(" · ") || "仅作参考")}</em></div>
+      <span class="knowledge-inspection-readonly-mark">只读展示</span>
+    </div>`;
+  }).join("") || '<div class="knowledge-inspection-empty">本次巡检没有形成可选知识点</div>';
+}
+
+function renderKnowledgeInspectionReadonlyFamilies(result) {
+  const suggestedFamilyMemberships = knowledgeInspectionSuggestedFamilyMemberships(result);
+  const suggestedFamilyMap = new Map(suggestedFamilyMemberships.map((membership) => [membership.familyId, membership]));
+  const familyStatusLabels = { confirmed: "已确认", pending_review: "待审核", rejected: "已驳回" };
+  const familyRoleLabels = { primary: "Agent 3 建议主题族", related: "Agent 3 建议关联题族", matched: "相近候选", duplicate: "疑似重复", candidate: "同知识候选" };
+  const candidateFamilies = knowledgeInspectionAgent(result, 3).candidateFamilies || [];
+  const container = document.querySelector("#knowledge-inspection-family-choices");
+  if (container) {
+    container.innerHTML = candidateFamilies.length ? candidateFamilies.map((family) => {
+      const suggestedMembership = suggestedFamilyMap.get(family.id);
+      const currentLabel = family.isCurrent ? (family.isCurrentPrimary ? "当前主题族" : "当前关联题族") : "";
+      const suggestedRoleLabel = suggestedMembership
+        ? (suggestedMembership.isPrimary ? "建议主题族（作答必需）" : (String(suggestedMembership.coverageRole || "") === "reference" ? "建议关联题族（普通关联）" : "建议关联题族（作答必需）"))
+        : "未建议归属";
+      const coverageLabel = knowledgeInspectionFamilyCoverageNodeIds(family)
+        .map((nodeId) => knowledgeInspectionNodeLabelById(nodeId, result)).join(" · ") || "尚未定义";
+      return `<div class="knowledge-inspection-family-readonly ${suggestedMembership?.isPrimary ? "is-primary" : ""} ${family.suggestedRole === "duplicate" ? "is-duplicate" : ""}" data-inspection-family-row="${escapeHtml(family.id)}">
+        <div class="knowledge-inspection-family-readonly-head"><strong>${escapeHtml(family.name)}</strong><span class="knowledge-inspection-readonly-mark">只读展示</span></div>
+        <small>${escapeHtml(family.knowledgePath || "未标注知识位置")} · ${escapeHtml(family.memberCount || 0)} 道题${family.relatedFamilyAssessment ? ` · 删除检验：${escapeHtml(family.relatedFamilyAssessment.deletionTest || family.relatedFamilyAssessment.reason || "未提供依据")}` : ""}</small>
+        <em>${escapeHtml([familyRoleLabels[family.suggestedRole], currentLabel, familyStatusLabels[family.status], suggestedRoleLabel].filter(Boolean).join(" · "))}</em>
+        <small>题族覆盖知识（只读）：${escapeHtml(coverageLabel)}</small>
+      </div>`;
+    }).join("") : '<div class="knowledge-inspection-empty">当前最小充分知识集下没有可复用的题族，本题应先进入待归组。</div>';
+  }
+  // 「暂无准确题族，进入待归组」在只读态下只切换显隐，内容由 index.html 固化（不再有勾选项）。
+  const deferred = document.querySelector("#knowledge-inspection-family-deferred");
+  if (deferred) deferred.hidden = Boolean(suggestedFamilyMemberships.length);
+  renderKnowledgeInspectionCandidateFamilyDraft(result);
+  renderKnowledgeInspectionReadonlyFamilyCoverage(result);
+}
+
+// 只读联合覆盖提示：原来这里展示的是"勾选后的校验结果"，现在只说明 AI 建议了什么、以及普通关联不计入覆盖。
+function renderKnowledgeInspectionReadonlyFamilyCoverage(result) {
+  const element = document.querySelector("#knowledge-inspection-family-coverage-summary");
+  if (!element) return;
+  const memberships = knowledgeInspectionSuggestedFamilyMemberships(result);
+  const primaryMembership = memberships.find((membership) => membership.isPrimary);
+  const relatedCount = memberships.filter((membership) => !membership.isPrimary).length;
+  const primaryFamily = primaryMembership ? knowledgeInspectionCandidateFamilyById(primaryMembership.familyId, result) : null;
+  element.classList.remove("is-complete", "has-gap", "has-core-mismatch");
+  element.innerHTML = [
+    `<strong>AI 建议题族归属：${escapeHtml(memberships.length ? `${memberships.length} 个（主题族 ${primaryMembership ? 1 : 0} 个）` : "暂无可用题族")}</strong>`,
+    primaryMembership ? `<span class="is-complete">主题族：${escapeHtml(primaryFamily?.name || primaryMembership.familyId)}</span>` : '<span class="is-muted">未建议主题族</span>',
+    `<span class="is-reference">普通关联 ${escapeHtml(relatedCount)} 个，不计入联合覆盖</span>`,
+    '<span class="is-muted">只读展示：勾选与提交在「完善题目」里完成</span>',
+  ].join("");
+}
+
+// DEC-100：Agent 3 的候选题族草案同样改成只读展示 ——
+// 原来这里回填可编辑表单（名称／判别焦点／覆盖知识／证据等），现在只把草案渲染成只读信息；
+// 新建候选题族必须在「完善题目」里人工确认后创建，巡检本身不写库。
+function renderKnowledgeInspectionCandidateFamilyDraft(result) {
   const container = document.querySelector("#knowledge-inspection-family-draft");
-  const confirm = document.querySelector("#knowledge-inspection-create-candidate-family");
+  if (!container) return;
   const draft = knowledgeInspectionCandidateFamilyDraft(result);
   container.hidden = !draft;
-  confirm.checked = false;
-  confirm.disabled = !canApply || !draft;
   if (!draft) {
-    setKnowledgeInspectionCandidateFamilyDraftEnabled(false);
-    const contribution = document.querySelector("#knowledge-inspection-candidate-contribution");
-    if (contribution) {
-      contribution.innerHTML = "";
-      contribution.hidden = true;
-    }
+    container.innerHTML = "";
     return;
   }
   const nodeMap = new Map((state.knowledgeStructure?.nodes || []).map((node) => [String(node.id), node]));
   const offeredNodes = knowledgeInspectionRequiredNodes(result);
   const knowledgeNodes = [...nodeMap.values()].filter((node) => node.id && node.path && node.kind === "knowledge");
   const selectableNodes = knowledgeNodes.length ? knowledgeNodes : offeredNodes;
+  const labelOf = (nodeId) => {
+    const key = String(nodeId || "");
+    if (!key) return "";
+    const node = nodeMap.get(key) || selectableNodes.find((entry) => String(entry.id) === key) || offeredNodes.find((entry) => String(entry.id) === key);
+    return node?.path || node?.displayTitle || node?.title || key;
+  };
+  const listOf = (nodeIds) => knowledgeInspectionArray(nodeIds).map(labelOf).filter(Boolean).join(" · ");
   const scopeAnchorNodeId = String(draft.scopeAnchorNodeId || draft.coreKnowledgeNodeId || "");
-  const requiredIds = new Set(knowledgeInspectionArray(draft.coverageKnowledgeNodeIds || draft.requiredKnowledgeNodeIds).map(String));
-  const anchorIds = new Set(knowledgeInspectionArray(draft.textbookAnchorNodeIds || draft.knowledgeNodeId).map(String));
-  const optionLabel = (node) => node.path || node.displayTitle || node.title || node.id;
-  document.querySelector("#knowledge-inspection-family-draft-name").value = draft.name || "";
-  document.querySelector("#knowledge-inspection-family-draft-focus-key").value = draft.focusKey || "";
-  document.querySelector("#knowledge-inspection-family-draft-core").innerHTML = selectableNodes
-    .map((node) => `<option value="${escapeHtml(node.id)}" ${node.id === scopeAnchorNodeId ? "selected" : ""}>${escapeHtml(node.path || node.id)}</option>`).join("");
-  document.querySelector("#knowledge-inspection-family-draft-required").innerHTML = selectableNodes
-    .map((node) => `<option value="${escapeHtml(node.id)}" ${requiredIds.has(node.id) ? "selected" : ""}>${escapeHtml(node.path || node.id)}</option>`).join("");
-  const anchorNodes = [...nodeMap.values()].filter((node) => node.id && node.path);
-  document.querySelector("#knowledge-inspection-family-draft-anchors").innerHTML = anchorNodes
-    .map((node) => `<option value="${escapeHtml(node.id)}" ${anchorIds.has(String(node.id)) ? "selected" : ""}>${escapeHtml(optionLabel(node))}</option>`).join("");
-  document.querySelector("#knowledge-inspection-family-draft-action").value = draft.assessmentAction || draft.action || "";
-  document.querySelector("#knowledge-inspection-family-draft-inclusion").value = draft.inclusionBoundary || "";
-  document.querySelector("#knowledge-inspection-family-draft-exclusion").value = draft.exclusionBoundary || "";
-  document.querySelector("#knowledge-inspection-family-draft-evidence-summary").value = draft.textbookEvidence?.summary || draft.evidenceSummary || "";
-  document.querySelector("#knowledge-inspection-family-draft-reason").value = draft.reason || "";
-  const selectedEvidenceIds = new Set(knowledgeInspectionArray(draft.textbookEvidence?.chunkIds || draft.evidenceChunkIds).map(String));
-  const offeredEvidenceIds = [...new Set([
+  const coverageNodeIds = knowledgeInspectionArray(draft.coverageKnowledgeNodeIds || draft.requiredKnowledgeNodeIds);
+  const anchorNodeIds = knowledgeInspectionArray(draft.textbookAnchorNodeIds || draft.knowledgeNodeId);
+  const evidenceIds = [...new Set([
+    ...knowledgeInspectionArray(draft.textbookEvidence?.chunkIds || draft.evidenceChunkIds),
     ...knowledgeInspectionArray(knowledgeInspectionAgent(result, 3).evidenceChunkIds),
-    ...selectedEvidenceIds,
   ].map(String).filter(Boolean))];
-  document.querySelector("#knowledge-inspection-family-draft-evidence-chunks").innerHTML = offeredEvidenceIds.length
-    ? offeredEvidenceIds.map((id) => `<label><input type="checkbox" data-candidate-family-evidence value="${escapeHtml(id)}" ${selectedEvidenceIds.has(id) ? "checked" : ""} /><code>${escapeHtml(id)}</code></label>`).join("")
-    : '<span class="knowledge-inspection-empty">本次没有可追溯的教材证据，不能创建题族</span>';
-  setKnowledgeInspectionCandidateFamilyDraftEnabled(false);
+  container.innerHTML = `<h4>Agent 3 建议新建的候选题族（只读展示，不能在这里创建）</h4>
+    <dl>
+      <div><dt>候选题族名称</dt><dd>${escapeHtml(draft.name || "未命名")}</dd></div>
+      <div><dt>题族判别焦点</dt><dd>${escapeHtml(draft.focusKey || "未提供")}</dd></div>
+      <div><dt>后台目录锚点</dt><dd>${escapeHtml(labelOf(scopeAnchorNodeId) || "未提供")}</dd></div>
+      <div><dt>考查动作</dt><dd>${escapeHtml(draft.assessmentAction || draft.action || "未提供")}</dd></div>
+      <div><dt>题族覆盖知识</dt><dd>${escapeHtml(listOf(coverageNodeIds) || "未提供")}</dd></div>
+      <div><dt>教材位置（教材锚点）</dt><dd>${escapeHtml(listOf(anchorNodeIds) || "未提供")}</dd></div>
+      <div><dt>纳入边界</dt><dd>${escapeHtml(draft.inclusionBoundary || "未提供")}</dd></div>
+      <div><dt>排除边界</dt><dd>${escapeHtml(draft.exclusionBoundary || "未提供")}</dd></div>
+      <div><dt>教材证据</dt><dd>${escapeHtml(evidenceIds.join(" · ") || "本次没有可追溯的教材证据")}</dd></div>
+      <div><dt>证据摘要</dt><dd>${escapeHtml(draft.textbookEvidence?.summary || draft.evidenceSummary || "未提供")}</dd></div>
+      <div><dt>新建理由</dt><dd>${escapeHtml(draft.reason || "未提供")}</dd></div>
+    </dl>
+    <p class="knowledge-inspection-family-draft-note">后台目录锚点用于组织和检索，不会自动写入题目知识；题族覆盖知识＝这个题族稳定判别任务能够覆盖的知识。只读展示：新建候选题族要在「完善题目」里人工确认后创建。</p>`;
+}
+
+// 弹窗里的「体检项（确定性规则）」只读清单：与 Agent 的 AI 结论分开列，逐条标来源（规则／AI），
+// 通过（后端体检跑过但没命中任何规则项）也显示成「已留档 · 无问题」，不是"没问题就不显示"。
+// 只有字段整个缺失（后端这一版还没上线）才整节隐藏，不留空壳、也不报错。
+function renderKnowledgeInspectionRuleFindings(result = {}) {
+  const section = document.querySelector("#knowledge-inspection-rule-findings-section");
+  const list = document.querySelector("#knowledge-inspection-rule-findings");
+  if (!section || !list) return;
+  const hasField = Array.isArray(result.ruleFindings);
+  const capability = knowledgeInspectionRuleAuditCapability();
+  const findings = knowledgeInspectionRuleFindings(result);
+  // 整份响应都没有体检能力（后端还没上这一版）→ 整节隐藏，不留空壳；有能力的响应里字段缺失 = 未体检。
+  section.hidden = !hasField && !capability;
+  if (!hasField) {
+    list.innerHTML = capability ? knowledgeInspectionRuleNoticeRow("not_audited") : "";
+    return;
+  }
+  const rows = findings.map((finding) => {
+    const source = knowledgeInspectionRuleFindingSource(finding);
+    const isPass = knowledgeInspectionRuleFindingIsPass(finding);
+    const severity = String(finding.severity || (isPass ? "none" : "medium"));
+    const detail = knowledgeInspectionRuleFindingDetailText(finding);
+    const evidence = knowledgeInspectionRuleFindingEvidence(finding);
+    const suggestion = knowledgeInspectionRuleFindingSuggestion(finding);
+    return `<div class="knowledge-inspection-rule-finding is-${escapeHtml(isPass ? "pass" : severity)} is-${escapeHtml(source)}" data-rule-code="${escapeHtml(finding.code || "")}" data-rule-source="${escapeHtml(source)}">
+      <div class="knowledge-inspection-rule-finding-head">
+        <span class="knowledge-inspection-rule-source is-${escapeHtml(source)}">${escapeHtml(knowledgeInspectionRuleSourceLabels[source])}</span>
+        <strong>${escapeHtml(knowledgeInspectionRuleFindingTitle(finding) || finding.code || "未命名的体检项")}</strong>
+        ${isPass ? `<span class="knowledge-inspection-rule-pass">${escapeHtml(KNOWLEDGE_INSPECTION_RULE_PASS_TITLE)}</span>` : `<span class="knowledge-inspection-rule-severity is-${escapeHtml(severity)}">严重度：${escapeHtml(knowledgeInspectionRuleSeverityLabels[severity] || severity)}</span>`}
+        <span class="knowledge-inspection-readonly-mark">只读展示</span>
+      </div>
+      ${detail ? `<p class="knowledge-inspection-rule-finding-detail">说明：${escapeHtml(detail)}</p>` : ""}
+      ${evidence ? `<p class="knowledge-inspection-rule-finding-evidence">证据：${escapeHtml(evidence)}</p>` : ""}
+      ${suggestion ? `<p class="knowledge-inspection-rule-finding-suggestion">建议：${escapeHtml(suggestion)}</p>` : ""}
+    </div>`;
+  });
+  if (!rows.length) {
+    // 体检跑过、没有命中任何规则项：这就是「通过」，也要留档显示。
+    list.innerHTML = knowledgeInspectionRuleNoticeRow("pass");
+    return;
+  }
+  list.innerHTML = rows.join("");
+}
+
+// 记录状态动作（DEC-100 四态）：只写"人工处理进度"，不改题库内容。
+function renderKnowledgeInspectionAuditState(result) {
+  const audit = knowledgeInspectionAuditReview(result || {});
+  const stateElement = document.querySelector("#knowledge-inspection-review-state");
+  if (stateElement) {
+    stateElement.textContent = knowledgeInspectionAuditStateLabels[audit.state];
+    stateElement.className = `knowledge-inspection-review-state state-${audit.state}`;
+  }
+  const noteElement = document.querySelector("#knowledge-inspection-review-record-note");
+  if (noteElement) {
+    noteElement.textContent = audit.note
+      ? `最近一次记录备注：${audit.note}`
+      : "还没有人工处理备注；四个状态按钮只记录人工处理进度，不会修改题库内容。";
+  }
+  const auditElement = document.querySelector("#knowledge-inspection-review-audit");
+  if (auditElement) {
+    const parts = [];
+    if (audit.at) parts.push(`<span>处理人：${escapeHtml(knowledgeInspectionAuditActorLabel(audit) || "未知")}</span>`, `<span>时间：${escapeHtml(formatTaskTime(audit.at))}</span>`);
+    if (audit.recordedState && audit.recordedState !== audit.state) {
+      parts.push(`<span>题目变更前记录的状态：${escapeHtml(knowledgeInspectionAuditStateLabels[audit.recordedState] || audit.recordedState)}</span>`);
+    }
+    auditElement.innerHTML = parts.join("");
+    auditElement.hidden = !parts.length;
+  }
+  const invalidatedElement = document.querySelector("#knowledge-inspection-review-invalidated");
+  if (invalidatedElement) {
+    // 后端在题目被改动时派生 auditReview.invalidated／invalidatedReason；界面必须显式提示旧结论已作废。
+    invalidatedElement.hidden = !audit.invalidated;
+    invalidatedElement.innerHTML = audit.invalidated
+      ? `<strong>题目已变更，旧结论作废，需重新巡检</strong><span>${escapeHtml(knowledgeInspectionInvalidatedReasonLabels[audit.invalidatedReason] || "题目在巡检后被改动过")}；这条记录已回到「待复核」${audit.recordedState ? `（旧结论当时的记录状态：${escapeHtml(knowledgeInspectionAuditStateLabels[audit.recordedState] || audit.recordedState)}）` : ""}。</span>`
+      : "";
+  }
+  document.querySelectorAll("[data-knowledge-inspection-audit-state]").forEach((button) => {
+    button.disabled = button.dataset.knowledgeInspectionAuditState === audit.state;
+  });
+  const sendButton = document.querySelector("#send-knowledge-inspection-to-enrichment");
+  if (sendButton) sendButton.disabled = !knowledgeInspectionResultId(result || {});
+}
+
+async function setKnowledgeInspectionAuditState(nextState) {
+  const result = state.currentKnowledgeInspection;
+  const resultId = knowledgeInspectionResultId(result || {});
+  const label = knowledgeInspectionAuditStateLabels[nextState];
+  if (!result || !resultId || !label) return;
+  const request = knowledgeInspectionApplyGuard.begin(state.knowledgeInspectionDialogSession, { resultId });
+  if (!request) {
+    setSmallDialogStatus("#knowledge-inspection-dialog-status", "正在保存当前操作，完成前不能重复提交", "loading");
+    return;
+  }
+  setSmallDialogStatus("#knowledge-inspection-dialog-status", `正在把这条巡检记录标为「${label}」`, "loading");
+  setKnowledgeInspectionApplyLocked(true);
+  try {
+    const payload = await requestJson(`/api/admin/knowledge-classification/results/${encodeURIComponent(resultId)}/audit-review`, {
+      method: "POST",
+      body: JSON.stringify({ state: nextState }),
+    });
+    if (!knowledgeInspectionApplyGuard.isCurrent(request)) return;
+    await loadKnowledgeInspections();
+    const updated = state.knowledgeInspectionResults.find((item) => knowledgeInspectionResultId(item) === resultId);
+    if (knowledgeInspectionResultId(state.currentKnowledgeInspection || {}) === resultId) {
+      if (updated) state.currentKnowledgeInspection = updated;
+      renderKnowledgeInspectionAuditState(updated || { ...result, auditReview: payload?.result?.auditReview || { ...knowledgeInspectionAuditReview(result), state: nextState } });
+    }
+    setSmallDialogStatus("#knowledge-inspection-dialog-status", `已把这条巡检记录标为「${label}」；记录状态只记录人工处理进度，题库内容没有改变。`, "success");
+    setKnowledgeInspectionFeedback(`巡检记录已标为「${label}」。`, "success");
+  } catch (error) {
+    if (!knowledgeInspectionApplyGuard.isCurrent(request)) return;
+    setSmallDialogStatus("#knowledge-inspection-dialog-status", `记录状态保存失败：${friendlyError(error)}`, "error");
+  } finally {
+    if (knowledgeInspectionApplyGuard.finish(request)) setKnowledgeInspectionApplyLocked(false);
+  }
+}
+
+// 「送去完善题目」＝把这条体检结论送到「完善题目」生成／刷新建议稿；**不写库、不自动勾选、不自动采纳**。
+async function sendKnowledgeInspectionToEnrichment() {
+  const result = state.currentKnowledgeInspection;
+  const resultId = knowledgeInspectionResultId(result || {});
+  if (!result || !resultId) return;
+  const request = knowledgeInspectionApplyGuard.begin(state.knowledgeInspectionDialogSession, { resultId });
+  if (!request) {
+    setSmallDialogStatus("#knowledge-inspection-dialog-status", "正在保存当前操作，完成前不能重复提交", "loading");
+    return;
+  }
+  setSmallDialogStatus("#knowledge-inspection-dialog-status", "正在把这条体检结论送去「完善题目」", "loading");
+  setKnowledgeInspectionApplyLocked(true);
+  try {
+    const payload = await requestJson(`/api/admin/knowledge-classification/results/${encodeURIComponent(resultId)}/send-to-enrichment`, {
+      method: "POST",
+      body: "{}",
+    });
+    if (!knowledgeInspectionApplyGuard.isCurrent(request)) return;
+    await loadKnowledgeInspections();
+    const question = payload?.questionId || knowledgeInspectionQuestion(result).id || result.questionId || "该题";
+    setSmallDialogStatus("#knowledge-inspection-dialog-status", `已送去「完善题目」（题目 ${question}${payload?.jobId ? ` · 任务 ${payload.jobId}` : ""}）：巡检不改库，知识依据与题族归属请在「完善题目」里逐项确认。`, "success");
+    setKnowledgeInspectionFeedback("已把这条体检结论送去「完善题目」生成／刷新建议稿；AI 巡检本身没有改库。", "success");
+  } catch (error) {
+    if (!knowledgeInspectionApplyGuard.isCurrent(request)) return;
+    setSmallDialogStatus("#knowledge-inspection-dialog-status", `送去完善题目失败：${friendlyError(error)}`, "error");
+  } finally {
+    if (knowledgeInspectionApplyGuard.finish(request)) setKnowledgeInspectionApplyLocked(false);
+  }
 }
 
 function openKnowledgeInspection(resultId, questionId) {
@@ -14671,8 +18726,8 @@ function openKnowledgeInspection(resultId, questionId) {
   } : null;
   const offeredKnowledgeNodes = [...requiredNodes];
   if (primaryNode && !offeredKnowledgeNodes.some((node) => node.id === primaryNode.id)) offeredKnowledgeNodes.unshift(primaryNode);
-  document.querySelector("#knowledge-inspection-dialog-title").textContent = `审核巡检建议 · ${question.id || result.questionId || "题目"}`;
-  document.querySelector("#knowledge-inspection-dialog-copy").textContent = result.answerConflict ? "高风险 · 答案冲突未修正前禁止采纳" : `${knowledgeInspectionRiskLabels[result.risk || result.riskLevel] || "待评风险"} · AI 结论不会自动写入题库`;
+  document.querySelector("#knowledge-inspection-dialog-title").textContent = `查看巡检结论 · ${question.id || result.questionId || "题目"}`;
+  document.querySelector("#knowledge-inspection-dialog-copy").textContent = result.answerConflict ? "高风险 · 答案冲突：请编辑题目后重新巡检（巡检不改库）" : `${knowledgeInspectionRiskLabels[result.risk || result.riskLevel] || "待评风险"} · 只诊断不改库：改库请用「送去完善题目」`;
   const answerConflict = result.answerConflict
     ? `<div class="knowledge-inspection-answer-conflict"><strong>${result.answerConflict.authority === "verified_official" ? "结构化答案与已核验答案冲突" : "答案与参考解析冲突"}</strong><span>结构化答案：${escapeHtml(result.answerConflict.structuredAnswer.join("、"))} · ${result.answerConflict.authority === "verified_official" ? "已核验答案" : "参考解析答案"}：${escapeHtml(result.answerConflict.referenceAnswer.join("、"))}</span><small>${result.answerConflict.authority === "verified_official" ? `答案来源：${escapeHtml(result.answerConflict.answerSource || "已核验来源")}；AI 答案不得覆盖已核验答案。` : "请核对正确答案和解析。"} 请编辑题目后重新巡检。</small></div>`
     : "";
@@ -14684,60 +18739,22 @@ function openKnowledgeInspection(resultId, questionId) {
   document.querySelector("#knowledge-inspection-disagreements").innerHTML = disagreements.length
     ? `<ul>${disagreements.map((item) => `<li>${escapeHtml(typeof item === "string" ? item : (item.reason || item.description || item.message || JSON.stringify(item)))}</li>`).join("")}</ul>`
     : '<p class="knowledge-inspection-empty">未发现明确分歧；仍请人工核对最终知识路径。</p>';
-  const canApply = knowledgeInspectionCanApply(result);
-  const applyBlockReason = knowledgeInspectionApplyBlockReason(result);
-  document.querySelector("#knowledge-inspection-primary-node-role").innerHTML = `<label><input type="radio" name="knowledge-inspection-primary-node-role" value="core" ${primaryNodeRole === "core" ? "checked" : ""} ${canApply ? "" : "disabled"} /><span>作答核心</span></label><label><input type="radio" name="knowledge-inspection-primary-node-role" value="scope_anchor" ${primaryNodeRole === "scope_anchor" ? "checked" : ""} ${canApply ? "" : "disabled"} /><span>范围锚点</span></label>`;
-  document.querySelector("#knowledge-inspection-choices").innerHTML = offeredKnowledgeNodes.map((node) => {
-    const suggestedPrimary = node.id === suggestedPrimaryNodeId;
-    const isRequired = requiredNodes.some((requiredNode) => requiredNode.id === node.id);
-    const lockedCore = suggestedPrimary && primaryNodeRole === "core";
-    return `<div class="knowledge-inspection-node-choice ${canApply ? "" : "unavailable"}" data-knowledge-node-row="${escapeHtml(node.id)}">
-      <label class="knowledge-inspection-node-toggle"><input type="checkbox" data-knowledge-node-choice value="${escapeHtml(node.id)}" ${isRequired ? "checked" : ""} ${!canApply || lockedCore ? "disabled" : ""} /><span><strong>${escapeHtml(node.path || node.id)}</strong><small>${suggestedPrimary ? (primaryNodeRole === "scope_anchor" ? "Agent 3 建议作为范围锚点，不计入最小充分知识" : "Agent 3 建议作为作答核心，已计入最小充分知识") : "Agent 3 判断为作答必需知识"}</small></span></label>
-      <label class="knowledge-inspection-primary-choice"><input type="radio" data-knowledge-primary-choice name="knowledge-inspection-primary-node" value="${escapeHtml(node.id)}" ${suggestedPrimary && canApply ? "checked" : ""} ${canApply ? "" : "disabled"} /> 题目知识焦点</label>
-    </div>`;
-  }).join("") || `<div class="knowledge-inspection-empty">${escapeHtml(applyBlockReason || "本次巡检没有形成可选知识点")}</div>`;
-  const suggestedFamilyMemberships = knowledgeInspectionSuggestedFamilyMemberships(result);
-  const suggestedFamilyMap = new Map(suggestedFamilyMemberships.map((membership) => [membership.familyId, membership]));
-  const familyStatusLabels = { confirmed: "已确认", pending_review: "待审核", rejected: "已驳回" };
-  const familyRoleLabels = { primary: "Agent 3 建议主题族", related: "Agent 3 建议关联题族", matched: "相近候选", duplicate: "疑似重复", candidate: "同知识候选" };
-  const candidateFamilies = agent3.candidateFamilies || [];
-  document.querySelector("#knowledge-inspection-family-choices").innerHTML = candidateFamilies.length ? candidateFamilies.map((family) => {
-    const suggestedMembership = suggestedFamilyMap.get(family.id);
-    const disabled = !canApply || family.status === "rejected";
-    const currentLabel = family.isCurrent ? (family.isCurrentPrimary ? "当前主题族" : "当前关联题族") : "";
-    const relatedCoverageRole = suggestedMembership?.isPrimary ? "" : String(suggestedMembership?.coverageRole || "");
-    const contributionIds = knowledgeInspectionDefaultContributionNodeIds(family, suggestedMembership || {});
-    knowledgeInspectionRememberFamilyContribution(family.id, contributionIds);
-    const coverageLabel = knowledgeInspectionFamilyCoverageNodeIds(family)
-      .map((nodeId) => knowledgeInspectionNodeLabelById(nodeId, result)).join(" · ") || "尚未定义";
-    return `<div class="knowledge-inspection-family-choice ${family.suggestedRole === "duplicate" ? "duplicate" : ""} ${disabled ? "unavailable" : ""}" data-knowledge-family-row="${escapeHtml(family.id)}" data-knowledge-family-coverage-role="${escapeHtml(relatedCoverageRole)}">
-      <label class="knowledge-inspection-family-toggle"><input type="checkbox" data-knowledge-family-choice value="${escapeHtml(family.id)}" ${suggestedMembership && !disabled ? "checked" : ""} ${disabled ? "disabled" : ""} /><span><strong>${escapeHtml(family.name)}</strong><small>${escapeHtml(family.knowledgePath || "未标注知识位置")} · ${escapeHtml(family.memberCount || 0)} 道题</small>${family.relatedFamilyAssessment ? `<small>删除检验：${escapeHtml(family.relatedFamilyAssessment.deletionTest || family.relatedFamilyAssessment.reason || "未提供依据")}</small>` : ""}<em>${escapeHtml([familyRoleLabels[family.suggestedRole], currentLabel, familyStatusLabels[family.status]].filter(Boolean).join(" · "))}</em></span></label>
-      <div class="knowledge-inspection-family-controls">
-        <label class="knowledge-inspection-family-primary"><input type="radio" data-knowledge-primary-family name="knowledge-inspection-primary-family" value="${escapeHtml(family.id)}" ${suggestedMembership?.isPrimary && !disabled ? "checked" : ""} ${disabled ? "disabled" : ""} /> 主题族</label>
-        <span class="knowledge-inspection-family-primary-role" data-knowledge-family-primary-role hidden>主题族 · 作答必需</span>
-        <div class="knowledge-inspection-family-role" data-knowledge-family-role-controls hidden><span>关联用途</span><div role="group" aria-label="${escapeHtml(`${family.name}的关联用途`)}"><button type="button" data-knowledge-family-role="required" aria-pressed="${relatedCoverageRole === "required"}" ${disabled ? "disabled" : ""}>作答必需</button><button type="button" data-knowledge-family-role="reference" aria-pressed="${relatedCoverageRole === "reference"}" ${disabled ? "disabled" : ""}>普通关联</button></div></div>
-      </div>
-      <div class="knowledge-inspection-family-contribution" data-knowledge-family-contribution hidden><div class="knowledge-inspection-family-contribution-copy"><strong>本题贡献知识</strong><small>题族覆盖：${escapeHtml(coverageLabel)}</small></div><div data-knowledge-family-contribution-host></div></div>
-    </div>`;
-  }).join("") : '<div class="knowledge-inspection-empty">当前最小充分知识集下没有可复用的题族，本题应先进入待归组。</div>';
-  const familyDeferred = document.querySelector("#knowledge-inspection-family-deferred");
-  familyDeferred.checked = !suggestedFamilyMemberships.length;
-  familyDeferred.disabled = !canApply;
-  renderKnowledgeInspectionCandidateFamilyDraft(result, canApply);
-  syncKnowledgeInspectionCandidateFamilyMode();
-  document.querySelector("#reject-knowledge-inspection").disabled = !knowledgeInspectionCanReview(result);
+  // DEC-100（产品手册 §4.6.12）：巡检弹窗是**只读体检清单** —— 知识依据只展示 AI 结论与证据，
+  // 这里不再渲染任何 checkbox／radio／select／textarea，也没有提交入口；改库在「完善题目」里做。
+  renderKnowledgeInspectionReadonlyKnowledge(result, offeredKnowledgeNodes, requiredNodes, suggestedPrimaryNodeId, primaryNodeRole);
+  // DEC-100：题族归属同样只做只读展示（含"待归组"与候选题族草案），勾选／创建／提交都在「完善题目」里做。
+  renderKnowledgeInspectionReadonlyFamilies(result);
+  renderKnowledgeInspectionRuleFindings(result);
   document.querySelector("#rerun-knowledge-inspection").disabled = false;
   document.querySelector("#rerun-knowledge-inspection").textContent = result.hasNewerResult ? "打开最新建议" : "重新巡检本题";
   document.querySelector("#knowledge-inspection-feedback-message").value = "";
-  document.querySelector("#knowledge-inspection-adjustment-reason-input").value = "";
-  document.querySelector("#knowledge-inspection-adjustment-reason").hidden = true;
   document.querySelector("#knowledge-inspection-create-rule").checked = true;
+  // 只读弹窗的按钮只有四个记录状态动作 ＋「送去完善题目」，状态由 auditReview 驱动。
+  renderKnowledgeInspectionAuditState(result);
   renderKnowledgeInspectionExperience();
   setKnowledgeInspectionAgent("agent1");
   setKnowledgeInspectionConversationStatus("正在读取本题的教研对话与经验记录…", "loading");
-  setSmallDialogStatus("#knowledge-inspection-dialog-status", applyBlockReason, applyBlockReason ? "error" : "");
-  updateKnowledgeInspectionApplyButton();
-  syncKnowledgeInspectionAdjustmentReason();
+  setSmallDialogStatus("#knowledge-inspection-dialog-status");
   document.querySelector("#knowledge-inspection-dialog").showModal();
   loadKnowledgeInspectionExperience(knowledgeInspectionResultId(result)).then((loaded) => {
     if (loaded && knowledgeInspectionResultId() === knowledgeInspectionResultId(result)) setKnowledgeInspectionConversationStatus();
@@ -14764,161 +18781,25 @@ function closeKnowledgeInspectionDialog(options = {}) {
   return true;
 }
 
+// ⚠️ DEC-100（产品手册 §4.6.12）：AI 巡检只诊断、不改库 —— 本函数已从巡检路径摘除，
+// 页面上没有「采纳所选」按钮，也没有任何事件绑定会调用它（唯一写库入口是「完善题目」）。
+// 它现在只是一个**三行转发壳**：不再读巡检弹窗 DOM、不再构造载荷，也不再有第二套提交判据
+// （载荷构造的唯一实现是 knowledge-inspection-apply-guard.js 的 buildApplyRequest）。
 async function applyKnowledgeInspection() {
-  const result = state.currentKnowledgeInspection || {};
-  const blockReason = knowledgeInspectionApplyBlockReason(result);
-  if (blockReason) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", blockReason, "error");
-    updateKnowledgeInspectionApplyButton();
-    return;
-  }
-  const resultId = knowledgeInspectionResultId(result);
-  const selectedNodeIds = [...new Set([...document.querySelectorAll("#knowledge-inspection-choices [data-knowledge-node-choice]:checked")].map((input) => input.value).filter(Boolean))];
-  const selectedPrimary = document.querySelector("#knowledge-inspection-choices [data-knowledge-primary-choice]:checked")?.value || "";
-  const primaryNodeRole = normalizeQuestionFingerprintPrimaryNodeRole(document.querySelector('input[name="knowledge-inspection-primary-node-role"]:checked')?.value);
-  const familyMemberships = knowledgeInspectionSelectedFamilyMemberships();
-  const familyDeferred = document.querySelector("#knowledge-inspection-family-deferred").checked;
-  const createCandidateFamily = document.querySelector("#knowledge-inspection-create-candidate-family")?.checked === true;
-  const candidateFamilyDraft = createCandidateFamily ? knowledgeInspectionSelectedCandidateFamilyDraft() : null;
-  if (!selectedNodeIds.length) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", "请至少勾选一个作答必需知识", "error");
-    return;
-  }
-  if (!selectedPrimary) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", "请指定题目知识焦点", "error");
-    return;
-  }
-  if (primaryNodeRole === "core" && !selectedNodeIds.includes(selectedPrimary)) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", "作答核心必须计入最小充分知识集", "error");
-    return;
-  }
-  if (primaryNodeRole === "scope_anchor" && selectedNodeIds.includes(selectedPrimary)) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", "范围锚点不能计入最小充分知识集", "error");
-    return;
-  }
-  if (!createCandidateFamily && familyMemberships.length && !familyMemberships.some((membership) => membership.isPrimary)) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", "请从已选题族中指定一个主题族", "error");
-    return;
-  }
-  if (createCandidateFamily && familyMemberships.some((membership) => membership.isPrimary)) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", "新建题族将自动成为主题族，已有题族只能作为关联题族", "error");
-    return;
-  }
-  const candidateDraftError = createCandidateFamily ? knowledgeInspectionCandidateFamilyDraftError(candidateFamilyDraft) : "";
-  if (candidateDraftError) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", candidateDraftError, "error");
-    return;
-  }
-  if (!createCandidateFamily && !familyMemberships.length && !familyDeferred) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", "请选择主题族，或明确将本题放入待归组", "error");
-    return;
-  }
-  const familyCoverageAudit = knowledgeInspectionFamilyCoverageAudit({
-    result,
-    selectedNodeIds,
-    primaryNodeId: selectedPrimary,
-    primaryNodeRole,
-    familyMemberships,
-    familyDeferred,
-    createCandidateFamily,
-    candidateFamilyDraft,
-  });
-  const familyCoverageError = knowledgeInspectionFamilyCoverageError(familyCoverageAudit);
-  if (familyCoverageError) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", familyCoverageError, "error");
-    syncKnowledgeInspectionFamilyCoverageSummary();
-    return;
-  }
-  const adjustmentReason = document.querySelector("#knowledge-inspection-adjustment-reason-input").value.trim();
-  if (knowledgeInspectionSelectionAdjusted() && !adjustmentReason) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", "你调整了 AI 建议，请填写一句调整依据，供 Agent 4 沉淀为修正案例。", "error");
-    document.querySelector("#knowledge-inspection-adjustment-reason-input").focus();
-    return;
-  }
-  const commitId = getKnowledgeInspectionCommitId({
-    resultId,
-    selectedNodeIds,
-    selectedPrimary,
-    primaryNodeRole,
-    familyMemberships,
-    familyDeferred,
-    createCandidateFamily,
-    candidateFamilyDraft,
-    adjustmentReason,
-  });
-  const applyRequest = knowledgeInspectionApplyGuard.begin(state.knowledgeInspectionDialogSession, { resultId, commitId });
-  if (!applyRequest) {
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", "当前审核正在保存，请等待完成", "loading");
-    return;
-  }
-  setSmallDialogStatus("#knowledge-inspection-dialog-status", createCandidateFamily ? "正在创建候选题族并保存本题归属" : "正在保存知识依据与题族归属，并重新校验版本", "loading");
-  updateKnowledgeInspectionApplyButton();
-  setKnowledgeInspectionApplyLocked(true);
-  try {
-    const applied = await requestJson("/api/admin/knowledge-classification/apply", {
-      method: "POST",
-      body: JSON.stringify({
-        schemaVersion: "ClassificationCommitV1",
-        commitId,
-        resultIds: [resultId],
-        selections: [{
-          resultId,
-          primaryNodeId: selectedPrimary,
-          primaryNodeRole,
-          requiredNodeIds: selectedNodeIds,
-          familyKnowledgeProtocolVersion: blindGoldFamilyKnowledgeProtocolVersion,
-          familyMemberships,
-          ...(createCandidateFamily ? { createCandidateFamily: true, candidateFamilyDraft } : {}),
-        }],
-        adjustmentReason,
-      }),
-    });
-    if (!knowledgeInspectionApplyGuard.isCurrent(applyRequest)) return;
-    knowledgeInspectionApplyGuard.finish(applyRequest);
-    setKnowledgeInspectionApplyLocked(false);
-    if (!closeKnowledgeInspectionDialog({ expectedSession: applyRequest.session })) return;
-    await Promise.all([loadKnowledgeInspections(), loadKnowledgeStructure(), loadOverview()]);
-    const familyCopy = createCandidateFamily
-      ? `已创建候选题族“${candidateFamilyDraft.name}”并设为主题族${familyMemberships.length ? `，另保留 ${familyMemberships.length} 个关联题族` : ""}`
-      : (familyMemberships.length ? `已归入 ${familyMemberships.length} 个题族` : "已进入待归组，不会自动新建题族");
-    setKnowledgeInspectionFeedback(`知识依据已确认，${familyCopy}；Agent 4 已沉淀 ${applied.agent4?.confirmedCaseCount || 1} 个确认案例${applied.agent4?.correctionCount ? `、${applied.agent4.correctionCount} 个人工修正` : ""}。`, "success");
-  } catch (error) {
-    if (!knowledgeInspectionApplyGuard.isCurrent(applyRequest)) return;
-    const staleItems = error.details?.staleResults || [];
-    const reasonLabels = {
-      question_version_changed: "本题在巡检后被编辑过",
-      question_deleted: "本题已被删除",
-      knowledge_nodes_changed: "建议引用的知识节点或层级已修改",
-      textbook_knowledge_changed: "教材正文库已重建",
-      question_knowledge_assignment_changed: "本题的知识归属已在巡检后被人工调整",
-      question_family_memberships_changed: "本题的题族归属已在巡检后被人工调整",
-      question_classification_baseline_missing: "这条旧建议缺少归类基线，请重新巡检",
-      newer_result_available: "同一题已有更新的巡检建议",
-      result_already_reviewed: "这条建议已经处理过",
-      result_not_reviewable: "这条建议尚未形成可采纳结论",
-    };
-    const reasons = [...new Set(staleItems.flatMap((item) => item.reasons || []).map((reason) => reasonLabels[reason] || reason))];
-    if (staleItems[0]?.latestResultId) {
-      result.latestResultId = staleItems[0].latestResultId;
-      result.hasNewerResult = true;
-      document.querySelector("#rerun-knowledge-inspection").textContent = "打开最新建议";
-    }
-    setSmallDialogStatus("#knowledge-inspection-dialog-status", `采纳失败：${reasons.length ? reasons.join("；") : friendlyError(error)}`, "error");
-  } finally {
-    if (knowledgeInspectionApplyGuard.finish(applyRequest)) {
-      setKnowledgeInspectionApplyLocked(false);
-      updateKnowledgeInspectionApplyButton();
-    }
-  }
+  return openEnrichmentClassification(String(state.currentKnowledgeInspection?.questionId || ""));
 }
 
+// ⚠️ DEC-100（产品手册 §4.6.12）：「已拒绝」已从巡检记录状态机中废止（改为四态 待复核／已复核／已修复／已忽略），
+// 本函数不再绑定到任何按钮，保留仅为兼容旧写路径与静态契约。
 async function rejectKnowledgeInspection() {
   const result = state.currentKnowledgeInspection;
   const question = knowledgeInspectionQuestion(result || {});
   const resultId = String(result?.id || result?.resultId || "");
   if (!result || !question.id || !resultId) return;
+  // DEC-100（产品手册 §4.6.12）：巡检记录状态里已没有「已拒绝」，页面上也没有「拒绝建议」按钮，
+  // 本函数保留仅为兼容旧的写路径；它不再被任何事件绑定调用，缺失按钮时直接退出。
   const button = document.querySelector("#reject-knowledge-inspection");
-  button.disabled = true;
+  if (button) button.disabled = true;
   setSmallDialogStatus("#knowledge-inspection-dialog-status", "正在记录人工拒绝结果", "loading");
   try {
     await requestJson(`/api/admin/knowledge-classification/results/${encodeURIComponent(question.id)}/reject`, { method: "POST", body: JSON.stringify({ resultId }) });
@@ -14928,7 +18809,7 @@ async function rejectKnowledgeInspection() {
   } catch (error) {
     setSmallDialogStatus("#knowledge-inspection-dialog-status", `拒绝失败：${friendlyError(error)}`, "error");
   } finally {
-    button.disabled = false;
+    if (button) button.disabled = false;
   }
 }
 
@@ -14975,8 +18856,10 @@ async function editKnowledgeInspectionQuestion() {
   await openQuestionEditor(question.id);
 }
 
+// 默认值只对"不传参"生效：显式传 null 表示**这道题没有巡检结论**，
+// 此时绝不能回落到 state.currentKnowledgeInspection（那会把别的题的结论当成本题的）——所以用 ?. 兜空。
 function knowledgeInspectionResultId(result = state.currentKnowledgeInspection || {}) {
-  return String(result.id || result.resultId || "");
+  return String(result?.id || result?.resultId || "");
 }
 
 function teachingRuleStatusClass(status) {
@@ -15138,6 +19021,7 @@ function renderTeachingRuleTable() {
 }
 
 async function loadTeachingRules() {
+  assessmentModeUi().syncManagerLayout();
   const bookId = document.querySelector("#question-book-filter").value || "all";
   const status = document.querySelector("#teaching-rule-status").value;
   const query = document.querySelector("#teaching-rule-search").value.trim();
@@ -15311,7 +19195,7 @@ function questionFamilyMemberReviewActionsHtml(member = {}, family = {}) {
 
 function questionFamilyMembershipsHtml(question, currentFamilyId = "") {
   const memberships = Array.isArray(question.familyMemberships) ? question.familyMemberships : [];
-  if (!memberships.length) return '<div class="question-family-preview-memberships is-empty"><b>题族归属</b><span>未成族</span></div>';
+  if (!memberships.length) return '<div class="question-family-preview-memberships is-empty"><b>题族归属</b><span>未归档</span></div>';
   const visible = memberships.slice(0, 4);
   return `<div class="question-family-preview-memberships"><b>题族归属</b>${visible.map((membership) => {
     const reviewStatus = questionFamilyMemberReviewStatus(membership, { status: membership.familyStatus || membership.status });
@@ -15325,6 +19209,7 @@ function questionFamilyVisibleQuestions() {
   (state.ungroupedQuestions || []).forEach((question) => byId.set(question.id, question));
   (state.questionFamilies || []).forEach((family) => {
     (family.members || []).forEach((member) => {
+      if (Array.isArray(family.workspaceMemberIds) && !family.workspaceMemberIds.includes(member.questionId)) return;
       if (member.question?.id) byId.set(member.question.id, member.question);
     });
   });
@@ -15441,13 +19326,13 @@ function ungroupedQuestionFamilyHtml() {
   return `<section class="question-family-row question-family-ungrouped ${expanded ? "is-expanded" : ""}" data-question-family-id="${key}">
     <div class="question-family-row-main">
       <button class="question-family-expand" data-question-family-action="toggle" data-id="${key}" type="button" aria-expanded="${expanded}" title="${expanded ? "收起题目" : "展开题目"}"><span>›</span></button>
-      <div class="question-family-title"><div class="question-family-title-line"><strong>未成族题目</strong>${searching ? `<span class="question-family-search-match">成员题命中 ${questions.length} 道</span>` : ""}</div><span>尚未建立题族归属关系</span><small>可直接查看和编辑题目，或重新生成候选题族后人工审核。</small></div>
+      <div class="question-family-title"><div class="question-family-title-line"><strong>未归档题目</strong>${searching ? `<span class="question-family-search-match">成员题命中 ${questions.length} 道</span>` : ""}</div><span>尚未建立题族归属关系</span><small>可直接查看和编辑题目，或预览缺失的指纹与题族后人工确认。</small></div>
       <div class="question-family-structure"><strong>${questions.length} 道</strong><span>不复制题目，仅展示未建立题族关系的真实题目</span></div>
-      <div class="question-family-state"><strong class="medium">待处理</strong><span class="pending_review">待归组</span></div>
+      <div class="question-family-state"><strong class="medium">待处理</strong><span class="pending_review">未归档</span></div>
       <button class="secondary-action question-family-review" data-question-family-action="generate" type="button">重新归组</button>
     </div>
     <div class="question-family-preview-list" ${expanded ? "" : "hidden"}>
-      <div class="question-family-preview-head"><span>${searching ? `搜索命中 ${questions.length} 道题` : `未成族题目 ${questions.length} 道`}</span><small>编辑后仍保留同一题目 ID 与版本链</small></div>
+      <div class="question-family-preview-head"><span>${searching ? `搜索命中 ${questions.length} 道题` : `未归档题目 ${questions.length} 道`}</span><small>编辑后仍保留同一题目 ID 与版本链</small></div>
       ${questions.map((question, index) => questionFamilyPreviewHtml(question, { index, ungrouped: true, currentFamilyId: "__ungrouped__", matched: searching })).join("")}
     </div>
   </section>`;
@@ -15455,20 +19340,21 @@ function ungroupedQuestionFamilyHtml() {
 
 function renderQuestionFamilySummary() {
   const summary = state.questionFamilySummary || {};
-  const pendingMemberCount = state.questionFamilies.reduce((total, family) => total + questionFamilyMemberReviewCounts(family).pending_fit, 0);
+  const pendingMemberCount = summary.pendingMemberCount ?? state.questionFamilies.reduce((total, family) => total + questionFamilyMemberReviewCounts(family).pending_fit, 0);
   const metrics = [
-    ["题族集", state.questionFamilySets.length],
+    ["题族集", summary.familySetCount ?? state.questionFamilySets.length],
     ["候选题族", summary.total || 0],
     ["待审核", summary.pending || 0],
     ["已确认", summary.confirmed || 0],
     ["成员归属待审", pendingMemberCount],
     ["已归组题目", summary.confirmedTopicQuestionCount ?? summary.questionCount ?? 0],
     ["待归组题目", summary.pendingGroupingQuestionCount || 0],
-    ["无题族关系", summary.unresolvedQuestionCount || 0],
+    ["未归档", summary.unresolvedQuestionCount || 0],
   ];
   document.querySelector("#question-family-summary").innerHTML = metrics.map(([label, value]) => `
     <div class="question-family-metric"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>
   `).join("");
+  document.querySelector("#question-family-summary").title = "所选科目、教材范围统计；当前五项筛选命中数量见列表上方。未归档指没有任何题族关系。";
   renderQuestionFamilyScopeSummary();
 }
 
@@ -15481,15 +19367,13 @@ function renderQuestionFamilyScopeSummary() {
     : Number(treeSummary.questionCount || 0);
   const currentQuestionCount = new Set(state.questionFamilies.flatMap((family) => (family.members || [])
     .map((member) => member.questionId).filter(Boolean))).size;
-  const status = document.querySelector("#question-family-status")?.value || "all";
-  const statusLabel = status === "all" ? "全部状态，含待审核/驳回" : (questionFamilyStatusLabels[status] || status);
-  const memberStatus = document.querySelector("#question-family-member-status")?.value || "all";
-  const memberStatusLabel = memberStatus === "all" ? "全部成员状态" : questionFamilyMemberReviewStatusLabels[memberStatus];
   const ungroupedCount = (state.ungroupedQuestions || []).length;
   const ungroupedLabel = state.selectedKnowledgeNodeId
     ? `本目录（含下级）未成族 ${ungroupedCount} 道 · `
     : "";
-  element.textContent = `${ungroupedLabel}左侧目录 ${formalCount} 道正式投影（已确认题族定义 + 已确认成员归属、含下级、去重） · 当前列表 ${currentQuestionCount} 道成员（定义：${statusLabel}；归属：${memberStatusLabel}）`;
+  const matchedCount = new Set(state.questionFamilies.flatMap(family => family.workspaceMemberIds || family.members.map(member => member.questionId))).size;
+  element.textContent = `当前筛选：${state.questionFamilies.length} 个题族 · ${matchedCount} 道成员题 · ${ungroupedCount} 道未归档`;
+  element.title = `${ungroupedLabel}左侧目录 ${formalCount} 道正式投影（已确认定义和归属、含下级、去重）；这些题族完整成员共 ${currentQuestionCount} 道。`;
 }
 
 function questionFamilySetItems(set, type) {
@@ -15656,10 +19540,8 @@ function questionFamilyRowHtml(family, options = {}) {
   const searchInfo = options.searchInfo || questionFamilySearchMatchInfo(family, query);
   const matchedIds = searchInfo.questionIds;
   const members = Array.isArray(family.members) ? family.members : [];
-  const memberReviewFilter = document.querySelector("#question-family-member-status")?.value || "all";
-  const filteredMembers = memberReviewFilter === "all"
-    ? members
-    : members.filter((member) => questionFamilyMemberReviewStatus(member, family) === memberReviewFilter);
+  const workspaceMemberIds = Array.isArray(family.workspaceMemberIds) ? new Set(family.workspaceMemberIds) : null;
+  const filteredMembers = workspaceMemberIds ? members.filter(member => workspaceMemberIds.has(member.questionId)) : members;
   const singletonLabel = confirmedMembers.length === 1
     ? (family.status === "confirmed" ? "单题待扩充" : "样本不足")
     : "";
@@ -15681,8 +19563,8 @@ function questionFamilyRowHtml(family, options = {}) {
     : '<div class="question-family-preview-empty"><strong>空题族</strong><span>尚未加入题目，可进入调整后添加成员。</span></div>');
   const memberReviewCopy = `正式 ${reviewCounts.confirmed} · 待审 ${reviewCounts.pending_fit}${reviewCounts.inactive ? ` · 已失效 ${reviewCounts.inactive}` : ""}`;
   const previewLabel = searching
-    ? (showAllMembers ? `${questionFamilyMemberReviewStatusLabels[memberReviewFilter] || "全部成员"} ${filteredMembers.length} 道 · 命中 ${matchedMembers.length} 道` : (matchedMembers.length ? `成员题命中 ${matchedMembers.length} 道` : "没有成员题直接命中"))
-    : `题族成员 ${members.length} 道 · ${memberReviewCopy}`;
+    ? (showAllMembers ? `筛选内成员 ${filteredMembers.length} 道 · 命中 ${matchedMembers.length} 道` : (matchedMembers.length ? `成员题命中 ${matchedMembers.length} 道` : "没有成员题直接命中"))
+    : `筛选内 ${filteredMembers.length} 道 / 全族 ${members.length} 道 · ${memberReviewCopy}`;
   const memberToggle = searching && filteredMembers.length > matchedMembers.length
     ? `<button class="question-family-member-visibility" data-question-family-action="show-all-members" data-id="${escapeHtml(family.id)}" type="button">${showAllMembers ? "仅看命中题" : `查看全部 ${filteredMembers.length} 道`}</button>`
     : "";
@@ -15759,7 +19641,6 @@ function renderQuestionFamilyTable() {
     return;
   }
   const query = syncQuestionFamilySearchView(document.querySelector("#question-family-search").value);
-  const memberReviewFilter = document.querySelector("#question-family-member-status")?.value || "all";
   const maps = questionFamilySetMaps();
   const familyById = new Map(state.questionFamilies.map((family) => [family.id, family]));
   const familySearchInfoById = new Map(state.questionFamilies.map((family) => [family.id, questionFamilySearchMatchInfo(family, query)]));
@@ -15771,15 +19652,12 @@ function renderQuestionFamilyTable() {
     .filter((set) => scopedSetIds.has(set.id) && (!query || `${set.name} ${set.description || ""} ${set.knowledgePath || ""}`.toLocaleLowerCase("zh-CN").includes(query)))
     .map((set) => set.id));
   const visibleFamilyIds = new Set(state.questionFamilies
-    .filter((family) => questionFamilyMatchesMemberReviewFilter(family, memberReviewFilter))
     .filter((family) => !query || familySearchInfoById.get(family.id).matched)
     .map((family) => family.id));
   if (query) matchedSetIds.forEach((setId) => questionFamilySetDescendantFamilyIds(setId, maps).forEach((familyId) => {
     if (familyById.has(familyId)) visibleFamilyIds.add(familyId);
   }));
-  else state.questionFamilies
-    .filter((family) => questionFamilyMatchesMemberReviewFilter(family, memberReviewFilter))
-    .forEach((family) => visibleFamilyIds.add(family.id));
+  else state.questionFamilies.forEach((family) => visibleFamilyIds.add(family.id));
 
   const visibleSetIds = query ? new Set(matchedSetIds) : new Set(scopedSetIds);
   if (query) {
@@ -15827,7 +19705,7 @@ function renderQuestionFamilyTable() {
   let rowsHtml = "";
   if (query) {
     const searchRows = [
-      ...(memberReviewFilter === "all" && state.ungroupedQuestions.length ? [{ type: "ungrouped", order: { priority: 1, score: state.ungroupedQuestions.length } }] : []),
+      ...(state.ungroupedQuestions.length ? [{ type: "ungrouped", order: { priority: 1, score: state.ungroupedQuestions.length } }] : []),
       ...rootSets.map((set) => ({ type: "set", value: set, order: questionFamilySetSearchOrder(set.id, context) })),
       ...looseFamilies.map((family) => ({ type: "family", value: family, order: familySearchInfoById.get(family.id) })),
     ].sort((left, right) => compareQuestionFamilySearchMatches(left.order, right.order));
@@ -15841,7 +19719,7 @@ function renderQuestionFamilyTable() {
       });
     }).join("");
   } else {
-    rowsHtml = `${memberReviewFilter === "all" ? ungroupedQuestionFamilyHtml() : ""}${rootSets.map((set) => questionFamilySetRowHtml(set.id, context)).join("")}${looseFamilies.map((family) => questionFamilyRowHtml(family, { parentSetName: maps.setById.get(maps.familyParent.get(family.id))?.name || "" })).join("")}`;
+    rowsHtml = `${ungroupedQuestionFamilyHtml()}${rootSets.map((set) => questionFamilySetRowHtml(set.id, context)).join("")}${looseFamilies.map((family) => questionFamilyRowHtml(family, { parentSetName: maps.setById.get(maps.familyParent.get(family.id))?.name || "" })).join("")}`;
   }
   body.innerHTML = rowsHtml || '<div class="question-table-empty">没有匹配的题族集、题族或题目。</div>';
   renderQuestionFamilyManagement();
@@ -15862,25 +19740,41 @@ function setQuestionFamilyFeedback(message = "", tone = "") {
 
 function questionFamilyWorkspaceBookId() {
   const selectedBookId = document.querySelector("#question-book-filter").value;
-  return selectedBookId && selectedBookId !== "all" ? selectedBookId : "modern-chinese-7-1";
+  return selectedBookId && selectedBookId !== "all" ? selectedBookId : "";
 }
 
 async function loadQuestionFamilies() {
+  const controller = beginQuestionWorkspaceLoad();
   const loadSequence = Number(state.questionFamilyLoadSequence || 0) + 1;
   state.questionFamilyLoadSequence = loadSequence;
-  const isCurrentLoad = () => loadSequence === Number(state.questionFamilyLoadSequence || 0);
-  const workspaceQuery = document.querySelector("#question-family-search").value.trim();
-  const normalizedWorkspaceQuery = workspaceQuery.toLocaleLowerCase("zh-CN");
-  const queryMatchesKnownSet = normalizedWorkspaceQuery && state.questionFamilySets.some((set) => `${set.name} ${set.description || ""} ${set.knowledgePath || ""}`.toLocaleLowerCase("zh-CN").includes(normalizedWorkspaceQuery));
-  const query = new URLSearchParams({
-    bookId: questionFamilyWorkspaceBookId(),
-    knowledgeNodeId: state.selectedKnowledgeNodeId,
-    status: document.querySelector("#question-family-status").value,
-    query: queryMatchesKnownSet ? "" : workspaceQuery,
-  });
+  const isCurrentLoad = () => loadSequence === Number(state.questionFamilyLoadSequence || 0) && !controller.signal.aborted;
+  state.questionFamilyCatalogTreeSummary = null;
+  state.questionFamilyTreeError = "";
+  renderKnowledgeTree();
   try {
-    const payload = await requestJson(`/api/admin/question-families?${query}`);
+    if (libraryWorkspace.needsDirectorySelection()) {
+      state.questionFamilies = []; state.questionFamilySets = []; state.ungroupedQuestions = [];
+      state.questionSelectedIds = []; state.questionFamilySummary = null; state.questionFamilyCatalogTreeSummary = null;
+      renderQuestionFamilySummary(); renderKnowledgeTree(); renderQuestionFamilyTable();
+      setQuestionFamilyFeedback("请先选择左侧题库节点；多项映射已高亮，无映射可通过「映射编辑」设置。");
+      return false;
+    }
+    await loadQuestionCatalog();
     if (!isCurrentLoad()) return false;
+    const workspaceQuery = document.querySelector("#question-family-search").value.trim();
+    const normalizedWorkspaceQuery = workspaceQuery.toLocaleLowerCase("zh-CN");
+    const queryMatchesKnownSet = normalizedWorkspaceQuery && state.questionFamilySets.some((set) => `${set.name} ${set.description || ""} ${set.knowledgePath || ""}`.toLocaleLowerCase("zh-CN").includes(normalizedWorkspaceQuery));
+    const query = new URLSearchParams({
+      ...questionWorkspaceFilters(),
+      query: queryMatchesKnownSet ? "" : workspaceQuery,
+    });
+    const [payload, batchPayload] = await Promise.all([
+      requestJson(`/api/admin/question-families?${query}`, { signal: controller.signal }),
+      requestJson("/api/admin/questions/import-batches", { signal: controller.signal }),
+    ]);
+    if (!isCurrentLoad()) return false;
+    state.questionImportBatches = batchPayload.batches || [];
+    renderQuestionImportBatchFilter();
     state.questionFamilies = payload.families || [];
     state.questionFamilySets = payload.familySets || [];
     state.ungroupedQuestions = queryMatchesKnownSet
@@ -15905,8 +19799,15 @@ async function loadQuestionFamilies() {
     return true;
   } catch (error) {
     if (!isCurrentLoad()) return false;
+    state.questionFamilyTreeError = "正式投影读取失败，请刷新重试";
+    renderKnowledgeTree();
     document.querySelector("#question-family-table-body").innerHTML = `<div class="question-table-empty">读取失败：${escapeHtml(friendlyError(error))}</div>`;
     return false;
+  } finally {
+    if (isCurrentLoad()) {
+      state.questionWorkspaceAbortController = null;
+      setQuestionWorkspaceLoading(false);
+    }
   }
 }
 
@@ -15920,7 +19821,7 @@ function questionFamilySetFromPayload(payload = {}) {
 
 function knowledgeNodeContains(ancestorId, nodeId) {
   if (!ancestorId || !nodeId) return false;
-  const byId = new Map((state.knowledgeStructure?.nodes || []).map((node) => [node.id, node]));
+  const byId = new Map((state.questionFamilySetStructure?.nodes || state.knowledgeStructure?.nodes || []).map((node) => [node.id, node]));
   let current = byId.get(nodeId);
   while (current) {
     if (current.id === ancestorId) return true;
@@ -15985,7 +19886,7 @@ function renderQuestionFamilySetLocationOptions() {
   const select = document.querySelector("#question-family-set-location");
   const currentValue = select.value || state.currentQuestionFamilySet?.knowledgeNodeId || state.selectedKnowledgeNodeId;
   const query = document.querySelector("#question-family-set-location-search").value.trim().toLocaleLowerCase("zh-CN");
-  const nodes = (state.knowledgeStructure?.nodes || []).filter((node) => !query || `${node.path} ${node.displayTitle || node.title}`.toLocaleLowerCase("zh-CN").includes(query));
+  const nodes = (state.questionFamilySetStructure?.nodes || state.knowledgeStructure?.nodes || []).filter((node) => !query || `${node.path} ${node.displayTitle || node.title}`.toLocaleLowerCase("zh-CN").includes(query));
   select.innerHTML = nodes.length
     ? nodes.map((node) => `<option value="${escapeHtml(node.id)}" ${node.id === currentValue ? "selected" : ""}>${escapeHtml(node.path || node.displayTitle || node.title)}</option>`).join("")
     : '<option value="" disabled>没有匹配的教材节点</option>';
@@ -16136,11 +20037,14 @@ function renderQuestionFamilySetMembers(options = {}) {
 }
 
 async function loadQuestionFamilySetCatalog() {
-  const bookId = questionFamilyWorkspaceBookId();
-  const [familyPayload, setPayload] = await Promise.all([
+  const bookId = state.currentQuestionFamilySet?.bookId || questionFamilyWorkspaceBookId();
+  if (!bookId) throw new Error("请先选择一本教材");
+  const [familyPayload, setPayload, structurePayload] = await Promise.all([
     requestJson(`/api/admin/question-family-options?bookId=${encodeURIComponent(bookId)}`),
     requestJson(`/api/admin/question-family-sets?bookId=${encodeURIComponent(bookId)}`),
+    requestJson(`/api/admin/knowledge-structure?bookId=${encodeURIComponent(bookId)}&optional=true`),
   ]);
+  state.questionFamilySetStructure = structurePayload.structure;
   state.questionFamilySetCatalogFamilies = familyPayload.families || [];
   state.questionFamilySets = questionFamilySetsFromPayload(setPayload);
   if (state.currentQuestionFamilySet) {
@@ -16152,6 +20056,11 @@ function closeQuestionFamilySetDialog() {
   const dialog = document.querySelector("#question-family-set-dialog");
   if (dialog.open) dialog.close();
   state.currentQuestionFamilySet = null;
+  state.questionFamilySetStructure = null;
+  if (state.questionFamilySetWorkspaceSnapshot) {
+    state.questionFamilySets = state.questionFamilySetWorkspaceSnapshot;
+    state.questionFamilySetWorkspaceSnapshot = null;
+  }
   state.questionFamilySetSelectedItems = [];
   state.questionFamilySetCatalogFamilies = [];
   state.questionFamilySetMemberTab = "candidates";
@@ -16169,6 +20078,8 @@ async function openQuestionFamilySetDialog(setId = "") {
     setQuestionFamilyFeedback("这个题族集已不存在，请刷新后重试。", "error");
     return;
   }
+  state.questionFamilySetWorkspaceSnapshot = state.questionFamilySets;
+  state.questionFamilySetStructure = null;
   state.questionFamilySetSelectedItems = [];
   state.questionFamilySetMemberTab = "candidates";
   const current = state.currentQuestionFamilySet;
@@ -16218,6 +20129,20 @@ async function submitQuestionFamilySet(event) {
   const selected = [...selectedQuestionFamilySetItems()];
   const familyIds = selected.filter((key) => key.startsWith("family:")).map((key) => key.slice(7));
   const childSetIds = selected.filter((key) => key.startsWith("set:")).map((key) => key.slice(4));
+  const affected = [
+    ...familyIds.map((id) => {
+      const family = questionFamilySetMemberDetail("family", id);
+      return `${family?.name || id}（${Number(family?.memberCount || family?.members?.length || 0)} 道题）`;
+    }),
+    ...childSetIds.map((id) => {
+      const set = questionFamilySetMemberDetail("set", id);
+      return `${set?.name || id}（${Number(set?.questionCount || 0)} 道去重题目）`;
+    }),
+  ];
+  if (current && (current.parentSetId || "") !== document.querySelector("#question-family-set-parent").value) {
+    affected.push(`当前题族集层级（${Number(current.questionCount || 0)} 道去重题目）`);
+  }
+  if (affected.length && !window.confirm(`这次会调整整个题族或下级集的归集，不只影响当前题目。\n涉及：${affected.join("、")}\n确认提交？`)) return;
   const button = document.querySelector("#save-question-family-set");
   button.disabled = true;
   setSmallDialogStatus("#question-family-set-dialog-status", current ? "正在保存题族集" : "正在创建题族集", "loading");
@@ -16268,7 +20193,8 @@ async function removeQuestionFamilySetMember(type, memberId) {
   const current = state.currentQuestionFamilySet;
   if (!current || !memberId) return;
   const detail = questionFamilySetMemberDetail(type, memberId);
-  if (!window.confirm(`确定将“${detail?.name || memberId}”移出题族集吗？${type === "family" ? "题族和题目不会被删除。" : "下级题族集及其内容都会保留。"}`)) return;
+  const affectedCount = type === "family" ? Number(detail?.memberCount || detail?.members?.length || 0) : Number(detail?.questionCount || 0);
+  if (!window.confirm(`确定将“${detail?.name || memberId}”移出题族集吗？涉及 ${affectedCount} 道题的派生归集展示；${type === "family" ? "题族和题目不会被删除。" : "下级题族集及其内容都会保留。"}`)) return;
   setSmallDialogStatus("#question-family-set-dialog-status", "正在移出题族集", "loading");
   try {
     const payload = await requestJson(`/api/admin/question-family-sets/${encodeURIComponent(current.id)}/members/${encodeURIComponent(type)}/${encodeURIComponent(memberId)}`, {
@@ -16312,23 +20238,7 @@ async function deleteQuestionFamilySet() {
 }
 
 async function generateQuestionFamilies() {
-  const button = document.querySelector("#generate-question-families");
-  button.disabled = true;
-  button.textContent = "正在归组";
-  setQuestionFamilyFeedback("正在按多级知识指纹、具体考查命题和作答动作生成候选题族…", "loading");
-  try {
-    const payload = await requestJson("/api/admin/question-families/generate", {
-      method: "POST",
-      body: JSON.stringify({ bookId: questionFamilyWorkspaceBookId() }),
-    });
-    setQuestionFamilyFeedback(`已生成 ${payload.familyCount} 个候选题族，覆盖 ${payload.groupedQuestionCount}/${payload.questionCount} 道题；${payload.unresolvedQuestionCount} 道暂不硬归组。`, "success");
-    await loadQuestionFamilies();
-  } catch (error) {
-    setQuestionFamilyFeedback(`生成失败：${friendlyError(error)}`, "error");
-  } finally {
-    button.disabled = false;
-    button.textContent = "重新生成候选";
-  }
+  libraryWorkspace.openCompletion(null, questionFamilyWorkspaceBookId());
 }
 
 function questionFamilyFingerprintSummary(fingerprint = {}) {
@@ -16442,7 +20352,7 @@ function questionFamilyMemberContributionSuggestionNodeIds(member = {}, family =
 }
 
 function questionFamilyMemberContributionHtml(member = {}, family = {}) {
-  const nodeById = new Map((state.knowledgeStructure?.nodes || []).map((node) => [node.id, node]));
+  const nodeById = new Map((questionFamilyEditingStructure()?.nodes || []).map((node) => [node.id, node]));
   const primaryNodeRole = normalizeQuestionFingerprintPrimaryNodeRole(member.primaryNodeRole);
   const questionRequired = [...new Set([
     ...(primaryNodeRole === "core" ? [member.knowledgeNodeId] : []),
@@ -16498,7 +20408,14 @@ function questionFamilyNodeIds(values) {
 }
 
 function questionFamilyKnowledgeNode(nodeId) {
-  return (state.knowledgeStructure?.nodes || []).find((node) => node.id === nodeId && node.kind === "knowledge");
+  return (questionFamilyEditingStructure()?.nodes || []).find((node) => node.id === nodeId && node.kind === "knowledge");
+}
+
+function questionFamilyEditingStructure() {
+  const familyId = document.querySelector("#question-family-id").value;
+  const family = state.questionFamilies.find(item => item.id === familyId);
+  return family && state.questionFamilyEditorStructure?.bookId === family.bookId
+    ? state.questionFamilyEditorStructure : state.knowledgeStructure;
 }
 
 function setQuestionFamilyDefinitionState(family = {}, fallbackNodeId = "") {
@@ -16838,7 +20755,7 @@ function renderQuestionFamilyLocationOptions() {
   const requiredSelect = document.querySelector("#question-family-required-knowledge");
   const anchorsSelect = document.querySelector("#question-family-textbook-anchors");
   const family = state.questionFamilies.find((item) => item.id === document.querySelector("#question-family-id").value);
-  const knowledgeNodes = (state.knowledgeStructure?.nodes || []).filter((node) => node.kind === "knowledge");
+  const knowledgeNodes = (questionFamilyEditingStructure()?.nodes || []).filter((node) => node.kind === "knowledge");
   const knownIds = new Set(knowledgeNodes.map((node) => node.id));
   if (!knownIds.has(state.questionFamilyCoreKnowledgeNodeId)) state.questionFamilyCoreKnowledgeNodeId = family?.backendDirectoryAnchorNodeId || family?.coreKnowledgeNodeId || family?.knowledgeNodeId || state.creatingQuestionFamilyNodeId || "";
   if (!knownIds.has(state.questionFamilyMoveKnowledgeNodeId)) state.questionFamilyMoveKnowledgeNodeId = family?.userDirectoryAnchorNodeId || family?.locationNodeId || family?.knowledgeNodeId || state.creatingQuestionFamilyNodeId || "";
@@ -16852,9 +20769,20 @@ function renderQuestionFamilyLocationOptions() {
   renderQuestionFamilyMultiselects();
 }
 
-function openQuestionFamilyReview(familyId) {
+async function openQuestionFamilyReview(familyId) {
   const family = state.questionFamilies.find((item) => item.id === familyId);
   if (!family) return;
+  try {
+    const payload = await requestJson(`/api/admin/knowledge-structure?bookId=${encodeURIComponent(family.bookId)}&optional=true`);
+    state.questionFamilyEditorStructure = payload.structure;
+    if (!payload.structure?.nodes?.length) {
+      setQuestionFamilyFeedback("该题族教材暂无可用目录，请先补齐目录后编辑。", "error");
+      return;
+    }
+  } catch (error) {
+    setQuestionFamilyFeedback(`读取题族教材失败：${friendlyError(error)}`, "error");
+    return;
+  }
   const memberReviewCounts = questionFamilyMemberReviewCounts(family);
   state.creatingQuestionFamilyNodeId = "";
   document.querySelector("#question-family-id").value = family.id;
@@ -17029,7 +20957,7 @@ async function openQuestionGrouping(mode = "add") {
   }
   const workspaceBookId = questionFamilyWorkspaceBookId();
   const explicitBookIds = [...new Set(questions.map((question) => question.bookId).filter(Boolean))];
-  if (explicitBookIds.length > 1 || (explicitBookIds.length === 1 && explicitBookIds[0] !== workspaceBookId)) {
+  if (!workspaceBookId || questions.some(question => !question.bookId) || explicitBookIds.length > 1 || (explicitBookIds.length === 1 && explicitBookIds[0] !== workspaceBookId)) {
     window.alert("请先筛选同一本教材，再批量归入题族。");
     return;
   }
@@ -17484,7 +21412,7 @@ async function saveQuestionFamily(status) {
       }),
     });
     document.querySelector("#question-family-dialog").close();
-    if (primaryAnchorChanged) {
+    if (primaryAnchorChanged && questionFamilyWorkspaceBookId() === family?.bookId) {
       state.selectedKnowledgeNodeId = primaryAnchorNodeId;
       state.expandedQuestionFamilyIds.add(familyId);
       renderKnowledgeTree();
@@ -17500,11 +21428,11 @@ async function saveQuestionFamily(status) {
   }
 }
 
-async function openView(name) {
-  // 兼容旧入口：「题目完善」已从一级导航搬进「题库管理 → 完善题目」。
+async function openView(name) {  // 兼容旧入口：「题目完善」已从一级导航搬进「题库管理 → 完善题目」。
   // 旧链接 / 旧书签仍然带这个名字进来，统一落到题库管理并把子标签切到「完善题目」。
   const requestedEnrichment = name === "题目完善";
   if (requestedEnrichment) name = "题库管理";
+  if (name === "题库管理（新）") name = "题库管理";
   // 兼容旧入口：「审核与举报 / 用户限制 / 公告管理」已并入「社区管理」二级菜单，旧名字落到对应子标签。
   const communitySubViews = { "审核与举报": "moderation", "用户限制": "restrictions", "公告管理": "announcements" };
   if (name === "审核与举报" || name === "用户限制" || name === "公告管理") {
@@ -17537,25 +21465,33 @@ async function openView(name) {
   const isCommunityAdmin = name === "社区管理";
   const isModeration = isCommunityAdmin && communityAdminTab === "moderation";
   const isAnnouncementAdmin = isCommunityAdmin && communityAdminTab === "announcements";
-  const isBilling = name === "订阅与额度";
+  // 平台设置（2026-10-05）：独立一级菜单，仅超级管理员可访问（后端默认拒绝运营）。
+  const isPlatformContent = name === "平台设置";
+  const isBilling = name === "订阅与豆币";
   const isOperationLogs = name === "操作日志";
   const isAdminAccounts = name === "后台账号";
   const isUserRestrictions = isCommunityAdmin && communityAdminTab === "restrictions";
   document.querySelector("#dashboard").hidden = !isDashboard;
   document.querySelector("#ai-config").hidden = !isAiConfig;
+  if (isAiConfig) renderAiConfigProxyWarning();
   document.querySelector("#ai-tasks").hidden = !isAiTasks;
   document.querySelector("#question-library").hidden = !isQuestionLibrary;
   document.querySelector("#textbook-catalog").hidden = !isTextbookCatalog;
   document.querySelector("#exam-admin").hidden = !isExamAdmin;
   document.querySelector("#pack-admin").hidden = !isPackAdmin;
   document.querySelector("#announcement-admin").hidden = !isAnnouncementAdmin;
+  document.querySelector("#platform-content-admin").hidden = !isPlatformContent;
   document.querySelector("#moderation").hidden = !isModeration;
   document.querySelector("#billing-admin").hidden = !isBilling;
   document.querySelector("#operation-logs").hidden = !isOperationLogs;
   document.querySelector("#admin-accounts").hidden = !isAdminAccounts;
   document.querySelector("#user-restrictions").hidden = !isUserRestrictions;
-  document.querySelector("#placeholder").hidden = isDashboard || isAiConfig || isAiTasks || isQuestionLibrary || isTextbookCatalog || isExamAdmin || isPackAdmin || isAnnouncementAdmin || isCommunityAdmin || isBilling || isOperationLogs || isAdminAccounts;
+  document.querySelector("#placeholder").hidden = isDashboard || isAiConfig || isAiTasks || isQuestionLibrary || isTextbookCatalog || isExamAdmin || isPackAdmin || isAnnouncementAdmin || isCommunityAdmin || isBilling || isOperationLogs || isAdminAccounts || isPlatformContent;
   document.querySelector("#placeholder-title").textContent = name;
+  const placeholderCopy = document.querySelector("#placeholder-copy");
+  if (placeholderCopy) {
+    placeholderCopy.textContent = "后续开发将在此接入真实数据库、权限校验和具体操作流程。";
+  }
   if (isUserRestrictions) await loadUserRestrictions();
   if (isAdminAccounts) await loadAdminAccounts();
   if (isAiConfig) await loadAiConfig();
@@ -17571,8 +21507,8 @@ async function openView(name) {
     document.querySelector("#question-library-copy").textContent = state.questionLibrary === "official"
       ? "按科目、教材、章节和多级知识点统一管理题目与题族"
       : "审核用户贡献题目，并管理公共、精选、下架与转入平台题库状态";
-    // 「题目录入」「知识档案」「完善题目」「AI 巡检」「盲测金标」「裁决台」只在官方题库下有意义
-    ["authoring", "inspections", "gold-review", "dossiers", "enrichment", "adjudication"].forEach((key) => {
+    // 「题目录入」「知识档案」「完善题目」「AI 巡检」「盲测金标」只在官方题库下有意义
+    ["authoring", "inspections", "gold-review", "dossiers", "enrichment"].forEach((key) => {
       const button = document.querySelector(`[data-question-library-tab="${key}"]`);
       if (button) button.hidden = state.questionLibrary !== "official";
     });
@@ -17587,7 +21523,7 @@ async function openView(name) {
     // 旧入口「题目完善」落到本子标签
     if (requestedEnrichment) state.questionLibraryTab = "enrichment";
     await loadQuestionCatalog();
-    syncQuestionFilterBooks("modern-chinese-7-1");
+    syncQuestionFilterBooks();
     renderQuestionStatusFilter();
     await loadKnowledgeStructure();
     setQuestionLibraryTab(state.questionLibraryTab);
@@ -17596,8 +21532,12 @@ async function openView(name) {
   if (isExamAdmin) await loadExams();
   if (isPackAdmin) await loadPacks();
   if (isAnnouncementAdmin) await loadAnnouncements();
+  if (isPlatformContent) await loadPlatformContent();
   if (isModeration) await loadModeration();
-  if (isBilling) await loadBilling();
+  if (isBilling) {
+    setBillingTab(state.billingTab);
+    await loadBilling();
+  }
   if (isOperationLogs) await loadOperationLogs();
 }
 
@@ -17688,13 +21628,76 @@ document.querySelector("#operation-search").addEventListener("input", () => {
 });
 
 document.querySelector("#billing-new-product").addEventListener("click", () => openBillingProductEditor());
-document.querySelector("#billing-refresh").addEventListener("click", loadBilling);
+document.querySelector("#billing-new-bean-product").addEventListener("click", () => openBillingProductEditor("", false, "", true));
+document.querySelector("#billing-open-user").addEventListener("click", () => openBillingAccountDialog());
+document.querySelector("#billing-load-user").addEventListener("click", () => {
+  const userId = document.querySelector("#billing-user-id").value.trim();
+  if (!userId) {
+    window.alert("请输入用户 ID");
+    return;
+  }
+  loadBilling(userId);
+});
+document.querySelector("#billing-user-id").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    document.querySelector("#billing-load-user").click();
+  }
+});
+document.querySelector("#billing-tabs").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-billing-tab]");
+  if (button) setBillingTab(button.dataset.billingTab);
+});
+document.querySelector("#billing-tabs").addEventListener("keydown", (event) => {
+  const tabs = [...document.querySelectorAll("[data-billing-tab]")];
+  const current = tabs.indexOf(event.target.closest("[data-billing-tab]"));
+  if (current < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const next = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? tabs.length - 1
+      : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  setBillingTab(tabs[next].dataset.billingTab, { focus: true });
+});
+document.querySelector("#billing-refresh-account").addEventListener("click", () => loadBilling());
+document.querySelector("#billing-refresh").addEventListener("click", () => loadBilling());
+document.querySelector("#billing-users-search-button").addEventListener("click", () => loadBillingUsers(1));
+document.querySelector("#billing-users-search").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loadBillingUsers(1);
+});
+document.querySelector("#billing-users-refresh").addEventListener("click", () => loadBillingUsers(state.billingUsersPage));
+document.querySelector("#billing-users-prev").addEventListener("click", () => loadBillingUsers(state.billingUsersPage - 1));
+document.querySelector("#billing-users-next").addEventListener("click", () => loadBillingUsers(state.billingUsersPage + 1));
+document.querySelector("#billing-users-body").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-billing-view-user]");
+  if (button) openBillingAccountDialog(button.dataset.billingViewUser);
+});
+document.querySelector("#close-billing-account").addEventListener("click", () => document.querySelector("#billing-account-dialog").close());
+document.querySelector("#cancel-billing-account").addEventListener("click", () => document.querySelector("#billing-account-dialog").close());
 document.querySelector("#billing-product-type").addEventListener("change", syncBillingProductType);
+document.querySelector("#billing-product-project").addEventListener("change", () => renderBillingSubjects());
+document.querySelector("#billing-product-subjects").addEventListener("change", () => {
+  const selected = new Set(billingScopeSelection("#billing-product-subjects"));
+  const books = billingScopeSelection("#billing-product-books").filter((id) =>
+    state.questionCatalog?.books.some((book) => book.id === id && selected.has(book.subjectId)));
+  renderBillingBooks(books);
+});
 document.querySelector("#billing-product-form").addEventListener("submit", saveBillingProduct);
 document.querySelector("#billing-product-table-body").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-billing-product-action]");
   if (!button) return;
+  if (button.dataset.billingProductAction === "toggle") {
+    state.billingCollapsedPackages ||= new Set();
+    const key = button.dataset.packageKey;
+    if (state.billingCollapsedPackages.has(key)) state.billingCollapsedPackages.delete(key);
+    else state.billingCollapsedPackages.add(key);
+    renderBillingProducts();
+    return;
+  }
+  if (button.dataset.billingProductAction === "group") { openBillingProductEditor("", false, button.dataset.packageKey); return; }
   if (button.dataset.billingProductAction === "edit") { openBillingProductEditor(button.dataset.id); return; }
+  if (button.dataset.billingProductAction === "copy") { openBillingProductEditor(button.dataset.id, true); return; }
   const action = button.dataset.billingProductAction;
   const label = action === "enable" ? "上架" : "停用";
   if (!window.confirm(`确认${label}这个商品吗？`)) return;
@@ -17707,13 +21710,27 @@ document.querySelector("#billing-grant-product").addEventListener("click", openB
 document.querySelector("#billing-grant-product-form").addEventListener("submit", grantBillingProduct);
 document.querySelector("#billing-grant-credits").addEventListener("click", () => {
   document.querySelector("#billing-grant-credits-form").reset();
-  document.querySelector("#billing-grant-amount").value = 10;
+  document.querySelector("#billing-grant-credits-user").value = state.billingUserId;
+  document.querySelector("#billing-grant-amount").value = 1;
   document.querySelector("#billing-grant-validity").value = 30;
-  document.querySelector("#billing-grant-description").value = "内部测试额度";
+  document.querySelector("#billing-grant-description").value = "内部测试豆币";
   setSmallDialogStatus("#billing-grant-credits-status");
   document.querySelector("#billing-grant-credits-dialog").showModal();
 });
 document.querySelector("#billing-grant-credits-form").addEventListener("submit", grantBillingCredits);
+document.querySelector("#billing-order-table-body").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-billing-order-action]");
+  if (!button) return;
+  refundBillingOrder(button.dataset.id, button.dataset.billingOrderAction === "refund_only" ? "refund_only" : "revoke");
+});
+document.querySelector("#billing-orders-search-button").addEventListener("click", () => loadBillingOrders(1));
+document.querySelector("#billing-orders-search").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loadBillingOrders(1);
+});
+document.querySelector("#billing-orders-status").addEventListener("change", () => loadBillingOrders(1));
+document.querySelector("#billing-refresh-orders").addEventListener("click", () => loadBillingOrders(state.billingOrdersPage));
+document.querySelector("#billing-orders-prev").addEventListener("click", () => loadBillingOrders(state.billingOrdersPage - 1));
+document.querySelector("#billing-orders-next").addEventListener("click", () => loadBillingOrders(state.billingOrdersPage + 1));
 document.querySelector("#close-billing-product").addEventListener("click", closeBillingProductEditor);
 document.querySelector("#cancel-billing-product").addEventListener("click", closeBillingProductEditor);
 document.querySelector("#close-billing-grant-product").addEventListener("click", () => document.querySelector("#billing-grant-product-dialog").close());
@@ -17973,6 +21990,21 @@ document.querySelector("#close-announcement-editor").addEventListener("click", c
 document.querySelector("#cancel-announcement-editor").addEventListener("click", closeAnnouncementEditor);
 document.querySelector("#announcement-editor-dialog").addEventListener("click", (event) => { if (event.target === event.currentTarget) closeAnnouncementEditor(); });
 
+// 平台设置（2026-10-05）
+document.querySelector("#refresh-platform-content").addEventListener("click", loadPlatformContent);
+document.querySelector("#platform-content-table-body").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-platform-content-action]");
+  if (button) handlePlatformContentAction(button);
+});
+document.querySelector("#platform-content-history").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-platform-content-action]");
+  if (button) handlePlatformContentAction(button);
+});
+document.querySelector("#platform-content-editor-form").addEventListener("submit", savePlatformContentVersion);
+document.querySelector("#close-platform-content-editor").addEventListener("click", closePlatformContentEditor);
+document.querySelector("#cancel-platform-content-editor").addEventListener("click", closePlatformContentEditor);
+document.querySelector("#platform-content-editor-dialog").addEventListener("click", (event) => { if (event.target === event.currentTarget) closePlatformContentEditor(); });
+
 document.querySelector("#provider-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const saveButton = document.querySelector("#save-provider");
@@ -18003,7 +22035,38 @@ document.querySelector("#provider-form").addEventListener("submit", async (event
   }
 });
 
+document.querySelector("#provider-list").addEventListener("change", (event) => {
+  const checkbox = event.target.closest("[data-select-provider]");
+  if (!checkbox) return;
+  if (checkbox.checked) state.selectedProviderIds.add(checkbox.dataset.selectProvider);
+  else state.selectedProviderIds.delete(checkbox.dataset.selectProvider);
+  checkbox.closest(".provider-row").classList.toggle("is-selected", checkbox.checked);
+  renderProviderSelectionTools();
+});
+document.querySelector("#group-selected-providers").addEventListener("click", groupSelectedProviders);
+document.querySelector("#clear-provider-selection").addEventListener("click", () => {
+  state.selectedProviderIds.clear();
+  renderProviders();
+});
 document.querySelector("#provider-list").addEventListener("click", async (event) => {
+  const groupButton = event.target.closest("[data-group-action]");
+  if (groupButton) {
+    const group = state.providerGroups.find((item) => item.id === groupButton.dataset.groupId);
+    if (!group) return;
+    if (groupButton.dataset.groupAction === "toggle") {
+      group.collapsed = !group.collapsed;
+      if (group.collapsed) group.memberIds.forEach((id) => state.selectedProviderIds.delete(id));
+    } else if (groupButton.dataset.groupAction === "rename") {
+      const name = window.prompt("分组名称", group.name);
+      if (!name?.trim()) return;
+      group.name = name.trim().slice(0, 80);
+    } else if (groupButton.dataset.groupAction === "dissolve") {
+      state.providerGroups = state.providerGroups.filter((item) => item !== group);
+    }
+    writeProviderGroups();
+    renderProviders();
+    return;
+  }
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const providerId = button.dataset.id;
@@ -18055,9 +22118,36 @@ document.querySelector("#question-subject").addEventListener("change", async () 
   syncQuestionBooks();
   await refreshQuestionMembershipBook();
 });
-document.querySelector("#question-book").addEventListener("change", refreshQuestionMembershipBook);
+document.querySelector("#question-catalog-anchor").addEventListener("change", () => {
+  document.querySelector("#question-chapter").value = document.querySelector("#question-catalog-anchor").value;
+  renderQuestionCatalogAnchor();
+});
+document.querySelector("#retry-question-catalog-anchor").addEventListener("click", loadQuestionCatalogAnchors);
+document.querySelector("#use-question-catalog-anchor-source").addEventListener("click", useQuestionCatalogAnchorAsSource);
+document.querySelector("#view-question-knowledge-dossiers").addEventListener("click", () => void viewQuestionKnowledgeDossiers());
+document.querySelector("#question-editor-subtabs").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-question-editor-section-tab]");
+  if (button) setQuestionEditorSectionTab(button.dataset.questionEditorSectionTab);
+});
+document.querySelector("#question-editor-subtabs").addEventListener("keydown", (event) => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const tabs = [...document.querySelectorAll("[data-question-editor-section-tab]")];
+  const index = tabs.indexOf(document.activeElement);
+  const next = event.key === "Home" ? 0
+    : event.key === "End" ? tabs.length - 1
+      : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  setQuestionEditorSectionTab(tabs[next].dataset.questionEditorSectionTab);
+  tabs[next].focus();
+});
+document.querySelector("#question-book").addEventListener("change", () => {
+  // 走 syncQuestionBooks 而不是只刷分类字段：换教材要当场清掉旧教材的章节/知识点。
+  syncQuestionBooks(document.querySelector("#question-book").value);
+  return refreshQuestionMembershipBook();
+});
 document.querySelector("#question-type").addEventListener("change", syncQuestionTypeFields);
 document.querySelector("#import-subject").addEventListener("change", () => syncImportBooks());
+document.querySelector("#import-book").addEventListener("change", () => syncImportBooks(document.querySelector("#import-book").value));
 document.querySelector("#question-text-file").addEventListener("change", (event) => {
   const file = event.target.files && event.target.files[0];
   if (!file) return;
@@ -18082,22 +22172,33 @@ document.querySelector("#download-question-template").addEventListener("click", 
 document.querySelector("#question-import-preview-list").addEventListener("click", jumpToQuestionImportSource);
 document.querySelector("#question-import-preview-list").addEventListener("keydown", jumpToQuestionImportSource);
 document.querySelector("#question-import-text").addEventListener("input", invalidateQuestionImportPreview);
-document.querySelector("#refresh-questions").addEventListener("click", loadQuestions);
+document.querySelector("#question-import-preview-filter-suspect").addEventListener("click", toggleQuestionImportSuspectedFilter);
+document.querySelector("#refresh-question-workspace").addEventListener("click", loadCurrentQuestionLibraryContent);
 document.querySelector("#assess-question-difficulty").addEventListener("click", assessQuestionDifficulty);
 document.querySelector("#refresh-question-enrichment").addEventListener("click", refreshQuestionEnrichment);
 document.querySelector("#run-question-enrichment").addEventListener("click", () => runQuestionEnrichment());
+document.querySelector("#run-selected-question-enrichment").addEventListener("click", runSelectedQuestionEnrichment);
 document.querySelector("#apply-question-enrichment-batch").addEventListener("click", applyQuestionEnrichmentBatch);
+document.querySelector("#run-deterministic-rebuild").addEventListener("click", openEnrichmentDeterministicDialog);
+document.querySelector("#run-deterministic-selection").addEventListener("click", runEnrichmentDeterministicSelection);
 document.querySelector("#clear-question-enrichment-selection").addEventListener("click", () => {
   state.questionEnrichmentSelectedIds = [];
   renderQuestionEnrichmentTable();
 });
-document.querySelector("#question-enrichment-subject").addEventListener("change", () => {
-  state.questionEnrichmentPage = 1;
-  syncQuestionEnrichmentBooks();
-  loadQuestionEnrichment();
+// 勾选式筛选下拉：渲染 + 变更回调（回调在 renderFilterSelect 里绑定，这里只做首次渲染与全局关闭）。
+renderQuestionEnrichmentSubjectFilter();
+renderQuestionEnrichmentTypeFilter();
+renderQuestionEnrichmentNeedFilter();
+renderQuestionEnrichmentStatusFilter();
+syncQuestionEnrichmentBooks();
+// 点面板外面 / 按 Esc 收面板：面板是浮层，不收会一直挡着下面的列表。
+document.addEventListener("click", (event) => {
+  document.querySelectorAll(".filter-select.is-open").forEach((root) => {
+    if (!root.contains(event.target)) closeFilterSelect(root);
+  });
 });
-["#question-enrichment-book", "#question-enrichment-batch", "#question-enrichment-type", "#question-enrichment-need", "#question-enrichment-status"].forEach((selector) => {
-  document.querySelector(selector).addEventListener("change", () => { state.questionEnrichmentPage = 1; loadQuestionEnrichment(); });
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeOpenFilterSelects();
 });
 document.querySelector("#question-enrichment-search").addEventListener("input", () => {
   clearTimeout(questionEnrichmentSearchTimer);
@@ -18111,42 +22212,120 @@ document.querySelector("#question-enrichment-select-all").addEventListener("chan
   renderQuestionEnrichmentTable();
 });
 document.querySelector("#question-enrichment-table-body").addEventListener("change", (event) => {
+  // 主操作：整组勾选（材料题组的分值要整组一起算、一起分配）。
+  const groupCheckbox = event.target.closest(".question-enrichment-group-checkbox");
+  if (groupCheckbox) {
+    const ids = String(groupCheckbox.dataset.questionIds || "").split(",").filter(Boolean);
+    const selected = new Set(state.questionEnrichmentSelectedIds);
+    ids.forEach((id) => (groupCheckbox.checked ? selected.add(id) : selected.delete(id)));
+    state.questionEnrichmentSelectedIds = [...selected];
+    renderQuestionEnrichmentTable();
+    return;
+  }
   const checkbox = event.target.closest(".question-enrichment-row-checkbox");
   if (!checkbox) return;
   const selected = new Set(state.questionEnrichmentSelectedIds);
   if (checkbox.checked) selected.add(checkbox.value);
   else selected.delete(checkbox.value);
   state.questionEnrichmentSelectedIds = [...selected];
-  renderQuestionEnrichmentSelection();
+  renderQuestionEnrichmentTable();
 });
 document.querySelector("#question-enrichment-table-body").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-enrichment-action]");
   if (!button) return;
   const questionId = button.dataset.id;
-  if (button.dataset.enrichmentAction === "review") await openQuestionEnrichmentReview(questionId);
-  if (button.dataset.enrichmentAction === "generate") await runQuestionEnrichment([questionId]);
-  if (button.dataset.enrichmentAction === "revert") {
-    if (!window.confirm("确认撤回本次采纳的目录、知识点和得分点吗？系统会创建一个恢复版本。")) return;
-    try {
-      const item = state.questionEnrichmentItems.find((entry) => entry.question.id === questionId);
-      await requestJson(`/api/admin/question-enrichment/questions/${encodeURIComponent(questionId)}/revert`, {
-        method: "POST",
-        body: JSON.stringify({ suggestionId: item && item.suggestion && item.suggestion.id }),
-      });
-      await loadQuestionEnrichment();
-    } catch (error) {
-      window.alert(`撤回失败：${friendlyError(error)}`);
-    }
-  }
+  if (button.dataset.enrichmentAction === "adjudicate") await openQuestionReview(questionId);
 });
+document.querySelector("#question-review-tabs").addEventListener("click", async event => {
+  const tab = event.target.closest("[data-question-review-tab]");
+  if (tab) await switchQuestionReviewTab(tab.dataset.questionReviewTab);
+});
+document.querySelector("#question-enrichment-edit-fingerprint").addEventListener("click", async () => {
+  await switchQuestionReviewTab("details");
+  if (questionReview?.tab !== "details" || !questionReview.loaded.has("details")) return;
+  document.querySelector("#question-fingerprint-editor").scrollIntoView({ block: "center" });
+  document.querySelector("#question-fingerprint-core-trigger").focus({ preventScroll: true });
+});
+document.querySelector("#question-review-tabs").addEventListener("keydown", async event => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || questionReview?.busy) return;
+  event.preventDefault();
+  const tabs = [...document.querySelectorAll("[data-question-review-tab]")];
+  const index = tabs.indexOf(document.activeElement);
+  const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  await switchQuestionReviewTab(tabs[next].dataset.questionReviewTab);
+  document.querySelector('[data-question-review-tab][aria-selected="true"]')?.focus();
+});
+for (const type of ["input", "change"]) document.querySelector("#question-editor-dialog").addEventListener(type, event => {
+  if (event.target.closest("[data-assessment-modes]")) return;
+  if (questionReview && !questionReview.busy && event.target.closest(`#question-review-${questionReview.tab}`)) questionReview.dirty = true;
+});
+document.querySelector("#question-review-generate").addEventListener("click", async () => {
+  if (!questionReview || questionReview.busy) return;
+  const session = questionReview;
+  setQuestionReviewBusy(true);
+  try { await runQuestionEnrichment([session.id]); }
+  finally { if (questionReview === session) setQuestionReviewBusy(false); }
+});
+document.querySelector("#question-review-revert").addEventListener("click", revertQuestionReviewSuggestion);
 document.querySelector("#question-enrichment-form").addEventListener("submit", saveQuestionEnrichmentReview);
-document.querySelectorAll("#question-enrichment-use-chapter, #question-enrichment-use-knowledge, #question-enrichment-use-scoring").forEach((checkbox) => {
+// ── DEC-100：完善题目侧的「知识依据／题族归属」提交面 ──────────────────────────────
+// 任何选择变化都重算三件事：焦点角色提示、题族覆盖校验、底部提交摘要。
+function refreshEnrichmentClassificationSelection() {
+  syncEnrichmentClassificationRoleHint();
+  syncEnrichmentFamilyCoverageSummary();
+  updateEnrichmentClassificationCopy();
+}
+document.querySelector("#question-enrichment-knowledge-choices").addEventListener("change", refreshEnrichmentClassificationSelection);
+document.querySelectorAll('input[name="question-enrichment-primary-node-role"]').forEach((input) => input.addEventListener("change", refreshEnrichmentClassificationSelection));
+document.querySelector("#question-enrichment-family-choices").addEventListener("change", (event) => {
+  const roleSelect = event.target.closest("[data-enrichment-family-role]");
+  const row = event.target.closest("[data-enrichment-family-row]");
+  if (row && (event.target.matches("[data-enrichment-family-choice]") || roleSelect)) syncEnrichmentFamilyRow(row);
+  refreshEnrichmentClassificationSelection();
+});
+document.querySelector("#question-enrichment-create-candidate-family").addEventListener("change", (event) => {
+  const creating = event.target.checked === true;
+  document.querySelector("#question-enrichment-family-draft").hidden = !creating;
+  // 新建题族会自动成为主题族：已有题族此时只能作关联题族，主题族单选随之禁用（与后端判据一致）。
+  document.querySelectorAll("#question-enrichment-family-choices [data-enrichment-primary-family]").forEach((input) => {
+    input.checked = false;
+  });
+  document.querySelectorAll("#question-enrichment-family-choices [data-enrichment-family-row]").forEach((row) => syncEnrichmentFamilyRow(row));
+  refreshEnrichmentClassificationSelection();
+});
+document.querySelector("#question-enrichment-family-deferred").addEventListener("change", refreshEnrichmentClassificationSelection);
+document.querySelector("#question-enrichment-classification-adjustment-reason").addEventListener("input", updateEnrichmentClassificationCopy);
+document.querySelector("#apply-question-enrichment-classification").addEventListener("click", applyEnrichmentClassification);
+document.querySelector("#question-enrichment-deterministic-rebuild").addEventListener("click", rebuildEnrichmentDeterministic);
+document.querySelector("#cancel-question-enrichment-classification").addEventListener("click", closeEnrichmentClassificationDialog);
+document.querySelector("#close-question-enrichment-classification").addEventListener("click", closeEnrichmentClassificationDialog);
+document.querySelector("#open-inspection-from-enrichment").addEventListener("click", openQuestionInspectionFromEnrichment);
+document.querySelector("#question-enrichment-classification-dialog").addEventListener("close", () => {
+  state.enrichmentClassificationQuestionId = "";
+  state.enrichmentClassificationResult = null;
+});
+document.querySelectorAll("#question-enrichment-use-subject, #question-enrichment-use-textbook, #question-enrichment-use-chapter, #question-enrichment-use-knowledge, #question-enrichment-use-scoring").forEach((checkbox) => {
   checkbox.addEventListener("change", updateQuestionEnrichmentApplyState);
 });
+// 换科目要连教材与目录一起换（DEC-098）：科目决定教材候选，教材决定目录选项——
+// 三级联动，改上一级就把下面两级重算，避免拼出一条服务端必然拒收的请求。
+document.querySelector("#question-enrichment-dialog-subject").addEventListener("change", (event) => {
+  const questionId = document.querySelector("#question-enrichment-question-id").value;
+  const item = questionEnrichmentItem(questionId);
+  const question = item ? item.question : {};
+  const candidates = enrichmentCandidateBooks(question, event.target.value);
+  renderQuestionEnrichmentBookOptions(event.target.value, "", question);
+  renderQuestionEnrichmentChapterOptions(candidates.length ? document.querySelector("#question-enrichment-textbook").value : "");
+  document.querySelector("#question-enrichment-textbook-hint").textContent = enrichmentTextbookHint(question, {}, candidates);
+  updateQuestionEnrichmentApplyState();
+});
+// 换册要换目录树：下拉里的节点属于哪一册是硬约束，切了教材必须把目录选项一起换成那一册的。
+document.querySelector("#question-enrichment-textbook").addEventListener("change", (event) => {
+  renderQuestionEnrichmentChapterOptions(event.target.value);
+  updateQuestionEnrichmentApplyState();
+});
 document.querySelector("#reject-question-enrichment").addEventListener("click", rejectQuestionEnrichment);
-document.querySelector("#close-question-enrichment-dialog").addEventListener("click", () => document.querySelector("#question-enrichment-dialog").close());
-document.querySelector("#refresh-question-families").addEventListener("click", loadQuestionFamilies);
-document.querySelector("#generate-question-families").addEventListener("click", generateQuestionFamilies);
+document.querySelector("#close-question-enrichment-dialog").addEventListener("click", () => questionReview ? closeQuestionEditor() : document.querySelector("#question-enrichment-dialog").close());
 document.querySelector("#create-question-family-set").addEventListener("click", () => openQuestionFamilySetDialog());
 document.querySelector("#create-empty-question-family").addEventListener("click", openEmptyQuestionFamilyDialog);
 document.querySelector("#refresh-knowledge-inspections").addEventListener("click", refreshKnowledgeInspections);
@@ -18623,12 +22802,6 @@ document.querySelector("#knowledge-structure-backups-dialog").addEventListener("
 document.querySelector("#knowledge-structure-backups-dialog").addEventListener("click", (event) => {
   if (event.target === event.currentTarget) closeKnowledgeStructureBackups();
 });
-document.querySelector("#question-family-status").addEventListener("change", loadQuestionFamilies);
-document.querySelector("#question-family-member-status").addEventListener("change", () => {
-  clearQuestionFamilyManagementSelection();
-  renderQuestionFamilySummary();
-  renderQuestionFamilyTable();
-});
 document.querySelector("#question-family-search").addEventListener("input", () => {
   syncQuestionFamilySearchView(document.querySelector("#question-family-search").value);
   clearTimeout(questionFamilySearchTimer);
@@ -18931,6 +23104,7 @@ document.querySelector("#question-family-dialog").addEventListener("click", (eve
 document.querySelector("#knowledge-inspection-status").addEventListener("change", () => { state.knowledgeInspectionPage = 1; loadKnowledgeInspections(); });
 document.querySelector("#knowledge-inspection-risk").addEventListener("change", () => { state.knowledgeInspectionPage = 1; loadKnowledgeInspections(); });
 document.querySelector("#knowledge-inspection-issue").addEventListener("change", () => { state.knowledgeInspectionPage = 1; loadKnowledgeInspections(); });
+document.querySelector("#knowledge-inspection-family").addEventListener("change", () => { state.knowledgeInspectionPage = 1; loadKnowledgeInspections(); });
 document.querySelector("#knowledge-inspection-show-history").addEventListener("change", () => { state.knowledgeInspectionPage = 1; loadKnowledgeInspections(); });
 document.querySelector("#knowledge-inspection-search").addEventListener("input", () => {
   clearTimeout(knowledgeInspectionSearchTimer);
@@ -18942,13 +23116,8 @@ document.querySelector("#knowledge-inspection-table-body").addEventListener("cli
   const button = event.target.closest("[data-knowledge-inspection-action='review']");
   if (button) openKnowledgeInspection(button.dataset.resultId, button.dataset.questionId);
 });
-document.querySelector("#knowledge-inspection-choices").addEventListener("change", handleKnowledgeInspectionChoiceChange);
-document.querySelector("#knowledge-inspection-primary-node-role").addEventListener("change", handleKnowledgeInspectionChoiceChange);
-document.querySelector("#knowledge-inspection-family-choices").addEventListener("change", handleKnowledgeInspectionFamilyChoiceChange);
-document.querySelector("#knowledge-inspection-family-deferred").addEventListener("change", handleKnowledgeInspectionFamilyChoiceChange);
-document.querySelector("#knowledge-inspection-create-candidate-family").addEventListener("change", handleKnowledgeInspectionCandidateFamilyDecision);
-document.querySelector("#knowledge-inspection-family-draft-form").addEventListener("input", handleKnowledgeInspectionCandidateFamilyDraftInput);
-document.querySelector("#knowledge-inspection-family-draft-form").addEventListener("change", handleKnowledgeInspectionCandidateFamilyDraftInput);
+// DEC-100（产品手册 §4.6.12）：巡检弹窗已改成只读 —— 这里不再绑定任何写库控件
+// （原来的知识勾选／题族勾选／角色单选／候选族草案表单／「采纳所选」「拒绝建议」绑定全部摘除）。
 document.querySelector("#knowledge-inspection-dialog").addEventListener("click", handleKnowledgeInspectionDialogClick);
 document.querySelector("#knowledge-inspection-dialog").addEventListener("input", handleKnowledgeInspectionDialogInput);
 // 巡检侧的选择器回写：同样挂在统一事件上（选项同步已由 document 级代理完成）。
@@ -18957,11 +23126,11 @@ document.querySelector("#knowledge-inspection-dialog").addEventListener("knowled
   if (!root?.dataset.knowledgeInspectionFamilyContributionPicker) return;
   handleKnowledgeInspectionContributionOptionChange(root);
 });
-document.querySelector("#knowledge-inspection-adjustment-reason-input").addEventListener("input", () => {
-  if (!knowledgeInspectionApplyGuard.currentRequest()) clearKnowledgeInspectionCommit();
+// 记录状态四态（只改人工处理进度，不改题库）＋ 送去「完善题目」（只在完善题目里生成建议稿、不采纳）。
+document.querySelectorAll("[data-knowledge-inspection-audit-state]").forEach((button) => {
+  button.addEventListener("click", () => { setKnowledgeInspectionAuditState(button.dataset.knowledgeInspectionAuditState); });
 });
-document.querySelector("#apply-knowledge-inspection").addEventListener("click", applyKnowledgeInspection);
-document.querySelector("#reject-knowledge-inspection").addEventListener("click", rejectKnowledgeInspection);
+document.querySelector("#send-knowledge-inspection-to-enrichment").addEventListener("click", sendKnowledgeInspectionToEnrichment);
 document.querySelector("#rerun-knowledge-inspection").addEventListener("click", rerunKnowledgeInspection);
 document.querySelector("#edit-knowledge-inspection-question").addEventListener("click", editKnowledgeInspectionQuestion);
 document.querySelector("#close-knowledge-inspection-dialog").addEventListener("click", () => { closeKnowledgeInspectionDialog(); });
@@ -19010,18 +23179,17 @@ document.querySelector("#close-teaching-rule-dialog").addEventListener("click", 
 document.querySelector("#cancel-teaching-rule").addEventListener("click", closeTeachingRuleDialog);
 document.querySelector("#teaching-rule-dialog").addEventListener("cancel", closeTeachingRuleDialog);
 ["#question-type-filter", "#question-status-filter", "#question-import-batch-filter"].forEach((selector) => {
-  document.querySelector(selector).addEventListener("change", loadQuestions);
+  document.querySelector(selector).addEventListener("change", () => {
+    clearQuestionFamilyManagementSelection();
+    loadCurrentQuestionLibraryContent();
+  });
 });
 document.querySelector("#question-subject-filter").addEventListener("change", async () => {
-  state.selectedKnowledgeNodeId = "";
   syncQuestionFilterBooks();
-  await loadKnowledgeStructure();
-  await loadCurrentQuestionLibraryContent();
+  await reloadQuestionWorkspaceScope();
 });
 document.querySelector("#question-book-filter").addEventListener("change", async () => {
-  state.selectedKnowledgeNodeId = "";
-  await loadKnowledgeStructure();
-  await loadCurrentQuestionLibraryContent();
+  await reloadQuestionWorkspaceScope();
 });
 document.querySelector("#question-import-batch-filter").addEventListener("change", (event) => {
   document.querySelector("#edit-question-import-batch").disabled = event.target.value === "all";
@@ -19072,6 +23240,12 @@ document.querySelector("#question-select-all").addEventListener("change", (event
 document.querySelector("#clear-question-selection").addEventListener("click", clearQuestionSelection);
 document.querySelector("#assign-selected-question-knowledge").addEventListener("click", openQuestionKnowledgeAssignment);
 document.querySelector("#delete-selected-questions").addEventListener("click", deleteSelectedQuestions);
+document.querySelector("#question-workspace-mode-families").addEventListener("click", () => setQuestionWorkspaceMode("families"));
+document.querySelector("#question-workspace-mode-questions").addEventListener("click", () => setQuestionWorkspaceMode("questions"));
+document.querySelector("#question-batch-delete-code").addEventListener("input", syncQuestionBatchDeleteConfirmState);
+document.querySelector("#confirm-question-batch-delete").addEventListener("click", confirmQuestionBatchDelete);
+document.querySelector("#cancel-question-batch-delete").addEventListener("click", closeQuestionBatchDeleteConfirm);
+document.querySelector("#close-question-batch-delete").addEventListener("click", closeQuestionBatchDeleteConfirm);
 document.querySelector("#question-knowledge-assignment-search").addEventListener("input", renderQuestionKnowledgeAssignmentOptions);
 document.querySelector("#question-knowledge-assignment-node").addEventListener("change", (event) => {
   const required = document.querySelector("#question-knowledge-assignment-required-nodes");
@@ -19090,6 +23264,32 @@ document.querySelector("#add-question-membership").addEventListener("click", () 
 });
 document.querySelector("#cancel-question-membership").addEventListener("click", () => {
   document.querySelector("#question-family-membership-add").hidden = true;
+});
+async function viewQuestionFamilySets(setId = "") {
+  if (questionReview?.busy) return;
+  const bookId = state.questionFingerprintQuestion?.bookId || document.querySelector("#question-book").value;
+  if (!bookId) {
+    setSmallDialogStatus("#question-form-status", "请先确定教材，再查看题族集", "error");
+    return;
+  }
+  if (!closeQuestionEditor()) return;
+  await openView("题族管理");
+  const book = (state.questionCatalog?.books || []).find((item) => item.id === bookId);
+  if (book) {
+    document.querySelector("#question-subject-filter").value = book.subjectId;
+    syncQuestionFilterBooks();
+    document.querySelector("#question-book-filter").value = bookId;
+    await reloadQuestionWorkspaceScope();
+  }
+  if (setId) {
+    if (state.questionFamilySets.some((set) => set.id === setId)) await openQuestionFamilySetDialog(setId);
+    else setQuestionFamilyFeedback("该题族集已变化或不在当前范围，请刷新后查找。", "error");
+  }
+}
+document.querySelector("#view-question-family-sets").addEventListener("click", () => void viewQuestionFamilySets());
+document.querySelector("#question-family-set-attribution-list").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-view-question-family-set]");
+  if (button) void viewQuestionFamilySets(button.dataset.viewQuestionFamilySet);
 });
 document.querySelector("#question-family-membership-search").addEventListener("input", (event) => {
   state.questionMembershipSearchQuery = event.target.value;
@@ -19231,22 +23431,7 @@ document.querySelector("#question-knowledge-fingerprint").addEventListener("clic
     syncQuestionFingerprintSelects();
     setQuestionFingerprintPickerOpen(null, false);
     document.querySelector("#question-fingerprint-core-trigger").focus();
-  } else if (type === "theme-anchor") {
-    state.questionFingerprintDraftKnowledgeThemeRangeAnchorNodeId = optionInput.value;
-    normalizeQuestionFingerprintDraftRequiredNodeIds();
-    syncQuestionFingerprintSelects();
-    setQuestionFingerprintPickerOpen(null, false);
-    document.querySelector("#question-fingerprint-theme-anchor-trigger").focus();
   } else if (type === "range") {
-    // 受控：问题知识范围必须落在主题范围锚点之下。尝试勾选跨主题节点时当场撤销并弹窗说明，
-    // 而不是只留一行小字、也不是拖到保存时才拦（锚点硬校验在服务端仍然保留，这里只是提前到动作发生的那一刻）。
-    const rangeNodeId = String(optionInput.value || "");
-    if (optionInput.checked && !isQuestionRangeNodeWithinThemeAnchor(rangeNodeId)) {
-      optionInput.checked = false;
-      showQuestionRangeAnchorBlockedDialog(rangeNodeId);
-      renderQuestionFingerprintEditor();
-      return;
-    }
     const selected = new Set(state.questionFingerprintDraftProblemKnowledgeRangeNodeIds);
     if (optionInput.checked) selected.add(optionInput.value);
     else selected.delete(optionInput.value);
@@ -19289,10 +23474,12 @@ window.addEventListener("resize", () => {
 });
 document.querySelector("#load-question-fingerprint-candidate").addEventListener("click", () => {
   if (!state.questionFingerprintCandidate) return;
+  if (questionReview) questionReview.dirty = true;
   applyQuestionFingerprintDraft(state.questionFingerprintCandidate, "candidate");
   renderQuestionFingerprintEditor("AI 候选已载入，请人工核对并保存；当前仍不是正式指纹", "warning");
 });
 document.querySelector("#reset-question-fingerprint-draft").addEventListener("click", () => {
+  if (questionReview) questionReview.dirty = true;
   applyQuestionFingerprintDraft(state.questionFingerprintConfirmed, "manual");
 });
 document.querySelector("#save-question-fingerprint").addEventListener("click", saveQuestionFingerprint);
@@ -19313,20 +23500,35 @@ document.addEventListener("keydown", (event) => {
   openRoot.querySelector(".question-family-multiselect-trigger")?.focus();
 }, true);
 document.querySelector("#question-form").addEventListener("input", (event) => {
-  if (!document.querySelector("#question-editor-dialog").open || !document.querySelector("#question-id").value) return;
+  if (!document.querySelector("#question-editor-dialog").open) return;
+  syncQuestionEditorFixedContext();
+  if (!document.querySelector("#question-id").value) return;
   if (event.target.closest("#question-knowledge-fingerprint")) return;
   state.questionEditorContentDirty = true;
+  assessmentModeUi().sync();
   renderQuestionFingerprintEditor();
 });
 document.querySelector("#question-form").addEventListener("change", (event) => {
-  if (!document.querySelector("#question-editor-dialog").open || !document.querySelector("#question-id").value) return;
+  if (!document.querySelector("#question-editor-dialog").open) return;
+  syncQuestionEditorFixedContext();
+  if (!document.querySelector("#question-id").value) return;
   if (event.target.closest("#question-knowledge-fingerprint")) return;
   state.questionEditorContentDirty = true;
+  assessmentModeUi().sync();
+  if (event.target.id === "question-answer-review-status") syncQuestionEditorMeta();
   renderQuestionFingerprintEditor();
 });
 document.querySelector("#question-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const payload = questionFormPayload();
+  if (questionReview?.busy) return;
+  if (!assessmentModeUi().discard()) return;
+  let payload;
+  try {
+    payload = questionFormPayload();
+  } catch (error) {
+    setSmallDialogStatus("#question-form-status", friendlyError(error), "error");
+    return;
+  }
   if (!payload.referenceAnswer) {
     setSmallDialogStatus("#question-form-status", "请至少填写一类答案", "error");
     document.querySelector("#question-reference-answer-editor").focus();
@@ -19335,6 +23537,7 @@ document.querySelector("#question-form").addEventListener("submit", async (event
   const questionId = document.querySelector("#question-id").value;
   const saveButton = document.querySelector("#save-question");
   saveButton.disabled = true;
+  setQuestionReviewBusy(true);
   saveButton.textContent = "保存中";
   setSmallDialogStatus("#question-form-status", questionId ? "正在创建新版本" : "正在写入平台题库", "loading");
   try {
@@ -19342,7 +23545,12 @@ document.querySelector("#question-form").addEventListener("submit", async (event
       method: questionId ? "PUT" : "POST",
       body: JSON.stringify(payload),
     });
+    state.questionEditorContentDirty = false;
     const returnToExam = state.questionEditorReturnToExam;
+    if (questionReview?.id === questionId) {
+      await refreshQuestionReviewAfterWrite("details");
+      return;
+    }
     closeQuestionEditor();
     if (returnToExam) {
       state.questionPool = [];
@@ -19356,6 +23564,7 @@ document.querySelector("#question-form").addEventListener("submit", async (event
   } finally {
     saveButton.disabled = false;
     saveButton.textContent = questionId ? "保存新版本" : "保存题目";
+    setQuestionReviewBusy(false);
   }
 });
 document.querySelector("#route-form").addEventListener("submit", async (event) => {
@@ -19426,6 +23635,32 @@ document.querySelector("#new-provider").addEventListener("click", () => {
   resetProviderForm();
   showProviderDialog();
 });
+document.querySelector("#batch-provider-test").addEventListener("click", openProviderBatchDialog);
+document.querySelector("#close-provider-batch").addEventListener("click", closeProviderBatchDialog);
+document.querySelector("#close-provider-batch-dialog").addEventListener("click", closeProviderBatchDialog);
+document.querySelector("#provider-batch-dialog").addEventListener("cancel", () => setProviderBatchStatus());
+document.querySelector("#provider-batch-dialog").addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeProviderBatchDialog();
+});
+document.querySelector("#preview-provider-batch").addEventListener("click", previewProviderBatch);
+document.querySelector("#start-provider-batch").addEventListener("click", startProviderBatchTest);
+document.querySelector("#cancel-provider-batch").addEventListener("click", cancelProviderBatchTest);
+document.querySelector("#provider-batch-file").addEventListener("change", (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  document.querySelector("#provider-batch-file-name").textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
+  if (file.size > PROVIDER_BATCH_MAX_TEXT_BYTES) {
+    setProviderBatchStatus("文档超过 256 KB，请拆分后再导入", "error");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    document.querySelector("#provider-batch-text").value = String(reader.result || "");
+    setProviderBatchStatus("文档已载入，点「解析预览」先确认这次会测哪些接口", "success");
+  };
+  reader.onerror = () => setProviderBatchStatus("文档读取失败，请改用粘贴", "error");
+  reader.readAsText(file, "utf-8");
+});
 document.querySelector("#cancel-provider").addEventListener("click", closeProviderDialog);
 document.querySelector("#close-provider-dialog").addEventListener("click", closeProviderDialog);
 document.querySelector("#provider-dialog").addEventListener("cancel", resetProviderForm);
@@ -19474,8 +23709,17 @@ document.querySelector("#question-scoring-bold").addEventListener("mousedown", (
 document.querySelector("#question-scoring-points-editor").addEventListener("input", (event) => syncAnswerRichEditor(event.target));
 document.querySelector("#question-scoring-points-editor").addEventListener("keydown", handleAnswerBoldShortcut);
 document.querySelector("#question-scoring-points-editor").addEventListener("paste", handleAnswerPaste);
+// 按钮长在「AI 答案」面板的 `<summary>` 里（2026-10-16 负责人要求下移）：
+// 点它只发起补充请求，不能顺带把 <details> 展开/收起，所以先挡掉 summary 的默认切换动作。
+document.querySelector("#question-ai-supplement").addEventListener("click", (event) => {
+  event.preventDefault();
+  requestQuestionAiAnswerSupplement(event.currentTarget);
+});
 document.querySelector("#question-difficulty-manual").addEventListener("change", syncQuestionDifficultyMode);
-document.querySelector("#question-editor-dialog").addEventListener("cancel", resetQuestionForm);
+document.querySelector("#question-editor-dialog").addEventListener("cancel", event => {
+  event.preventDefault();
+  closeQuestionEditor();
+});
 document.querySelector("#question-editor-dialog").addEventListener("click", (event) => {
   if (event.target.id === "apply-question-scoring-candidates") {
     const questionId = document.querySelector("#question-id").value;
@@ -19491,6 +23735,45 @@ document.querySelector("#question-editor-dialog").addEventListener("click", (eve
 document.querySelector("#close-question-import-compare").addEventListener("click", closeQuestionImportComparison);
 document.querySelector("#done-question-import-compare").addEventListener("click", closeQuestionImportComparison);
 document.querySelector("#locate-question-import-compare").addEventListener("click", locateComparedQuestionImportSource);
+document.querySelector("#merge-question-import-duplicate").addEventListener("click", mergeQuestionImportDuplicate);
+// 人工裁决的两个动作 + 撤销（产品负责人 2026-09-22 定稿）：对比完必须有落点，
+// 否则他在弹窗里看出"就是同一道题"，却只能退出去另找合并入口。
+for (const [selector, verdict] of [
+  ["#confirm-question-import-duplicate", "confirmed"],
+  ["#dismiss-question-import-duplicate", "dismissed"],
+]) {
+  document.querySelector(selector).addEventListener("click", (event) => {
+    applyQuestionImportVerdict(Number(event.currentTarget.dataset.verdictIndex), verdict);
+  });
+}
+document.querySelector("#undo-question-import-verdict").addEventListener("click", (event) => {
+  clearQuestionImportVerdict(Number(event.currentTarget.dataset.verdictIndex));
+});
+// 两版不一样时的两个动作（产品负责人 2026-09-22 第二次定稿）：选择在表格里（勾选/点格子），
+// 这里只负责"怎么写"——替换所选字段，或把参考答案合并两版。
+for (const [selector, mode] of [
+  ["#absorb-question-import-replace", "replace"],
+  ["#absorb-question-import-merge", "merge"],
+]) {
+  document.querySelector(selector).addEventListener("click", (event) => {
+    absorbQuestionImportComparison(event.currentTarget, mode);
+  });
+}
+document.querySelector("#question-import-compare-body").addEventListener("click", (event) => {
+  const cell = event.target.closest?.("[data-absorb-cell]");
+  if (cell) toggleQuestionImportAbsorbCell(cell);
+});
+document.querySelector("#question-import-compare-body").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const cell = event.target.closest?.("[data-absorb-cell]");
+  if (!cell) return;
+  event.preventDefault();
+  toggleQuestionImportAbsorbCell(cell);
+});
+// 勾选框是选中态的唯一来源：任何勾选变化都重算底部按钮与行内高亮
+document.querySelector("#question-import-compare-body").addEventListener("change", (event) => {
+  if (event.target.closest?.("input[data-absorb-field]")) syncQuestionImportAbsorbActions();
+});
 document.querySelector("#question-import-compare-dialog").addEventListener("click", (event) => {
   if (event.target === event.currentTarget) closeQuestionImportComparison();
 });
@@ -19546,6 +23829,8 @@ function resetAdminWorkspaceView() {
 }
 
 function requireAdminLogin(message = "") {
+  closeFeedbackChat();
+  feedbackChatDrafts.clear();
   adminAuthState.account = null;
   setAdminToken("");
   setAdminShellLocked(true);
@@ -19961,5 +24246,110 @@ document.querySelector("#user-restriction-table-body").addEventListener("click",
   if (button) liftUserRestriction(button.dataset.userRestrictionLift);
 });
 
+/* ---------- 「后端没重启，改动未生效」自检（2026-09-25 产品负责人确认要做） ---------- */
+
+// 本页脚本自己的版本号（`index.html` 里 `app.js?v=YYYYMMDD.NN`），只取日期段用于与后端启动日期比较。
+const ADMIN_ASSET_VERSION = (() => {
+  const script = document.querySelector('script[src*="app.js"]');
+  const matched = script ? /[?&]v=(\d{8})(?:\.(\d+))?/.exec(script.getAttribute("src") || "") : null;
+  if (!matched) return null;
+  return { label: matched[2] ? `${matched[1]}.${matched[2]}` : matched[1], date: Number(matched[1]) };
+})();
+
+/**
+ * 纯判据，与后端 `apps/api/src/api-freshness.js` 的两条口径一一对应（改一处必须改两处，见该文件注释）：
+ *   ① 代码视角（精确）：`apps/api/src` 下的源码比进程启动新 → 改了代码没重启；
+ *   ② 版本视角（粗一天）：本页脚本版本日期 > 后端启动日期 → 后端比前端旧，也要重启。
+ * 只在"确实对不上"时才提示，不阻断任何操作。
+ */
+function adminBackendStaleFacts(health) {
+  const bootDate = Number(health && health.bootDate) || 0;
+  const assetDate = ADMIN_ASSET_VERSION ? ADMIN_ASSET_VERSION.date : 0;
+  const codeStale = Boolean(health && health.apiSourceStale === true);
+  const assetNewer = Boolean(assetDate && bootDate && assetDate > bootDate);
+  // 老后端连启动时间都不上报（这个自检是 2026-09-25 加进 /health 的）⇒ 它跑的一定是更早的代码，
+  // 而本页脚本带着这个自检 ⇒ 前端已经比后端新了。这条兜底让"还没重启过"的现场也能立刻被认出来。
+  const missingBootFacts = Boolean(health && health.status === "ok" && !bootDate && !Number(health.startedAt));
+  const reasons = [];
+  if (codeStale) {
+    reasons.push(`${health.apiSourceNewestFile || "apps/api/src"} 在进程启动之后又被改过（${health.apiSourceNewestLabel || "改动时间未知"}）`);
+  }
+  if (missingBootFacts) {
+    reasons.push("后端 /health 没有上报启动时间（它跑的是加入本自检之前的代码）");
+  }
+  if (assetNewer) {
+    reasons.push(`本页脚本版本 ${ADMIN_ASSET_VERSION.label} 比后端启动日期 ${health.bootDate} 新`);
+  }
+  return {
+    stale: codeStale || missingBootFacts || assetNewer,
+    reasons,
+    bootedAtLabel: String((health && health.startedAtLabel) || ""),
+    signature: reasons.join("｜"),
+  };
+}
+
+let adminBackendStaleDismissed = "";
+
+function renderAdminBackendStale(verdict) {
+  const banner = document.querySelector("#admin-backend-stale");
+  if (!banner) return;
+  const detail = document.querySelector("#admin-backend-stale-detail");
+  // 关掉之后同一原因不再重复弹；原因变了（例如又多改了一次代码）会重新出现。
+  if (!verdict.stale || (verdict.signature && verdict.signature === adminBackendStaleDismissed)) {
+    banner.hidden = true;
+    return;
+  }
+  if (detail) {
+    const when = verdict.bootedAtLabel ? `后端进程启动于 ${verdict.bootedAtLabel}：` : "";
+    detail.textContent = `${when}${verdict.reasons.join("；")}。请在您自己的终端重启 3212 后再操作（AGENTS §8）。`;
+  }
+  banner.hidden = false;
+  banner.dataset.staleReason = verdict.signature;
+}
+
+async function checkAdminBackendFreshness() {
+  try {
+    const response = await fetch("/health", { headers: { accept: "application/json" }, cache: "no-store" });
+    if (!response.ok) return;
+    const health = await response.json();
+    // 出站代理事实（2026-10-09）：Node 的 fetch 默认不读系统代理，上游按地区限制时报 451。
+    state.outboundProxy = health.outboundProxy || null;
+    renderAiConfigProxyWarning();
+    renderAdminBackendStale(adminBackendStaleFacts(health));
+  } catch (error) {
+    // 健康检查失败不该打断后台使用：静默即可（真正的故障在各自接口上会有更明确的报错）。
+  }
+}
+
+// 只在「检测到代理但服务端没走」时提示——这正是「浏览器/Codex++ 能连、后台报 451」的根因。
+function renderAiConfigProxyWarning() {
+  const element = document.querySelector("#ai-config-proxy-warning");
+  if (!element) return;
+  const proxy = state.outboundProxy;
+  const actionable = Boolean(proxy) && proxy.active === false
+    && (proxy.mode === "system_only" || proxy.mode === "env_present_but_inactive");
+  if (!actionable) {
+    element.hidden = true;
+    element.textContent = "";
+    return;
+  }
+  const where = proxy.url ? `系统代理 ${proxy.url}` : "本机代理";
+  element.innerHTML = `服务端出站没有走代理（检测到 ${escapeHtml(where)}，而 Node 的内置 fetch 默认不读系统代理）：`
+    + "上游按地区限制时，浏览器/Codex++ 能连、后台会报「HTTP 451」。"
+    + "请在您自己的终端用 <code>start-server.cmd</code> 重启，或带 <code>NODE_USE_ENV_PROXY=1</code> 与 <code>HTTPS_PROXY</code> 启动（见 README「本地代理与出站请求」）。";
+  element.hidden = false;
+}
+
+document.querySelector("#admin-backend-stale-dismiss").addEventListener("click", () => {
+  const banner = document.querySelector("#admin-backend-stale");
+  adminBackendStaleDismissed = banner?.dataset.staleReason || "";
+  if (banner) banner.hidden = true;
+});
+// 切回这个标签页时再看一眼：中途重启过就不要继续报旧状态。
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) checkAdminBackendFreshness();
+});
+
 resetProviderForm();
+checkAdminBackendFreshness();
 bootstrapAdminSession();

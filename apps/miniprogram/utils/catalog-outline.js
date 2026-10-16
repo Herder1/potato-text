@@ -87,7 +87,7 @@ function orderedQuestionIds(questionIds, orderByQuestionId) {
     || left.localeCompare(right));
 }
 
-function createProjectedCatalogChapters(outline, questions = [], activeQuestionId = "") {
+function createProjectedCatalogChapters(outline, questions = [], activeQuestionId = "", options = {}) {
   const queue = [];
   const seenQuestionIds = new Set();
   (Array.isArray(questions) ? questions : []).forEach((question) => {
@@ -96,6 +96,7 @@ function createProjectedCatalogChapters(outline, questions = [], activeQuestionI
     seenQuestionIds.add(questionId);
     queue.push(question);
   });
+  const keepEmptyChapters = options.keepEmptyChapters === true;
   const orderByQuestionId = new Map(queue.map((question, index) => [String(question.id), index]));
   const chapters = (Array.isArray(outline) ? outline : []).map((chapter) => ({
     ...chapter,
@@ -182,17 +183,45 @@ function createProjectedCatalogChapters(outline, questions = [], activeQuestionI
     };
   });
 
+  const ungroupedQuestions = queue.filter((question) => !assignedQuestionIds.has(String(question.id)));
+  const ungroupedCountBySubjectId = new Map();
+  if (keepEmptyChapters) {
+    ungroupedQuestions.forEach((question) => {
+      const subjectId = String(question && question.subjectId || "");
+      if (!subjectId) return;
+      ungroupedCountBySubjectId.set(subjectId, (ungroupedCountBySubjectId.get(subjectId) || 0) + 1);
+    });
+  }
+
   // 用户端只显示"有题"的目录：后台知识树照旧显示全部节点，用户端按目录投影收敛。
   // 显示条件与徽标数字同源——该节点及其全部下级至少有一道已归组题目。客户端的小节是
   // 平铺渲染 + 按 level 缩进，所以必须整支隐藏，不能只隐藏叶子（留子不留父会错位）。
-  const visibleChapters = projected
-    .filter((chapter) => Number(chapter.questionCount) > 0)
-    .map((chapter) => ({
-      ...chapter,
-      sections: chapter.sections.filter((section) => Number(section.questionCount) > 0),
-    }));
+  //
+  // 综合训练例外（options.keepEmptyChapters）：一级＝科目，科目是题池的骨架，不能因为"这科
+  // 还没形成目录投影"就整行消失——否则用户看到的是"目录里只有两科"，而不是"另外三科还没归组"。
+  // 此时科目行照常显示、题数照实显示 0 题，并单独给一个 pendingCount（本科目题池里还没形成
+  // 正式投影的题数，即"待归组"），与正式投影题数分开命名、分开计数（产品手册 §6）。二级往下
+  // 仍然只显示有题的分支。
+  const subjectIdOfChapter = (chapter) => {
+    const id = String(chapter && chapter.id || "");
+    return id.startsWith("subject:") ? id.slice("subject:".length) : "";
+  };
+  const visibleChapters = keepEmptyChapters
+    ? projected.map((chapter) => {
+      const subjectId = subjectIdOfChapter(chapter);
+      return {
+        ...chapter,
+        ...(subjectId ? { pendingCount: ungroupedCountBySubjectId.get(subjectId) || 0 } : {}),
+        sections: chapter.sections.filter((section) => Number(section.questionCount) > 0),
+      };
+    })
+    : projected
+      .filter((chapter) => Number(chapter.questionCount) > 0)
+      .map((chapter) => ({
+        ...chapter,
+        sections: chapter.sections.filter((section) => Number(section.questionCount) > 0),
+      }));
 
-  const ungroupedQuestions = queue.filter((question) => !assignedQuestionIds.has(String(question.id)));
   // 兜底：如果连一个"有题的目录章"都没有（例如这本书的题全部还没归入题族、或题库刚同步完
   // 还没有题），不能只留一个"待归组"或把目录清空——用户会失去课本结构的导航，
   // 而空目录还会显示成"目录暂未同步"，等于误报同步失败。此时退回完整目录。
@@ -212,8 +241,106 @@ function createProjectedCatalogChapters(outline, questions = [], activeQuestionI
   return result;
 }
 
+// 综合训练是跨册题池：目录要从科目看起，同一科目的各册顶层目录（章 / 编 / 单元）按册顺序
+// 拼成同一条二级列表，再往下接各自的节与小点。这里只重排层级、不复制或改写题目锚点，
+// 每个节点仍保留自己册里的目录节点 id，所以题目投影、题数与高亮定位都和单册一致。
+const SUBJECT_CATALOG_MAX_LEVEL = 5;
+
+// 把多本教材的已确认目录按科目分组：科目顺序与册顺序优先取本地目录常数（data/catalog.js），
+// 目录里出现常数之外的科目/册时按 id 兜底排序，不丢内容。
+function subjectGroupsFromCatalogs(textbooks, subjectCatalog = []) {
+  const metaById = new Map();
+  (Array.isArray(subjectCatalog) ? subjectCatalog : []).forEach((subject, index) => {
+    const subjectId = String(subject && subject.id || "");
+    if (!subjectId) return;
+    metaById.set(subjectId, {
+      name: String(subject.name || subjectId),
+      order: index,
+      bookOrder: new Map((Array.isArray(subject.books) ? subject.books : [])
+        .map((book, bookIndex) => [String(book && book.id || ""), bookIndex])),
+    });
+  });
+  const groups = new Map();
+  (Array.isArray(textbooks) ? textbooks : []).forEach((textbook) => {
+    if (!textbook) return;
+    const subjectId = String(textbook.subjectId || "");
+    const bookId = String(textbook.bookId || textbook.id || "");
+    if (!subjectId || !bookId) return;
+    if (!groups.has(subjectId)) {
+      const meta = metaById.get(subjectId);
+      groups.set(subjectId, {
+        subjectId,
+        subjectName: meta ? meta.name : subjectId,
+        order: meta ? meta.order : Number.MAX_SAFE_INTEGER,
+        bookOrder: meta ? meta.bookOrder : new Map(),
+        books: [],
+      });
+    }
+    const group = groups.get(subjectId);
+    if (group.books.some((book) => book.bookId === bookId)) return;
+    group.books.push({
+      bookId,
+      nodes: Array.isArray(textbook.nodes) ? textbook.nodes : [],
+      version: Number(textbook.version) || 0,
+    });
+  });
+  return [...groups.values()]
+    .sort((left, right) => left.order - right.order || left.subjectId.localeCompare(right.subjectId))
+    .map((group) => ({
+      subjectId: group.subjectId,
+      subjectName: group.subjectName,
+      books: group.books.slice().sort((left, right) => {
+        const leftOrder = group.bookOrder.has(left.bookId) ? group.bookOrder.get(left.bookId) : Number.MAX_SAFE_INTEGER;
+        const rightOrder = group.bookOrder.has(right.bookId) ? group.bookOrder.get(right.bookId) : Number.MAX_SAFE_INTEGER;
+        return leftOrder - rightOrder || left.bookId.localeCompare(right.bookId);
+      }),
+    }));
+}
+
+// 输出与 createProjectedCatalogChapters 的入参同构：科目＝一级（章位），各册顶层目录＝二级，
+// 往下依次 +1 级（最深封顶 5）。同名目录不做去重——它们是不同册里各自真实的章，去重会把
+// 两册的题目错误合并到一行。
+function buildSubjectCatalogOutline(groups) {
+  return (Array.isArray(groups) ? groups : []).map((group) => {
+    const subjectId = String(group && group.subjectId || "");
+    if (!subjectId) return null;
+    const subjectNodeId = `subject:${subjectId}`;
+    const sections = [];
+    (Array.isArray(group.books) ? group.books : []).forEach((book) => {
+      buildCatalogOutline(book && book.nodes).forEach((chapter) => {
+        sections.push({
+          id: chapter.id,
+          catalogNodeId: chapter.catalogNodeId || chapter.id,
+          parentId: subjectNodeId,
+          title: chapter.title,
+          level: 2,
+          startPage: chapter.startPage,
+          endPage: chapter.endPage,
+        });
+        (chapter.sections || []).forEach((section) => {
+          sections.push({
+            ...section,
+            level: Math.min(SUBJECT_CATALOG_MAX_LEVEL, Math.max(3, (Number(section.level) || 2) + 1)),
+          });
+        });
+      });
+    });
+    return {
+      id: subjectNodeId,
+      catalogNodeId: subjectNodeId,
+      parentId: "",
+      title: String(group.subjectName || subjectId),
+      level: 1,
+      isSubject: true,
+      sections,
+    };
+  }).filter(Boolean);
+}
+
 module.exports = {
   buildCatalogOutline,
+  buildSubjectCatalogOutline,
   createProjectedCatalogChapters,
   projectionAnchorNodeIds,
+  subjectGroupsFromCatalogs,
 };

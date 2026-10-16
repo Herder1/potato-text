@@ -11,7 +11,7 @@
 .nav-directory image { width: 32rpx; height: 32rpx; }
 .collection-main { padding: 34rpx 30rpx calc(220rpx + env(safe-area-inset-bottom)); }
 .collection-hero { display: flex; padding: 8rpx 0 22rpx; align-items: flex-start; gap: 18rpx; }
-.hero-mark { display: flex; width: 72rpx; height: 72rpx; flex: 0 0 72rpx; align-items: center; justify-content: center; color: #fff; background: #237bff; border-radius: 8rpx; font-size: 32rpx; font-weight: 850; }
+.hero-mark { display: flex; width: 72rpx; height: 72rpx; flex: 0 0 72rpx; align-items: center; justify-content: center; color: #fff; background: #0b9588; border-radius: 8rpx; font-size: 32rpx; font-weight: 850; }
 .hero-copy { min-width: 0; flex: 1; }
 .hero-kicker { color: #77837b; font-size: 18rpx; line-height: 1.5; }
 .hero-title { margin-top: 6rpx; color: #202824; font-size: 34rpx; font-weight: 850; line-height: 1.35; }
@@ -46,11 +46,11 @@
 .study-card::before { position: absolute; z-index: 1; top: 13rpx; left: 13rpx; width: 22rpx; height: 22rpx; background: #f4f6f4; border: 2rpx solid #d9e0dc; border-radius: 50%; box-shadow: inset 0 1rpx 3rpx rgba(35,55,44,.13); content: ""; box-sizing: border-box; }
 .study-card.selected { border: 3rpx solid #2f9fff; box-shadow: 0 5rpx 16rpx rgba(47,159,255,.12); }
 .study-card.selected::before { border-color: #2f9fff; }
-.card-tag { padding-left: 30rpx; color: #237bff; font-size: 17rpx; }
+.card-tag { padding-left: 30rpx; color: #0b9588; font-size: 17rpx; }
 .study-title { display: -webkit-box; margin-top: 19rpx; overflow: hidden; color: #28312b; font-size: 23rpx; font-weight: 750; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .study-answer { display: -webkit-box; margin-top: 8rpx; overflow: hidden; color: #7b8780; font-size: 17rpx; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .study-foot { display: flex; margin-top: auto; padding-top: 14rpx; justify-content: space-between; color: #919b95; font-size: 16rpx; }
-.study-foot text:first-child { color: #237bff; }
+.study-foot text:first-child { color: #0b9588; }
 .study-card-blank .study-title { color: #9aa39d; font-weight: 600; }
 .study-card-deleted { opacity: .72; }
 .study-card-deleted .study-foot text:first-child { color: #b6534c; }

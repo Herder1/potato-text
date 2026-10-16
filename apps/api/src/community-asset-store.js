@@ -57,6 +57,10 @@ function createCommunityAssetStore(initialAssets = seedState()) {
         contributor: String(payload.contributor || "薯考同学").slice(0, 40),
         favoriteCount: existingIndex >= 0 ? Number(assets[existingIndex].favoriteCount) || 0 : 0,
         copyCount: existingIndex >= 0 ? Number(assets[existingIndex].copyCount) || 0 : 0,
+        // 2026-10-02：社区身份经验值要求"取消收藏不回退、同一人只计一次"，所以另记**只增不减**的历史峰值
+        // （当前值 favoriteCount 会随取消收藏回落，峰值不会；重复收藏不计数由关系记录保证）。
+        peakFavoriteCount: existingIndex >= 0 ? Number(assets[existingIndex].peakFavoriteCount) || 0 : 0,
+        peakLikeCount: existingIndex >= 0 ? Number(assets[existingIndex].peakLikeCount) || 0 : 0,
         createdAt: existingIndex >= 0 ? assets[existingIndex].createdAt : now,
         updatedAt: now,
       };
@@ -87,6 +91,8 @@ function createCommunityAssetStore(initialAssets = seedState()) {
       if (index < 0) throw new Error("community_asset_not_found");
       const next = Math.max(0, Number(assets[index].favoriteCount || 0) + Number(delta || 0));
       assets[index].favoriteCount = next;
+      // 历史峰值只升不降：取消收藏不回退分数，反复收藏也不再加分。
+      assets[index].peakFavoriteCount = Math.max(Number(assets[index].peakFavoriteCount || 0), next);
       assets[index].updatedAt = Date.now();
       return clone(assets[index]);
     },
@@ -105,6 +111,39 @@ function createCommunityAssetStore(initialAssets = seedState()) {
       assets[index].moderationStatus = "offline";
       assets[index].updatedAt = Date.now();
       return clone(assets[index]);
+    },
+    /**
+     * 注销账号时保留已公开内容，但解除作者身份；未公开内容直接删除。
+     */
+    anonymizeUser(userId, now = Date.now()) {
+      const target = String(userId || "").trim();
+      if (!target) return { anonymized: 0, removed: 0 };
+      let anonymized = 0;
+      let removed = 0;
+      const nextAssets = [];
+      assets.forEach((asset) => {
+        if (asset.userId !== target) {
+          nextAssets.push(asset);
+          return;
+        }
+        if (asset.visibility === "public" && asset.moderationStatus === "published") {
+          const next = { ...asset };
+          delete next.userId;
+          delete next.authorId;
+          delete next.author;
+          delete next.contact;
+          delete next.submitter;
+          next.contributor = "匿名用户";
+          next.anonymizedAt = now;
+          next.updatedAt = now;
+          nextAssets.push(next);
+          anonymized += 1;
+          return;
+        }
+        removed += 1;
+      });
+      assets = nextAssets;
+      return { anonymized, removed };
     },
     exportState: () => clone(assets),
   };
@@ -129,8 +168,12 @@ function createFileCommunityAssetStore(filePath = path.resolve(__dirname, "../..
     ...store,
     submit(...args) { const result = store.submit(...args); persist(); return result; },
     collect(...args) { const result = store.collect(...args); persist(); return result; },
+    // 2026-10-02 补漏：收藏计数与历史峰值此前**没有被落盘**（adjustFavoriteCount 走的是 store 默认实现，
+    // 没进这个持久化包装层），重启后收藏数会回到上一次 submit 时的值。
+    adjustFavoriteCount(...args) { const result = store.adjustFavoriteCount(...args); persist(); return result; },
     action(...args) { const result = store.action(...args); persist(); return result; },
     withdraw(...args) { const result = store.withdraw(...args); persist(); return result; },
+    anonymizeUser(...args) { const result = store.anonymizeUser(...args); persist(); return result; },
   };
 }
 

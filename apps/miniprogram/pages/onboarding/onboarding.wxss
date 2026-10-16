@@ -1,0 +1,296 @@
+/* 注册引导层：半透明背景 + 底部上滑面板。
+   2026-10-03 真机反馈两处：① 面板被撑满全屏，下面一大片空着 → 改成"贴着内容高度、底对齐"；
+   ② 一键登录按钮与字号偏大 → 整页字号/内边距下调一档，走轻盈感。
+   配色沿用仓库既有品牌青 #0b9588；尺寸单位一律 rpx（渲染验证脚本按 375pt 宽 → 1rpx = 0.5px 换算）。 */
+.onboarding-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.onboarding-backdrop {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(16, 22, 20, .82) 0%, rgba(16, 22, 20, .92) 100%);
+}
+
+/* 只包住内容：不再用 min-height 撑满，下面不会留一大片空白。 */
+.onboarding-sheet {
+  position: relative;
+  padding: 16rpx 36rpx calc(32rpx + env(safe-area-inset-bottom));
+  border-radius: 32rpx 32rpx 0 0;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.sheet-handle {
+  width: 64rpx;
+  height: 6rpx;
+  margin: 6rpx auto 18rpx;
+  border-radius: 999rpx;
+  background: rgba(31, 36, 33, .14);
+}
+
+.sheet-brand {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-bottom: 22rpx;
+}
+
+.brand-mark {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 18rpx;
+  background: #0b9588;
+  color: #ffffff;
+  font-size: 30rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f2421;
+  line-height: 1.2;
+}
+
+.brand-sub {
+  margin-top: 2rpx;
+  font-size: 22rpx;
+  color: #7c857f;
+}
+
+.sheet-title {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #1f2421;
+  line-height: 1.3;
+}
+
+.sheet-note {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  line-height: 1.55;
+  color: #7c857f;
+}
+
+.field-group {
+  margin-top: 22rpx;
+}
+
+.field-label {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1f2421;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 12rpx;
+}
+
+.chip {
+  min-width: 108rpx;
+  box-sizing: border-box; /* 宽胶囊用 min-width:100%，不加这条内边距会把容器撑破（横向溢出） */
+  padding: 12rpx 22rpx;
+  border-radius: 999rpx;
+  background: #f1f4f2;
+  color: #474d49;
+  font-size: 26rpx;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.chip-wide {
+  min-width: 100%;
+  text-align: left;
+}
+
+.chip-sub {
+  display: block;
+  margin-top: 2rpx;
+  font-size: 20rpx;
+  color: #7c857f;
+}
+
+.chip-active {
+  background: rgba(11, 149, 136, .12);
+  color: #0b9588;
+  font-weight: 600;
+}
+
+.field-error {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #c0392b;
+}
+
+.optional-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 22rpx;
+  padding: 18rpx 0;
+  border-top: 1rpx solid rgba(31, 36, 33, .06);
+  font-size: 26rpx;
+  color: #474d49;
+}
+
+.optional-arrow {
+  font-size: 22rpx;
+  color: #0b9588;
+}
+
+.optional-body {
+  padding-bottom: 4rpx;
+}
+
+.avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
+.optional-avatar {
+  width: 92rpx;
+  height: 92rpx;
+  border-radius: 999rpx;
+  background: #f1f4f2;
+}
+
+.optional-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34rpx;
+  color: #0b9588;
+}
+
+/* 采集入口是一枚覆盖在胶囊上的透明 button：直接给 button 做视觉会被自带内边距撑宽（同编辑资料页）。 */
+.avatar-button-wrap {
+  position: relative;
+  padding: 12rpx 26rpx;
+  border-radius: 999rpx;
+  background: #f1f4f2;
+}
+
+.avatar-button-label {
+  font-size: 24rpx;
+  color: #0b9588;
+}
+
+.avatar-button {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.optional-input {
+  margin-top: 18rpx;
+  padding: 18rpx 22rpx;
+  border-radius: 18rpx;
+  background: #f7f9f8;
+  font-size: 26rpx;
+  color: #1f2421;
+}
+
+/* 隐私授权行：勾选框 + 可点的官方指引链接（放在主按钮上方，未勾选时主按钮置灰）。 */
+.consent-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  margin-top: 22rpx;
+}
+
+.consent-box {
+  flex: none;
+  width: 32rpx;
+  height: 32rpx;
+  margin-top: 4rpx;
+  border-radius: 10rpx;
+  border: 2rpx solid rgba(31, 36, 33, .22);
+  background: #ffffff;
+  color: #ffffff;
+  font-size: 20rpx;
+  line-height: 28rpx;
+  text-align: center;
+}
+
+.consent-box-on {
+  border-color: #0b9588;
+  background: #0b9588;
+}
+
+.consent-copy {
+  flex: 1;
+  font-size: 24rpx;
+  line-height: 1.5;
+  color: #7c857f;
+}
+
+.consent-link {
+  color: #0b9588;
+}
+
+/* DEC-110 ③：勾选行下面补一行我们自己的协议入口（未发布时法律页显示「尚未发布」）。 */
+.consent-docs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8rpx;
+  margin-top: 12rpx;
+  padding-left: 44rpx;
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #7c857f;
+}
+
+.consent-docs-label {
+  color: #a3aaa6;
+}
+
+.hint {
+  margin-top: 16rpx;
+  font-size: 24rpx;
+  color: #c0392b;
+}
+
+/* 主按钮：2026-10-03 真机反馈"太大、要轻盈"——高度收一档、字号收一档。 */
+.primary-button {
+  margin-top: 26rpx;
+  padding: 20rpx 0;
+  border-radius: 999rpx;
+  background: #0b9588;
+  color: #ffffff;
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.primary-button-busy {
+  opacity: .55;
+}
+
+.skip-entry {
+  margin-top: 18rpx;
+  font-size: 26rpx;
+  color: #7c857f;
+  text-align: center;
+}
+
+.skip-note {
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  color: #a6ada8;
+  text-align: center;
+}

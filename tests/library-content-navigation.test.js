@@ -49,6 +49,7 @@ test("library exams are separated into past, mock and imported categories", () =
 test("library tabs load public packs, published exams and materials from real endpoints", () => {
   let definition;
   let navigatedUrl = "";
+  let modalTitle = "";
   const storage = new Map([
     ["shukao_assets_migrated_v1", true],
     ["shukao_user_assets", [{ id: "note-1", type: "note", title: "我的语法笔记", content: "语法整理", updatedAt: Date.now() }]],
@@ -68,7 +69,8 @@ test("library tabs load public packs, published exams and materials from real en
       if (options.url.endsWith("/api/discovery")) options.success({ statusCode: 200, data: { products: [{ id: "material-1", kind: "material", title: "考试大纲" }] } });
     },
     navigateTo({ url }) { navigatedUrl = url; },
-    showModal() {}, showToast() {},
+    showModal(options) { modalTitle = (options && options.title) || ""; if (options && options.success) options.success({ confirm: false, content: "" }); },
+    showToast() {},
   };
   const file = require.resolve("../apps/miniprogram/pages/library/library.js");
   delete require.cache[file];
@@ -90,11 +92,13 @@ test("library tabs load public packs, published exams and materials from real en
 
   page.selectContentTab({ currentTarget: { dataset: { id: "packs" } } });
   assert.equal(page.data.activeSource, "official");
-  page.toggleActionMenu();
-  assert.equal(page.data.actionMenuOpen, true);
-  page.contributeQuestionFromLibrary();
-  assert.equal(navigatedUrl, "/pages/packs/packs?intent=addQuestion");
-  assert.equal(page.data.actionMenuOpen, false);
+  // 2026-09-23 04:Cx：悬浮「＋」不再展开菜单（原来菜单里有「录入题目 / 新建题包」两项），
+  // 现在直接执行本 tab 的唯一动作——题包 tab＝新建题包。
+  assert.equal(page.toggleActionMenu, undefined, "展开菜单的 handler 应已删除");
+  assert.equal(page.contributeQuestionFromLibrary, undefined, "「录入题目」入口已随菜单撤掉");
+  assert.equal(page.data.actionMenuOpen, undefined, "actionMenuOpen 这份状态应已删除");
+  page.createFromLibraryFab();
+  assert.equal(modalTitle, "新建题包");
 
   page.selectQuickSource({ currentTarget: { dataset: { id: "private" } } });
   assert.equal(page.data.activeSourceLabel, "我的");
@@ -108,10 +112,8 @@ test("library tabs load public packs, published exams and materials from real en
   assert.deepEqual(page.data.ownedMaterials.map((item) => item.id), ["note-1"]);
   page.openOwnedMaterial({ currentTarget: { dataset: { id: "note-1" } } });
   assert.equal(navigatedUrl, "/pages/note-editor/note-editor?noteId=note-1");
-  page.toggleActionMenu();
-  page.createNoteFromLibrary();
+  page.createFromLibraryFab();
   assert.equal(navigatedUrl, "/pages/note-editor/note-editor");
-  assert.equal(page.data.actionMenuOpen, false);
 
   page.selectContentTab({ currentTarget: { dataset: { id: "books" } } });
   assert.equal(page.data.activeSource, "official");

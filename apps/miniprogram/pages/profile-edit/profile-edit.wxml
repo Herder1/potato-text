@@ -1,0 +1,92 @@
+<view class="page">
+  <view class="editor-nav" style="height: {{navTotalHeight}}px; padding-top: {{statusBarHeight}}px; padding-right: {{capsuleSafeRight}}px;">
+    <view class="nav-back" bindtap="goBack" role="button" aria-label="返回">
+      <image src="/assets/icons/arrow-left.svg" mode="aspectFit" />
+    </view>
+    <view class="nav-title" style="top: {{statusBarHeight}}px; height: {{navContentHeight}}px;">编辑资料</view>
+  </view>
+  <!-- 导航栏是 fixed，这里用等高占位把它让出来（与 card-set-editor / note-editor 同一套写法）。 -->
+  <view style="height: {{navTotalHeight}}px;"></view>
+
+  <view class="edit-body">
+    <view class="avatar-block">
+      <image wx:if="{{draftAvatarUrl}}" class="avatar-large" src="{{draftAvatarUrl}}" mode="aspectFill" binderror="handleAvatarError" />
+      <view wx:else class="avatar-large avatar-large-fallback">薯</view>
+      <!-- 头像由用户自己提供：open-type=chooseAvatar 是微信现行的合规采集方式。
+           胶囊的视觉全由 .avatar-change（view）控制，采集入口是一枚覆盖其上的透明 button——
+           直接用 button 做视觉会被它自带的内边距/字重影响，真机上胶囊会被撑得过宽（2026-09-22 真机反馈"太长了"）。 -->
+      <view class="avatar-change">
+        <image class="avatar-change-icon" src="/assets/icons/camera-brand.svg" mode="aspectFit" />
+        <text class="avatar-change-label">更换头像</text>
+        <button class="avatar-change-button" open-type="chooseAvatar" bindchooseavatar="chooseAvatar" aria-label="更换头像"></button>
+      </view>
+    </view>
+
+    <view class="group-title">基础资料</view>
+    <view class="group-card">
+      <view class="group-row">
+        <view class="row-label">昵称</view>
+        <view class="row-value-wrap">
+          <input class="row-input" type="nickname" value="{{draftNickname}}" maxlength="32" placeholder="填写昵称" bindinput="inputNickname" bindblur="inputNickname" />
+          <text class="row-arrow">›</text>
+        </view>
+      </view>
+      <view class="group-row" wx:if="{{userId}}" bindtap="copyUserId" role="button" aria-label="复制用户 ID">
+        <view class="row-label">用户 ID</view>
+        <view class="row-value-wrap">
+          <text class="row-value row-user-id">{{userId}}</text>
+          <text class="row-copy">复制</text>
+        </view>
+      </view>
+      <view class="group-row">
+        <view class="row-label">个人签名</view>
+        <view class="row-value-wrap">
+          <input class="row-input" value="{{draftSignature}}" maxlength="40" placeholder="一句话介绍自己" bindinput="inputSignature" bindblur="inputSignature" />
+          <text class="row-arrow">›</text>
+        </view>
+      </view>
+      <picker mode="region" value="{{draftRegionParts}}" bindchange="chooseRegion">
+        <view class="group-row">
+          <view class="row-label">所在地区</view>
+          <view class="row-value-wrap">
+            <text class="row-value">{{draftRegion || '未设置'}}</text>
+            <text class="row-arrow">›</text>
+          </view>
+        </view>
+      </picker>
+    </view>
+
+    <view class="group-title">学习偏好</view>
+    <view class="group-card">
+      <picker range="{{studyFieldOptions}}" range-key="name" value="{{studyFieldIndex}}" bindchange="chooseStudyField">
+        <view class="group-row">
+          <view class="row-label">学习方向</view>
+          <view class="row-value-wrap">
+            <text class="row-value">{{draftStudyField || '未设置'}}</text>
+            <text class="row-arrow">›</text>
+          </view>
+        </view>
+      </picker>
+      <picker range="{{dailyGoalOptions}}" range-key="label" value="{{dailyGoalIndex}}" bindchange="chooseDailyGoal">
+        <view class="group-row">
+          <view class="row-label">每日目标</view>
+          <view class="row-value-wrap">
+            <text class="row-value">{{draftDailyGoalLabel}}</text>
+            <text class="row-arrow">›</text>
+          </view>
+        </view>
+      </picker>
+      <view class="group-row group-row-switch">
+        <view class="row-main">
+          <view class="row-label">公开学习数据</view>
+          <view class="row-sub">在公开主页展示学习统计（公开主页上线后生效）</view>
+        </view>
+        <switch checked="{{draftPublicLearningStats}}" color="#0b9588" bindchange="togglePublicLearningStats" />
+      </view>
+    </view>
+
+    <!-- 保存：整宽主按钮跟在表单后面（产品负责人 2026-09-22 反馈"太靠下不好操作"，故不再固定屏幕底部）。
+         用 view + role=button 而非小程序 button 标签：button 自带内边距/居中样式会让整宽宽度不受控（仓库既有写法见 note-meta 的「保存笔记」）。 -->
+    <view class="save-button {{savingProfile ? 'save-button-busy' : ''}}" bindtap="saveProfile" role="button" aria-label="保存修改">{{savingProfile ? '保存中…' : '保存修改'}}</view>
+  </view>
+</view>

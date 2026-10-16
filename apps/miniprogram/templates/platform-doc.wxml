@@ -1,0 +1,24 @@
+<!-- 平台文本渲染（DEC-110，2026-10-05）：法律页与「个人信息收集清单」页共用这一处，避免两页各写一套口径。
+     正文只来自服务端「已发布」版本；未发布显示「尚未发布」；读不到就说读不到并给重试——不留任何占位正文。
+     用法：<import src="../../templates/platform-doc.wxml" /> + <template is="platformDocBody" data="{{doc: doc}}" />
+     事件（retryLoadDoc）绑定在**使用模板的页面**上，所以两个页面都要实现同名方法。 -->
+<template name="platformDocBody">
+  <view class="platform-doc-body panel" wx:if="{{doc.state === 'published'}}">
+    <view class="platform-doc-paragraph" wx:for="{{doc.paragraphs}}" wx:for-item="line" wx:key="*this">{{line}}</view>
+  </view>
+
+  <view class="platform-doc-body panel" wx:elif="{{doc.state === 'unpublished'}}">
+    <view class="platform-doc-state-title">尚未发布</view>
+    <view class="platform-doc-note">{{doc.note}}</view>
+  </view>
+
+  <view class="platform-doc-body panel" wx:elif="{{doc.state === 'failed'}}">
+    <view class="platform-doc-state-title">暂时读不到</view>
+    <view class="platform-doc-note">{{doc.note}}</view>
+    <view class="platform-doc-retry" bindtap="retryLoadDoc" role="button" aria-label="重新读取这份文本">点这里重试</view>
+  </view>
+
+  <view class="platform-doc-body panel" wx:else>
+    <view class="platform-doc-note">正在读取…</view>
+  </view>
+</template>

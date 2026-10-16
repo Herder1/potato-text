@@ -1,0 +1,12 @@
+<import src="../../templates/platform-doc.wxml" />
+<view class="page-shell legal-page">
+  <view class="legal-heading">
+    <view class="legal-title">{{doc.title}}</view>
+    <view class="legal-subtitle">{{doc.statusLine}}</view>
+  </view>
+
+  <!-- 正文/未发布/读不到三种状态共用一处渲染（templates/platform-doc.wxml），口径只有一个 -->
+  <template is="platformDocBody" data="{{doc: doc}}" />
+
+  <view class="legal-foot" wx:if="{{doc.state === 'unpublished' || doc.state === 'failed'}}">个人信息相关的处理说明可先看「设置 → 个人信息收集清单」。</view>
+</view>

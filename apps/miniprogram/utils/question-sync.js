@@ -1,9 +1,11 @@
 const { subjects, demoQuestions } = require("../data/catalog");
 const { groupQuestionUnits } = require("./practice-session");
+const { normalizeQuestionTypeFields } = require("./question-type");
 
 const objectiveTypes = new Set(["single_choice", "multiple_choice"]);
 
 function normalizeOfficialQuestion(question) {
+  question = normalizeQuestionTypeFields(question);
   const subject = subjects.find((item) => item.id === question.subjectId);
   const book = subject && subject.books.find((item) => item.id === question.bookId);
   const knowledgePoints = Array.isArray(question.knowledgePoints) ? question.knowledgePoints : [];
@@ -39,7 +41,8 @@ function normalizeOfficialQuestion(question) {
       community: question.answerSource === "community_consensus" ? question.referenceAnswer : "",
     },
     hiddenAnswerVariants: Array.isArray(question.hiddenAnswerVariants) ? question.hiddenAnswerVariants : [],
-    responseMode: question.responseMode === "annotation" ? "annotation" : "text",
+    // 作答方式已统一为文字作答（2026-10-10 下线「原文标记」），保留字段以维持既有数据结构。
+    responseMode: "text",
     annotationText: String(question.annotationText || ""),
   };
 }

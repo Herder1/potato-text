@@ -220,15 +220,23 @@ function buildNodes(bookId, catalogNodes, outlineNodes) {
   });
 
   const byId = new Map(nodes.map((node) => [node.id, node]));
-  const resolve = (node) => {
+  // 2026-09-26 修：这里以前**没有环检测**——只要 parentId 指向自己或形成环（例如正文标题 id
+  // 与目录节点 id 撞名，标题节点就成了自己的父节点），resolve 就会无限递归，
+  // 抛 RangeError: Maximum call stack size exceeded；外层 catch 再把它当 422 返回，
+  // 前端看到的就是一句英文错误（确定性通道第 1 步「重算知识指纹」直接失败）。
+  // 现在按 id 记 seen：遇环停止下钻，用已解析到的信息落 path，不改变正常层级的解析结果。
+  const resolve = (node, seen = new Set()) => {
     if (node.path) return node;
+    if (seen.has(node.id)) return node;
+    seen.add(node.id);
     const parent = node.parentId && byId.get(node.parentId);
-    if (parent) resolve(parent);
+    if (parent) resolve(parent, seen);
     node.path = [...(parent ? parent.path.split(" > ").filter(Boolean) : []), node.displayTitle].join(" > ");
     node.orderPath = [...(parent ? parent.orderPath : []), Number(node.order) || 0];
     return node;
   };
-  nodes.forEach(resolve);
+  // 必须包一层：nodes.forEach(resolve) 会把数组索引当成 seen 传进去（seen.has is not a function）。
+  nodes.forEach((node) => resolve(node));
   return nodes.sort((left, right) => {
     const length = Math.max(left.orderPath.length, right.orderPath.length);
     for (let index = 0; index < length; index += 1) {
@@ -482,6 +490,9 @@ function normalizeManualEdits(value) {
     deletedPaths: [...new Set((Array.isArray(value?.deletedPaths) ? value.deletedPaths : []).map(String).filter(Boolean))].slice(-2000),
     addedNodes: (Array.isArray(value?.addedNodes) ? value.addedNodes : []).map(clone),
     fingerprintOverrides,
+    directoryMappings: value?.directoryMappings && typeof value.directoryMappings === "object"
+      ? Object.fromEntries(Object.entries(value.directoryMappings).map(([id, ids]) => [id, [...new Set((Array.isArray(ids) ? ids : []).map(String))]])) : {},
+    directoryMappingRevision: Math.max(0, Number(value?.directoryMappingRevision) || 0),
   };
 }
 
@@ -758,6 +769,48 @@ function createKnowledgeStructureStore(adapter) {
       const record = read().records.find((item) => item.bookId === bookId);
       return record ? clone(record) : null;
     },
+    directoryMappings(bookId) {
+      const edits = normalizeManualEdits(read().editsByBook[bookId]);
+      return { links: clone(edits.directoryMappings), revision: edits.directoryMappingRevision };
+    },
+    setDirectoryMapping(bookId, nodeId, targetIds, expectedRevision) {
+      const state = read();
+      const record = state.records.find((item) => item.bookId === bookId);
+      if (!record?.nodes.some((node) => node.id === nodeId)) throw new Error("knowledge_node_not_found");
+      const edits = normalizeManualEdits(state.editsByBook[bookId]);
+      if (expectedRevision !== edits.directoryMappingRevision) throw new Error("directory_mapping_stale");
+      const ids = [...new Set(targetIds.map(String))].sort();
+      if (JSON.stringify(edits.directoryMappings[nodeId]) === JSON.stringify(ids)) return this.directoryMappings(bookId);
+      snapshot(state, bookId, "directory-mapping");
+      edits.directoryMappings[nodeId] = ids;
+      edits.directoryMappingRevision += 1;
+      state.editsByBook[bookId] = edits;
+      write(state);
+      return this.directoryMappings(bookId);
+    },
+    fillMissingFingerprints(bookId, fingerprints = []) {
+      const state = read();
+      const record = state.records.find((item) => item.bookId === bookId);
+      if (!record) throw new Error("knowledge_structure_not_found");
+      const byId = new Map(record.nodes.map((node) => [node.id, node]));
+      const present = (fingerprint) => Boolean(fingerprint?.primaryNodeId || fingerprint?.requiredNodeIds?.length || fingerprint?.status === "confirmed");
+      const added = [];
+      for (const fingerprint of fingerprints) {
+        if ((record.fingerprints || []).some((item) => item.questionId === fingerprint.questionId && present(item))) continue;
+        if (byId.get(fingerprint.primaryNodeId)?.kind !== "knowledge"
+          || !(fingerprint.requiredNodeIds || []).length
+          || fingerprint.requiredNodeIds.some((id) => byId.get(id)?.kind !== "knowledge")) throw new Error("knowledge_node_not_found");
+        if (!added.some((item) => item.questionId === fingerprint.questionId)) added.push(clone(fingerprint));
+      }
+      if (!added.length) return { addedQuestionIds: [] };
+      snapshot(state, bookId, "fill-missing-fingerprints");
+      const ids = new Set(added.map((item) => item.questionId));
+      // Existing records stay byte-for-byte intact; empty placeholders alone may be replaced.
+      record.fingerprints = [...(record.fingerprints || []).filter((item) => !ids.has(item.questionId)), ...added];
+      record.updatedAt = Date.now();
+      write(state);
+      return { addedQuestionIds: [...ids] };
+    },
     generate(input) {
       const state = read();
       snapshot(state, input.bookId, "generate");
@@ -1005,7 +1058,7 @@ function createKnowledgeStructureStore(adapter) {
       write(state);
       return { structure: clone(updated), deletedNodeIds: [...deletedIds] };
     },
-    assignQuestions(bookId, assignments = []) {
+    assignQuestions(bookId, assignments = [], options = {}) {
       const state = read();
       const record = state.records.find((item) => item.bookId === bookId);
       if (!record) throw new Error("knowledge_structure_not_found");
@@ -1044,7 +1097,14 @@ function createKnowledgeStructureStore(adapter) {
           if (node.bookId !== bookId) throw new Error("knowledge_assignment_book_mismatch");
           if (node.kind !== "knowledge") throw new Error("knowledge_assignment_node_required");
         });
-        if (assignment.knowledgeThemeRangeAnchorNodeId) {
+        const previousAnchor = (record.fingerprints || [])
+          .find((fingerprint) => fingerprint.questionId === assignment.questionId);
+        const unchangedLegacyAnchor = options.preserveExistingThemeAnchor === true
+          && previousAnchor
+          && assignment.knowledgeThemeRangeAnchorNodeId === String(
+            previousAnchor.knowledgeThemeRangeAnchorNodeId || previousAnchor.scopeAnchorNodeId || "",
+          );
+        if (assignment.knowledgeThemeRangeAnchorNodeId && !unchangedLegacyAnchor) {
           const anchor = byId.get(assignment.knowledgeThemeRangeAnchorNodeId);
           if (!anchor) throw new Error("knowledge_node_not_found");
           if (anchor.bookId !== bookId) throw new Error("knowledge_assignment_book_mismatch");
@@ -1226,6 +1286,9 @@ function createMemoryKnowledgeStructureStore(initialState = { version: STRUCTURE
 
 module.exports = {
   STRUCTURE_VERSION,
+  buildNodes,
+  buildFingerprints,
+  knowledgeSpan,
   buildKnowledgeStructure,
   buildStructureRecord,
   createFileKnowledgeStructureStore,

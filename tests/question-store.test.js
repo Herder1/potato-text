@@ -218,7 +218,7 @@ test("subjective questions can be imported before scoring points are completed",
   assert.equal(question.scoringPointStatus, "complete");
 });
 
-test("questions preserve three answer variants and annotation response settings", () => {
+test("questions preserve three answer variants and normalize the retired annotation response to text", () => {
   const store = createMemoryQuestionStore([]);
   const question = store.create({
     ...baseQuestion,
@@ -242,7 +242,7 @@ test("questions preserve three answer variants and annotation response settings"
   assert.equal(question.answerVariants.ai, "在“小王”下方添加下划线。");
   assert.equal(question.answerVariants.community, "主语是“小王”。");
   assert.deepEqual(question.hiddenAnswerVariants, ["community"]);
-  assert.equal(question.responseMode, "annotation");
+  assert.equal(question.responseMode, "text");
   assert.equal(question.annotationText, "小王认真完成了练习。");
   assert.deepEqual(question.materialMarks, [{ type: "underline", text: "小王认真完成了练习。", occurrence: 1 }]);
 });
@@ -274,7 +274,7 @@ test("partial question updates preserve material, response and preview settings"
   assert.equal(updated.material, "共享材料");
   assert.equal(updated.subNumber, "4");
   assert.equal(updated.usesSharedMaterial, true);
-  assert.equal(updated.responseMode, "annotation");
+  assert.equal(updated.responseMode, "text");
   assert.equal(updated.annotationText, "哪怕出于好意，批评也要适度。");
   assert.deepEqual(updated.freePreview, { question: true, answer: true, analysis: false });
 });
@@ -373,7 +373,29 @@ test("question imports skip exact duplicates and batch deletion removes selected
   assert.equal(store.list({ library: "official" }).questions.length, 0);
 });
 
-test("question imports reject the same stem even when corrected options differ", () => {
+test("batch deletion has no silent 500-id cap (whole import batch can be undone)", () => {
+  // 2026-09-22：旧实现对 id 列表 `.slice(0, 500)`，超过 500 的部分被静默丢弃——
+  // 实测 501 个 id 时第 501 个原地不动、接口仍回 200，于是"撤销整个导入批次"会删不干净。
+  const store = createMemoryQuestionStore([]);
+  const created = Array.from({ length: 520 }, (_, index) => store.create({
+    ...baseQuestion,
+    stem: `批量删除上限用例第 ${index + 1} 题`,
+    options: [{ key: "A", text: "甲" }, { key: "B", text: "乙" }],
+    correctAnswer: ["A"],
+    referenceAnswer: "甲。",
+    sourceLabel: "批量删除用例",
+  }));
+  assert.equal(store.list({ library: "official", status: "all" }).questions.length, 520);
+
+  const deletion = store.deleteMany(created.map((question) => question.id));
+  assert.equal(deletion.deleted.length, 520, "520 个 id 必须全部删除，不能被截断到 500");
+  assert.deepEqual(deletion.notFoundIds, []);
+  assert.equal(store.list({ library: "official", status: "all" }).questions.length, 0);
+});
+
+test("question imports do not treat the same stem with different options as a duplicate", () => {
+  // DEC-094 ①：判重必须"题型＋材料＋题干＋选项"全部一致。仅题干相同就判重会把
+  // 「下列选项中正确的一项是」这类通用题干下的不同题目误判成重复，因此不再判重。
   const store = createMemoryQuestionStore([]);
   const original = {
     ...baseQuestion,
@@ -382,13 +404,35 @@ test("question imports reject the same stem even when corrected options differ",
     correctAnswer: ["B"],
   };
   store.create(original);
+  const stored = store.list({ library: "official", status: "all" }).questions.find((item) => item.stem === original.stem);
   const corrected = {
     ...original,
     id: "question-corrected-options",
     options: [{ key: "A", text: "舌位高低不同" }, { key: "B", text: "舌位前后不同" }, { key: "C", text: "唇形不同" }],
   };
   const [preview] = store.previewImport([corrected]);
+  assert.equal(preview.valid, true);
+  assert.equal(preview.duplicate, undefined);
+  // 但必须提示"疑似重复"（相似度达标），由操作者定夺——提示不等于判重。
+  assert.equal(preview.suspicion.scope, "stored");
+  assert.equal(preview.suspicion.questionId, stored.id);
+  assert.ok(preview.suspicion.score >= 0.85);
+});
+
+test("question imports still reject the same stem when the options are identical too", () => {
+  // 事实相同＝完整指纹一致；与上面那条一起锁定 DEC-094 的边界。
+  const store = createMemoryQuestionStore([]);
+  const original = {
+    ...baseQuestion,
+    stem: "e和ê的区别在于（ ）。",
+    options: [{ key: "A", text: "舌位高低不同" }, { key: "B", text: "舌位前后不同" }],
+    correctAnswer: ["B"],
+  };
+  store.create(original);
+  const [preview] = store.previewImport([{ ...original, id: "question-same-options" }]);
+  assert.equal(preview.valid, false);
   assert.equal(preview.duplicate, true);
+  assert.equal(preview.duplicateScope, "stored");
   assert.equal(preview.error, "question_duplicate");
 });
 
@@ -410,6 +454,35 @@ test("question import preview distinguishes stored questions from duplicates ins
   assert.equal(storedDuplicate.duplicateIndex, null);
 });
 
+test("同一材料题组内的小问不互相报「疑似重复」，跨组/题库已有仍照常提示", () => {
+  // 2026-09-22 真实录入稿实测：材料题拆出的小问共用整段材料，相似度天然很高，
+  // 56 条提示里 45 条是这种「同组小问互指」——那不是重复稿，而是正常的拆分结果。
+  const store = createMemoryQuestionStore([]);
+  const material = "现代汉语词汇系统包括基本词汇和一般词汇，二者在稳固性与能产性上差别明显。";
+  const groupA1 = { ...baseQuestion, id: "material-a-1", materialGroupId: "text-material-1", material, stem: "（1）简述基本词汇的特点。" };
+  const groupA2 = { ...baseQuestion, id: "material-a-2", materialGroupId: "text-material-1", material, stem: "（2）简述基本词汇的特点。" };
+  const groupB1 = { ...baseQuestion, id: "material-b-1", materialGroupId: "text-material-2", material, stem: "（1）简述基本词汇的主要特点是什么。" };
+
+  const sameGroup = store.previewImport([groupA1, groupA2]);
+  assert.equal(sameGroup[0].valid, true);
+  assert.equal(sameGroup[0].suspicion, null, "同一材料题组的兄弟小问不该被报成疑似重复");
+  assert.equal(sameGroup[1].suspicion, null);
+
+  // 跨材料题组仍然是疑似（不同组的题干确实很像，值得提示）
+  const crossGroup = store.previewImport([groupA1, groupB1]);
+  assert.equal(crossGroup[1].suspicion?.scope, "batch");
+  assert.ok(crossGroup[1].suspicion.score >= 0.85);
+  // 批内疑似要带相似行的序号（预览接口不下发整题，前端只能靠它跳行）
+  assert.equal(crossGroup[1].suspicion.questionIndex, 0);
+
+  // 题库里已有的同组题照常提示：那可能是上一次导入的同一批，不是本次拆分出来的兄弟
+  store.importMany([groupA1]);
+  const [storedSibling] = store.previewImport([{ ...groupA2, id: "material-a-2-again" }]);
+  assert.equal(storedSibling.suspicion?.scope, "stored");
+  assert.equal(storedSibling.suspicion.questionId, "material-a-1");
+  assert.equal(storedSibling.suspicion.questionIndex, null, "题库已有的题没有「本批第几行」可言");
+});
+
 test("import batches can be filtered and moved to another subject with versions preserved", () => {
   const store = createMemoryQuestionStore([]);
   const imported = store.importMany([
@@ -427,6 +500,158 @@ test("import batches can be filtered and moved to another subject with versions 
   assert.equal(updated.updated.length, 2);
   assert.equal(updated.batch.subjectId, "contemporary-literature");
   assert.equal(updated.updated[0].version, 2);
-  assert.equal(updated.updated[0].versions[0].changeNote, "批次统一修改科目与教材");
+  assert.equal(updated.updated[0].versions[0].changeNote, "批次补充归属（科目／教材／章节／知识点）");
+  // 切换科目与教材后，原教材的下级关联（章节/知识点）不得残留。
+  assert.equal(updated.updated[0].chapter, "");
+  assert.deepEqual(updated.updated[0].knowledgePoints, []);
   assert.equal(updated.updated[0].stem.startsWith("批次题目"), true);
+});
+
+test("fillMissingFields only fills empty fields of the identical existing question", () => {
+  // DEC-094 ③：事实相同的重复稿走"择优补充"——补进既有题的空缺字段，
+  // 新增版本、保留审核记录、不覆盖任何非空字段、不新建题、也不顺手改归属。
+  const store = createMemoryQuestionStore([]);
+  const created = store.create({
+    ...baseQuestion,
+    id: "question-fill-target",
+    bookId: "",
+    chapter: "",
+    knowledgePoints: [],
+    referenceAnswer: "",
+    sourceLabel: "",
+    sourcePage: "",
+  });
+  const candidate = {
+    ...baseQuestion,
+    // 归属与题干都和既有题一致；只有既有题空缺的字段带了内容
+    referenceAnswer: "普通话以北京语音为标准音。",
+    sourceLabel: "《现代汉语》增订七版",
+    sourcePage: "第 25 页",
+  };
+  const result = store.fillMissingFields(created.id, candidate, "验证");
+  assert.equal(result.updated, true);
+  // official 答案层按答案来源从参考答案派生（既有题该层原为空），因此一并补上
+  assert.deepEqual(result.filled.sort(), ["answerVariants.official", "referenceAnswer", "sourceLabel", "sourcePage"].sort());
+  assert.deepEqual(result.conflicts, []);
+  assert.equal(result.question.id, created.id);
+  assert.equal(result.question.referenceAnswer, "普通话以北京语音为标准音。");
+  assert.equal(result.question.answerVariants.official, "普通话以北京语音为标准音。");
+  // 已有审核记录不被这次补充改写：审核状态与"已核对"标记保持原样（不冒充新审核）
+  assert.equal(result.question.answerReviewStatus, created.answerReviewStatus);
+  assert.equal(result.question.answerVerified, created.answerVerified);
+  assert.equal(result.question.sourceLabel, "《现代汉语》增订七版");
+  assert.equal(result.version, created.version + 1);
+  assert.equal(result.question.versions[0].changeNote, "导入择优补充（事实相同的重复稿）");
+  // 归属不在择优补充范围内：该题仍是待归类，不会被导入顺手"提级"
+  assert.equal(result.question.bookId, "");
+  assert.equal(result.question.chapter, "");
+  assert.deepEqual(result.question.knowledgePoints, []);
+  // 没有新建题
+  assert.equal(store.list({ library: "official" }).questions.length, 1);
+});
+
+test("fillMissingFields gives the imported answer a real source when the existing one is missing", () => {
+  // 既有题"没有答案（answerSource=missing）"时，补进参考答案必须同时给出真实来源，
+  // 否则会被 answerSource=missing 的校验拦下（那样择优补充就永远补不了答案）。
+  const store = createMemoryQuestionStore([]);
+  const blankStem = "普通话以________为标准音。";
+  const created = store.create({
+    ...baseQuestion,
+    id: "question-fill-no-answer",
+    type: "fill_blank",
+    stem: blankStem,
+    options: [],
+    correctAnswer: [],
+    referenceAnswer: "",
+    maxScore: 2,
+    answerSource: "missing",
+    answerReviewStatus: "unreviewed",
+    answerVerified: false,
+  });
+  assert.equal(created.answerSource, "missing");
+  const result = store.fillMissingFields(created.id, {
+    ...baseQuestion,
+    type: "fill_blank",
+    stem: blankStem,
+    options: [],
+    correctAnswer: [],
+    maxScore: 2,
+    referenceAnswer: "补上的参考答案。",
+  }, "验证");
+  assert.equal(result.updated, true);
+  assert.equal(result.question.referenceAnswer, "补上的参考答案。");
+  // 来源按"资料答案"记录（新稿没有明确声明来源），不能借导入默认值冒充团队已核对
+  assert.equal(result.question.answerSource, "pdf_answer");
+  assert.notEqual(result.question.answerSource, "missing");
+  assert.ok(result.filled.includes("answerSource"));
+  // 补答案不等于替人核对：不会因为补了答案就变成"已核对"
+  assert.equal(result.question.answerReviewStatus, "unreviewed");
+  assert.equal(result.question.answerVerified, false);
+});
+
+test("fillMissingFields never overwrites existing content and reports conflicts", () => {
+  const store = createMemoryQuestionStore([]);
+  const created = store.create({ ...baseQuestion, id: "question-fill-conflict" });
+  const result = store.fillMissingFields(created.id, {
+    ...baseQuestion,
+    referenceAnswer: "题库里已经有的答案。",
+    sourceLabel: "另一本教材",
+  }, "验证");
+  assert.equal(result.updated, false);
+  assert.deepEqual(result.filled, []);
+  // 参考答案与派生的 official 层都与既有内容冲突——只要既有的非空就一律不动它
+  assert.deepEqual(result.conflicts.sort(), ["answerVariants.official", "referenceAnswer", "sourceLabel"].sort());
+  assert.equal(result.question.version, created.version);
+  assert.equal(store.list({ library: "official" }).questions[0].referenceAnswer, baseQuestion.referenceAnswer);
+});
+
+test("fillMissingFields refuses a candidate that is not factually identical", () => {
+  const store = createMemoryQuestionStore([]);
+  const created = store.create({ ...baseQuestion, id: "question-fill-mismatch" });
+  assert.throws(
+    () => store.fillMissingFields(created.id, { ...baseQuestion, stem: "完全不同的题干" }, "验证"),
+    /question_merge_requires_identical/,
+  );
+  assert.throws(() => store.fillMissingFields("missing-question", baseQuestion, "验证"), /question_not_found/);
+});
+
+test("import preview flags suspected duplicates instead of blocking them", () => {
+  // 同一批里题干相近、选项不同：只提示，不判重（DEC-094 ① ②）。
+  const store = createMemoryQuestionStore([]);
+  const preview = store.previewImport([{
+    ...baseQuestion,
+    id: "batch-suspect-1",
+    stem: "下列汉字中，笔画之间的组合关系属于相接关系的是",
+    options: [{ key: "A", text: "人" }, { key: "B", text: "八" }],
+    correctAnswer: ["A"],
+  }, {
+    ...baseQuestion,
+    id: "batch-suspect-2",
+    stem: "下列汉字中，笔画之间的组合关系属于相离关系的是",
+    options: [{ key: "A", text: "人" }, { key: "B", text: "八" }],
+    correctAnswer: ["B"],
+  }], "验证");
+  assert.equal(preview[0].valid, true);
+  assert.equal(preview[0].suspicion, null);
+  assert.equal(preview[1].valid, true);
+  assert.equal(preview[1].duplicate, undefined);
+  assert.equal(preview[1].suspicion.scope, "batch");
+  assert.equal(preview[1].suspicion.questionId, preview[0].question.id);
+  assert.ok(preview[1].suspicion.score >= 0.85);
+  const result = store.importMany([{
+    ...baseQuestion,
+    id: "batch-suspect-1",
+    stem: "下列汉字中，笔画之间的组合关系属于相接关系的是",
+    options: [{ key: "A", text: "人" }, { key: "B", text: "八" }],
+    correctAnswer: ["A"],
+  }, {
+    ...baseQuestion,
+    id: "batch-suspect-2",
+    stem: "下列汉字中，笔画之间的组合关系属于相离关系的是",
+    options: [{ key: "A", text: "人" }, { key: "B", text: "八" }],
+    correctAnswer: ["B"],
+  }], "验证");
+  assert.equal(result.created.length, 2);
+  assert.equal(result.suspected.length, 1);
+  assert.equal(result.suspected[0].scope, "batch");
 });

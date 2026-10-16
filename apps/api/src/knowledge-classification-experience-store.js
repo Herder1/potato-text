@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const { normalizeQuestionType } = require("../../miniprogram/utils/question-type");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -281,6 +282,8 @@ function normalizeDossierSuggestion(input = {}) {
 
 function normalizeState(value) {
   return {
+    ...(Array.isArray(value?.assessmentModes) ? { assessmentModes: clone(value.assessmentModes) } : {}),
+    ...(Array.isArray(value?.questionAssessmentModes) ? { questionAssessmentModes: clone(value.questionAssessmentModes) } : {}),
     messages: (Array.isArray(value && value.messages) ? value.messages : []).map(normalizeMessage),
     rules: (Array.isArray(value && value.rules) ? value.rules : []).map(normalizeRule),
     cases: (Array.isArray(value && value.cases) ? value.cases : []).map(normalizeCase),
@@ -296,6 +299,8 @@ function createKnowledgeClassificationExperienceStore(adapter) {
   const write = (state) => {
     const normalized = normalizeState(state);
     return adapter.write({
+      ...(normalized.assessmentModes ? { assessmentModes: normalized.assessmentModes } : {}),
+      ...(normalized.questionAssessmentModes ? { questionAssessmentModes: normalized.questionAssessmentModes } : {}),
       messages: normalized.messages.slice(0, MAX_MESSAGES),
       rules: normalized.rules.slice(0, MAX_RULES),
       cases: normalized.cases.slice(0, MAX_CASES),
@@ -609,13 +614,13 @@ function createKnowledgeClassificationExperienceStore(adapter) {
     context(filters = {}) {
       const nodeIds = new Set(uniqueStrings(filters.nodeIds, 100));
       const text = cleanText(filters.text, 12000).normalize("NFKC").toLocaleLowerCase("zh-CN");
-      const questionType = String(filters.questionType || "");
+      const questionType = normalizeQuestionType(filters.questionType);
       const limitRules = Math.min(20, Math.max(1, Number(filters.limitRules) || 8));
       const limitCases = Math.min(10, Math.max(1, Number(filters.limitCases) || 3));
       const priorityScore = { high: 3, medium: 2, low: 1 };
       const scoredRules = read().rules.flatMap((rule) => {
         if (rule.status !== "active" || (filters.bookId && rule.bookId !== filters.bookId)) return [];
-        if (rule.questionTypes.length && !rule.questionTypes.includes(questionType)) return [];
+        if (rule.questionTypes.length && !rule.questionTypes.map(normalizeQuestionType).includes(questionType)) return [];
         const nodeMatches = rule.scopeNodeIds.filter((id) => nodeIds.has(id)).length;
         if (rule.scopeNodeIds.length && !nodeMatches) return [];
         const termMatches = rule.triggerTerms.filter((term) => text.includes(term.normalize("NFKC").toLocaleLowerCase("zh-CN"))).length;

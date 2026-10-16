@@ -98,13 +98,13 @@ test("AI clozes survive editor save and exclusively control progressive hint rev
   const app = {
     globalData: {
       userId: "ai-cloze-flow-user",
-      aiCredits: 3,
+      beans: 0.3,
       apiBaseUrl: "http://127.0.0.1:3212",
       authToken: "test-token",
     },
     apiBaseUrlCandidates: () => ["http://127.0.0.1:3212"],
-    spendAiCredit() {
-      this.globalData.aiCredits -= 1;
+    spendBeans(amount) {
+      this.globalData.beans = Math.round((this.globalData.beans - amount) * 10) / 10;
       return true;
     },
   };

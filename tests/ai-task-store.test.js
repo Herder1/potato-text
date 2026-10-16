@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { classifyError, createFileAiTaskStore, createMemoryAiTaskStore } = require("../apps/api/src/ai-task-store");
+const { classifyError, createFileAiTaskStore, createMemoryAiTaskStore, normalizeUsage } = require("../apps/api/src/ai-task-store");
 
 test("AI task records persist, redact secrets and recover interrupted work", (context) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "shukao-ai-task-"));
@@ -99,3 +99,84 @@ test("Agent 2 JSON and navigation contract failures are classified as output for
   });
   assert.deepEqual(store.dashboard().today.errorBreakdown, [{ category: "output_format", count: errorCodes.length }]);
 });
+
+// 2026-10-10 实例：normalizeUsage 原先只读 snake_case 却产出 camelCase，而 write() 每次落盘都会
+// 重新归一化整份数组 —— 用量在写完的瞬间就被抹成 null，2000/2000 条任务全部丢账且不报错。
+test("normalizeUsage is idempotent for both upstream and stored shapes", () => {
+  assert.deepEqual(normalizeUsage({ prompt_tokens: 303, completion_tokens: 5, total_tokens: 308 }), {
+    inputTokens: 303,
+    outputTokens: 5,
+    totalTokens: 308,
+  });
+  assert.deepEqual(normalizeUsage({ input_tokens: 281, output_tokens: 20 }), {
+    inputTokens: 281,
+    outputTokens: 20,
+    totalTokens: 301,
+  });
+  // 自己产出的形状必须能再次通过归一化（幂等）
+  assert.deepEqual(normalizeUsage({ inputTokens: 303, outputTokens: 5, totalTokens: 308 }), {
+    inputTokens: 303,
+    outputTokens: 5,
+    totalTokens: 308,
+  });
+  assert.deepEqual(normalizeUsage(normalizeUsage({ prompt_tokens: 303, completion_tokens: 5, total_tokens: 308 })), {
+    inputTokens: 303,
+    outputTokens: 5,
+    totalTokens: 308,
+  });
+  assert.equal(normalizeUsage(null), null);
+  assert.equal(normalizeUsage({}), null);
+});
+
+test("token usage survives the write on file and memory stores, including later rewrites", (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "shukao-ai-task-usage-"));
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, "tasks.json");
+  const store = createFileAiTaskStore(filePath);
+
+  // 形状 A：OpenAI 兼容上游
+  const chat = store.start({ requestId: "chat-usage", sceneId: "knowledge_batch_verification" });
+  store.finish(chat.id, {
+    status: "succeeded",
+    chargeable: false,
+    usage: { prompt_tokens: 303, completion_tokens: 5, total_tokens: 308 },
+    outputChars: 12,
+  });
+  // 形状 B：Typesafe / System One
+  const jev = store.start({ requestId: "jev-usage", sceneId: "provider_connection_test" });
+  store.finish(jev.id, {
+    status: "succeeded",
+    chargeable: false,
+    usage: { input_tokens: 281, output_tokens: 20 },
+    outputChars: 29,
+  });
+
+  // 再写第三条任务：落盘会把整份数组重新归一化，历史用量不得被抹掉
+  store.start({ requestId: "later-rewrite", sceneId: "subjective_scoring" });
+
+  const reloaded = createFileAiTaskStore(filePath);
+  const tasks = reloaded.dashboard({ limit: 10 }).tasks;
+  assert.deepEqual(tasks.find((task) => task.requestId === "chat-usage").usage, {
+    inputTokens: 303,
+    outputTokens: 5,
+    totalTokens: 308,
+  });
+  assert.deepEqual(tasks.find((task) => task.requestId === "jev-usage").usage, {
+    inputTokens: 281,
+    outputTokens: 20,
+    totalTokens: 301,
+  });
+  assert.equal(tasks.find((task) => task.requestId === "later-rewrite").usage, null);
+
+  const memory = createMemoryAiTaskStore();
+  const memoryTask = memory.start({ requestId: "memory-usage", sceneId: "knowledge_batch_verification" });
+  memory.finish(memoryTask.id, {
+    status: "succeeded",
+    chargeable: false,
+    usage: { prompt_tokens: 120, completion_tokens: 8, total_tokens: 128 },
+  });
+  memory.start({ requestId: "memory-later" });
+  assert.deepEqual(memory.get(memoryTask.id).usage, { inputTokens: 120, outputTokens: 8, totalTokens: 128 });
+  assert.equal(memory.dashboard().recent.totalTokens, 128);
+});
+

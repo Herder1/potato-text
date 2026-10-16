@@ -2,8 +2,9 @@ const { subjects } = require("../../data/catalog");
 const { createCatalogSelection } = require("../../utils/asset-catalog");
 const { loadAssets, saveAsset, syncPublicAsset } = require("../../utils/asset-store");
 const { addQuestionToPack, attachQuestionToCard, getPrivatePack } = require("../../utils/private-pack-store");
+const { normalizeQuestionTypeLabel } = require("../../utils/question-type");
 
-const questionTypes = ["单选题", "多选题", "断句题", "加点字词解释", "古文翻译", "简答题", "材料分析题", "作品赏析题", "论述题", "判断题", "填空题", "名词解释"];
+const questionTypes = ["单选题", "多选题", "断句题", "加点字词解释", "古文翻译", "简答题", "材料分析题", "论述题", "判断题", "填空题", "名词解释"];
 const originalityOptions = [
   { id: "original", label: "原创", note: "由我独立整理" },
   { id: "adapted", label: "改编整理", note: "基于教材或资料改写" },
@@ -84,7 +85,7 @@ Page({
       knowledgePointOptions,
       selectedKnowledgePoints: asset.knowledgePoints || [],
       customTags: asset.tags || [],
-      typeIndex: Math.max(0, this.data.types.indexOf(asset.questionType)),
+      typeIndex: Math.max(0, this.data.types.indexOf(normalizeQuestionTypeLabel(asset.questionType, asset.typeCode))),
       originality: asset.originality || "original",
       originalConfirmed: asset.originality === "original",
       visibility: asset.visibility === "public" ? "public" : "private",

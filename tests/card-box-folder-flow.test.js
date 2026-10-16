@@ -287,6 +287,39 @@ test("the bottom navigation follows the pack-page layout: 智能练习 / 新建�
   assert.match(fs.readFileSync(path.join(pageDir, "card-box.js"), "utf8"), /onShareAppMessage\(\) \{/);
 });
 
+test("the folder drawer stops above the floating bottom navigation", () => {
+  const pageDir = path.join(__dirname, "../apps/miniprogram/pages/card-box");
+  const styles = fs.readFileSync(path.join(pageDir, "card-box.wxss"), "utf8");
+  const markup = fs.readFileSync(path.join(pageDir, "card-box.wxml"), "utf8");
+  const rpx = (value) => Number(String(value).replace("rpx", ""));
+
+  // 产品负责人 2026-09-23 01:2x 真机截图：「这抽屉太长了，缩短到底部导航上面」。
+  // 抽屉（.directory）与浮层底栏（.float-bar）是两处独立数值，容易改一个忘一个——
+  // 所以这条**把账算出来**：底栏上沿 = 它的 bottom 偏移 + 它的 height；
+  // 抽屉下沿（bottom）= 偏移 + 高度 + 间隙，必须 ≥ 底栏上沿（留出可见的间隙，不能压上去）。
+  const barRule = styles.match(/\.float-bar\{([^}]*)\}/);
+  assert.ok(barRule, ".float-bar 规则要在");
+  const barBottom = barRule[1].match(/bottom:\s*calc\((\d+)rpx \+ env\(safe-area-inset-bottom\)\)/);
+  const barHeight = barRule[1].match(/height:\s*(\d+)rpx/);
+  assert.ok(barBottom && barHeight, "底栏必须仍是 calc(<n>rpx + env(safe-area-inset-bottom)) 定位 + rpx 高度");
+  const barTop = rpx(barBottom[1]) + rpx(barHeight[1]);
+
+  const drawerRule = styles.match(/\.directory\{([^}]*)\}/g).pop();
+  const drawerBottom = drawerRule.match(/bottom:\s*calc\((\d+)rpx \+ env\(safe-area-inset-bottom\)\)/);
+  assert.ok(drawerBottom, "抽屉下沿也要跟着安全区走（calc(<n>rpx + env(safe-area-inset-bottom))），不能写死 px/百分比");
+  assert.doesNotMatch(drawerRule, /bottom:\s*118rpx/, "旧值 118rpx 就是「太长」的原因：它比底栏上沿低，压在底栏上");
+  const gap = rpx(drawerBottom[1]) - barTop;
+  assert.ok(gap >= 8, `抽屉下沿要比底栏上沿高出可见的间隙，现在只高 ${gap}rpx（底栏上沿 ${barTop}rpx，抽屉 ${rpx(drawerBottom[1])}rpx）`);
+  assert.ok(gap <= 60, `间隙别留太大（现在 ${gap}rpx），否则抽屉看着又短又浮`);
+
+  // 抽屉顶边与内容都不动：仍是左上角浮层（top:154rpx / left:22rpx / 430rpx 宽），条目照旧。
+  assert.match(drawerRule, /top:\s*154rpx/);
+  assert.match(drawerRule, /left:\s*22rpx/);
+  assert.match(drawerRule, /width:\s*430rpx/);
+  assert.match(markup, /class="directory" wx:if="\{\{directoryOpen\}\}"/);
+  assert.match(markup, /class="directory-title">切换文件夹</);
+});
+
 test("智能练习 is a placeholder entry that reports the feature is still being built", () => {
   const flow = createFlow();
   flow.page.smartPractice();

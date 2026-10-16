@@ -4,6 +4,9 @@ const path = require("node:path");
 const { scoringPointStructure } = require("./scoring-point-structure");
 const { normalizeClassicalWordStem } = require("./classical-word-marker");
 const { normalizeMaterialMarks } = require("./material-mark");
+const { splitMaterialQuestion } = require("./material-question-split");
+const { materialGroupTotalForSubject } = require("./exam-project-registry");
+const { normalizeQuestionType } = require("../../miniprogram/utils/question-type");
 
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 
@@ -60,13 +63,14 @@ function normalizeQuestion(value = {}, index = 0) {
     sourceNote: String(point && point.sourceNote || "").trim().slice(0, 500),
   })).filter((point) => point.description && Number.isFinite(point.score) && point.score > 0) : [];
   const maxScore = Number(value.maxScore) || 1;
-  const scoringStructure = scoringPointStructure(String(value.type || "").trim(), referenceAnswer, scoringPoints, maxScore);
+  const type = normalizeQuestionType(value.type);
+  const scoringStructure = scoringPointStructure(type, referenceAnswer, scoringPoints, maxScore);
   return {
     localId: String(value.localId || `recognized-${index + 1}`),
     included: value.included !== false,
     sectionTitle: String(value.sectionTitle || "").trim().slice(0, 200),
     number: String(value.number || index + 1).trim().slice(0, 40),
-    type: String(value.type || "").trim(),
+    type,
     subjectId: String(value.subjectId || "").trim(),
     bookId: String(value.bookId || "").trim(),
     stem: String(classicalWord?.stem ?? value.stem ?? "").trim().slice(0, 12000),
@@ -100,7 +104,8 @@ function normalizeQuestion(value = {}, index = 0) {
     usesSharedMaterial: value.usesSharedMaterial !== false,
     groupNumber: String(value.groupNumber || "").trim().slice(0, 40),
     subNumber: String(value.subNumber || "").trim().slice(0, 40),
-    responseMode: value.responseMode === "annotation" ? "annotation" : "text",
+    // 作答方式统一「文字作答」（2026-10-10 下线「原文标记」）；annotationText 仅承载加点字词目标字。
+    responseMode: "text",
     annotationText: String(classicalWord?.target || value.annotationText || "").trim().slice(0, 12000),
     chapter: String(value.chapter || "").trim().slice(0, 500),
     knowledgePoints: (Array.isArray(value.knowledgePoints) ? value.knowledgePoints : String(value.knowledgePoints || "").split(/[，,；;\n]/))
@@ -111,55 +116,54 @@ function normalizeQuestion(value = {}, index = 0) {
   };
 }
 
-function numberedItems(value) {
-  const text = String(value || "").trim();
-  const markers = [...text.matchAll(/(?:^|\n)\s*[（(](\d+)[）)]\s*/g)];
-  return markers.map((marker, index) => ({
-    number: marker[1],
-    text: text.slice(marker.index + marker[0].length, markers[index + 1]?.index ?? text.length).trim(),
-  })).filter((item) => item.text);
-}
-
 function expandLegacyMaterialQuestion(value, index = 0) {
   const question = normalizeQuestion(value, index);
   if (question.material || question.materialGroupId || question.type !== "material_analysis") return [question];
-  const promptMarker = question.stem.match(/(?:^|\n)\s*(?:请回答|问题)\s*[：:]?\s*/);
-  const questionPart = promptMarker && promptMarker.index != null
-    ? question.stem.slice(promptMarker.index + promptMarker[0].length)
-    : question.stem;
-  const subQuestions = numberedItems(questionPart);
-  if (subQuestions.length < 2) return [question];
-  const firstSubQuestion = question.stem.search(/(?:^|\n)\s*[（(]\d+[）)]\s*/);
-  const materialEnd = promptMarker?.index ?? firstSubQuestion;
-  const material = materialEnd >= 0 ? question.stem.slice(0, materialEnd).trim() : "";
-  if (!material || !subQuestions.length) return [question];
-  const answerItems = numberedItems(question.referenceAnswer);
-  const officialAnswerItems = numberedItems(question.answerVariants.official);
-  const aiAnswerItems = numberedItems(question.answerVariants.ai);
-  const communityAnswerItems = numberedItems(question.answerVariants.community);
+  // 拆分规则唯一定义在 material-question-split.js（试卷导入与文本导入共用，AGENTS §5 / DEC-094）。
+  // 分值口径见产品手册 §4.6.7 / DEC-099：原卷写明的小问分值最优先；原卷连题组总分都没写时，
+  // 用**该科目的默认材料题组满分**兜底（现代汉语 14／其余四科 20），并标「分值待核对」。
+  // ⚠️ 试卷导入的归一化会把"卷面没写分值"补成 **1 分**（`normalizeQuestion` 的既有默认，见本文件 L64）。
+  // 材料题组不可能只有 1 分（多小问、每问至少 1 分），所以这里读到 1 只能解释成"卷面没写"——
+  // 按 0 处理，交给 splitMaterialQuestion 用**科目默认满分**兜底（产品手册 §4.6.7 / DEC-099 修订）；
+  // 卷面真写了总分（> 1）时以卷面为准。
+  const rawTotal = Number(value && value.maxScore);
+  const declaredGroupTotal = Number.isFinite(rawTotal) && rawTotal > 1 ? rawTotal : 0;
+  const split = splitMaterialQuestion({
+    stem: question.stem,
+    material: question.material,
+    materialGroupId: question.materialGroupId,
+    maxScore: declaredGroupTotal,
+    defaultGroupTotal: materialGroupTotalForSubject(question.subjectId),
+    referenceAnswer: question.referenceAnswer,
+    answerVariants: question.answerVariants,
+    groupNumber: question.number,
+    minimumSubScore: 0.5,
+  });
+  if (!split.split) return [question];
   const groupId = `legacy-material-${question.localId}`;
-  const dividedScore = Math.max(0.5, Math.round((question.maxScore / subQuestions.length) * 2) / 2);
-  return subQuestions.map((subQuestion, subIndex) => ({
+  return split.subQuestions.map((subQuestion, subIndex) => ({
     ...question,
-    localId: `${question.localId}-sub-${subQuestion.number || subIndex + 1}`,
-    material,
+    localId: `${question.localId}-sub-${subQuestion.subNumber || subIndex + 1}`,
+    material: split.material,
     materialGroupId: groupId,
     groupNumber: question.number,
-    subNumber: subQuestion.number || String(subIndex + 1),
-    stem: subQuestion.text,
+    subNumber: subQuestion.subNumber || String(subIndex + 1),
+    stem: subQuestion.stem,
     correctAnswer: [],
-    referenceAnswer: answerItems.find((item) => item.number === subQuestion.number)?.text || "",
+    referenceAnswer: subQuestion.referenceAnswer,
     answerVariants: {
-      official: officialAnswerItems.find((item) => item.number === subQuestion.number)?.text || "",
-      ai: aiAnswerItems.find((item) => item.number === subQuestion.number)?.text || "",
-      community: communityAnswerItems.find((item) => item.number === subQuestion.number)?.text || "",
+      official: subQuestion.answerVariants.official,
+      ai: subQuestion.answerVariants.ai,
+      community: subQuestion.answerVariants.community,
     },
     answerSource: "missing",
     answerReviewStatus: "unreviewed",
     answerVerified: false,
     scoringPoints: [],
-    maxScore: dividedScore,
-    warnings: [...new Set([...(question.warnings || []), "已自动拆分共享材料与小问，请核对每问分值、答案和得分点"])],
+    maxScore: subQuestion.maxScore,
+    scoreBasis: subQuestion.scoreBasis,
+    scoreNeedsReview: split.scoreAllocation ? split.scoreAllocation.needsReview === true : false,
+    warnings: [...new Set([...(question.warnings || []), split.warning])],
   }));
 }
 

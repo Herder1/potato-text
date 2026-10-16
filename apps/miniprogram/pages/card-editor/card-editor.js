@@ -1,4 +1,5 @@
 const { closeTransientLayers } = require("../../utils/page-layers");
+const { BEAN_COST_PER_AI_CALL, isBeanAmount } = require("../../utils/bean-pricing");
 const {
   addCardToSet,
   cardId,
@@ -74,10 +75,10 @@ function cardAiFailureTitle(error, statusCode = 0) {
   const reason = String(error || "");
   if (reason.includes("route_unavailable") || reason.includes("provider_unavailable")) return "请先配置知识卡 AI 模型";
   if (reason.includes("source_too_long") || statusCode === 413) return "答案过长，请精简后再试";
-  if (reason.includes("output_format") || statusCode === 422) return "模型结果无法对应原文，未扣额度";
-  if (/timeout/i.test(reason)) return "生成超时，未扣额度";
-  if (/network|request:fail|fetch failed/i.test(reason)) return "网络异常，未扣额度";
-  return "生成失败，未扣额度";
+  if (reason.includes("output_format") || statusCode === 422) return "模型结果无法对应原文，未扣豆币";
+  if (/timeout/i.test(reason)) return "生成超时，未扣豆币";
+  if (/network|request:fail|fetch failed/i.test(reason)) return "网络异常，未扣豆币";
+  return "生成失败，未扣豆币";
 }
 
 Page({
@@ -441,8 +442,8 @@ Page({
       wx.showToast({ title: "请先配置知识卡 AI 模型", icon: "none" });
       return;
     }
-    if (app && app.globalData && Number(app.globalData.aiCredits) < 1) {
-      wx.showToast({ title: "AI 额度不足", icon: "none" });
+    if (app && app.globalData && !isBeanAmount(app.globalData.beans)) {
+      wx.showToast({ title: "豆币不足", icon: "none" });
       return;
     }
 
@@ -490,12 +491,12 @@ Page({
             fail(payload.error || "invalid_card_ai_result", response.statusCode);
             return;
           }
-          if (payload.chargeable === true && app && typeof app.spendAiCredit === "function" && !app.spendAiCredit(1, {
+          if (payload.chargeable === true && app && typeof app.spendBeans === "function" && !app.spendBeans(BEAN_COST_PER_AI_CALL, {
             referenceId: String(payload.result && payload.result.requestId || requestId),
             source: "card_memory_assistance",
             description: "知识卡重点、挖空与口诀生成",
           })) {
-            fail("billing_credit_insufficient");
+            fail("billing_bean_insufficient");
             return;
           }
           if (app && app.globalData) app.globalData.apiBaseUrl = apiBaseUrl;

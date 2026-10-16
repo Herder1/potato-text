@@ -1,0 +1,10 @@
+<view class="page-shell di-page">
+  <view class="di-list panel">
+    <view class="di-row" wx:for="{{rows}}" wx:key="key">
+      <text class="di-label">{{item.label}}</text>
+      <text class="di-value">{{item.value}}</text>
+    </view>
+  </view>
+  <view class="di-note">以上为本机当前信息。「登录设备列表」由服务端记录，尚未接入，接入后在此展示。</view>
+  <view class="di-version">当前版本 {{version}}</view>
+</view>

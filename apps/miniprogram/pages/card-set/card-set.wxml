@@ -150,10 +150,16 @@
     </view>
   </view>
 
-  <view class="float-bar" wx:if="{{!actionMode}}" catchtap="noop">
+  <view class="float-bar" wx:if="{{!actionMode && !sharedView}}" catchtap="noop">
     <view bindtap="openAddMenu"><text>＋</text><label>添加卡片</label></view>
     <view class="practice-main" bindtap="practice"><text>▷</text><label>练一练</label></view>
     <view bindtap="openMoreDrawer"><text>···</text><label>更多</label></view>
+  </view>
+
+  <!-- 分享链接进来的是只读快照（C15）：底部只给一个「导入到我的卡集」，不提供编辑入口 -->
+  <view class="share-bar" wx:if="{{sharedView && set}}" catchtap="noop">
+    <view class="share-bar-note">来自好友分享的卡集 · 只读</view>
+    <view class="share-bar-button" bindtap="importSharedSet" role="button" aria-label="导入到我的卡集">导入到我的卡集</view>
   </view>
 
   <view class="drawer-layer" wx:if="{{colorPanelOpen}}" catchtouchmove="stopTouchMove" catchtap="noop">
@@ -224,7 +230,7 @@
       <view class="drawer-section">
         <view class="drawer-section-title">卡盒管理</view>
         <view class="drawer-grid">
-          <view class="drawer-item" data-key="sort" bindtap="drawerAction" role="button" aria-label="卡盒排序"><image src="/assets/icons/sliders.svg" mode="aspectFit"/><label>卡盒排序</label></view>
+          <view class="drawer-item" data-key="sort" bindtap="drawerAction" role="button" aria-label="卡盒排序"><image src="/assets/icons/sort.svg" mode="aspectFit"/><label>卡盒排序</label></view>
           <view class="drawer-item" data-key="rename" bindtap="drawerAction" role="button" aria-label="重命名卡盒"><image src="/assets/icons/card-rename.svg" mode="aspectFit"/><label>重命名卡盒</label></view>
           <view class="drawer-item" data-key="move" bindtap="drawerAction" role="button" aria-label="移动目录"><image src="/assets/icons/card-move.svg" mode="aspectFit"/><label>移动目录</label></view>
           <view class="drawer-item drawer-item-danger" data-key="delete" bindtap="drawerAction" role="button" aria-label="删除卡盒"><image src="/assets/icons/card-delete.svg" mode="aspectFit"/><label>删除卡盒</label></view>
@@ -296,4 +302,10 @@
       </scroll-view>
     </view>
   </view>
+</view>
+
+<!-- 快照取不到（链接失效/已取消分享/断网）时的空态：`.page` 被 `wx:if="{{set}}"` 挡掉，所以放在外层 -->
+<view class="share-missing" wx:if="{{sharedView && shareMissing}}">
+  <view class="share-missing-title">分享的卡集打不开了</view>
+  <view class="share-missing-note">链接可能已失效，或分享者取消了这个卡集。请让好友重新分享一次。</view>
 </view>

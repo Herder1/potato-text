@@ -1,87 +1,196 @@
-.store-page { min-height: 100vh; padding: 24rpx 28rpx calc(70rpx + env(safe-area-inset-bottom)); background: #f1f3f0; box-sizing: border-box; }
-.store-account-band { display: grid; min-height: 112rpx; padding: 18rpx 0; background: #303633; border-radius: 8rpx; grid-template-columns: repeat(2,1fr); box-sizing: border-box; }
-.store-account-band > view { display: flex; align-items: center; justify-content: center; flex-direction: column; border-right: 1rpx solid rgba(255,255,255,.14); }
-.store-account-band > view:last-child { border-right: 0; }
-.store-account-band text,
-.store-account-band label { display: block; }
-.store-account-band text { color: #fff; font-size: 35rpx; font-weight: 900; }
-.store-account-band label { margin-top: 4rpx; color: rgba(255,255,255,.64); font-size: 18rpx; }
+/* 「我的账户」页（2026-10-05 二次调整，产品负责人设计说明）：
+   原则：订阅页展示「我有什么、可以买什么」，豆币页展示「我有多少、怎么使用」——
+   两个页签各自只带一张本页摘要卡，不再重复完整账户概览。
+   文字只保留三种层级：区块标题 36rpx / 中等字重；核心数字 56rpx / 半粗；辅助说明 26rpx / 灰。
+   品牌绿 #0b9588 只用于：当前选中项、主要按钮、正向收入、到期提醒。 */
+.store-page { min-height: 100vh; padding: 24rpx 32rpx calc(60rpx + env(safe-area-inset-bottom)); background: #f7f7f5; box-sizing: border-box; }
+.panel { background: #ffffff; border: 1rpx solid #eef0ee; border-radius: 20rpx; }
 
-.store-tabs { display: grid; height: 80rpx; margin-top: 22rpx; padding: 6rpx; background: #e4e7e3; border-radius: 7rpx; grid-template-columns: repeat(2,1fr); box-sizing: border-box; }
-.store-tab { display: flex; align-items: center; justify-content: center; color: #737b76; border-radius: 5rpx; font-size: 22rpx; }
-.store-tab-active { color: #202521; background: #fff; font-weight: 850; }
-.store-section-head { display: flex; min-height: 86rpx; padding: 16rpx 2rpx 10rpx; align-items: flex-end; justify-content: space-between; }
-.store-section-head text { color: #242925; font-size: 29rpx; font-weight: 900; }
-.store-section-head label { color: #8b928d; font-size: 19rpx; }
-.account-section-head { min-height: 94rpx; }
-.transaction-section-head { min-height: 82rpx; }
-.product-section-head { margin-top: 12rpx; }
-.store-loading,
-.store-empty { padding: 100rpx 20rpx; color: #878e89; font-size: 21rpx; text-align: center; }
-.account-empty { padding: 42rpx 20rpx; color: #8a918d; background: rgba(255,255,255,.64); border: 1rpx solid #e2e6e2; border-radius: 7rpx; font-size: 21rpx; text-align: center; }
-.account-list { padding: 0 22rpx; background: rgba(255,255,255,.82); border: 1rpx solid #dde2dd; border-radius: 7rpx; }
-.subscription-row,
-.credit-transaction-row { display: flex; min-height: 102rpx; align-items: center; justify-content: space-between; gap: 20rpx; border-bottom: 1rpx solid #e9ece9; }
-.subscription-row:last-child,
-.credit-transaction-row:last-child { border-bottom: 0; }
-.subscription-row > view,
-.credit-transaction-row > view { min-width: 0; flex: 1; }
-.subscription-row > view > text,
-.credit-transaction-row > view > text { display: block; overflow: hidden; color: #2e3833; font-size: 24rpx; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-.subscription-row > view > label,
-.credit-transaction-row > view > label { display: block; margin-top: 6rpx; overflow: hidden; color: #8a918d; font-size: 19rpx; text-overflow: ellipsis; white-space: nowrap; }
-.subscription-row > text { color: #267158; font-size: 19rpx; white-space: nowrap; }
-.credit-transaction-row > text { font-size: 23rpx; font-weight: 850; white-space: nowrap; }
-.credit-positive { color: #247157; }
-.credit-negative { color: #a34c44; }
-.credit-balance-strip { display: grid; min-height: 118rpx; padding: 18rpx 0; background: #eef2ef; border: 1rpx solid #dce3de; border-radius: 7rpx; grid-template-columns: repeat(3,1fr); box-sizing: border-box; }
-.credit-balance-strip > view { display: flex; align-items: center; justify-content: center; flex-direction: column; border-right: 1rpx solid #d9dfda; }
-.credit-balance-strip > view:last-child { border-right: 0; }
-.credit-balance-strip text,
-.credit-balance-strip label { display: block; }
-.credit-balance-strip text { color: #24372e; font-size: 32rpx; font-weight: 900; }
-.credit-balance-strip label { margin-top: 5rpx; color: #7d8781; font-size: 18rpx; }
+/* ── 2. 与学情概览一致的底线页签 ── */
+.store-segment { display: flex; border-bottom: 1rpx solid #dfe4df; }
+.segment-item { position: relative; display: flex; height: 72rpx; flex: 1; align-items: center; justify-content: center; color: #7c837e; font-size: 28rpx; }
+.segment-item-active { color: #202420; font-weight: 700; }
+.segment-item-active::after { position: absolute; right: 52rpx; bottom: -1rpx; left: 52rpx; height: 4rpx; background: #1686a7; border-radius: 2rpx; content: ""; }
 
-.product-card { margin-bottom: 20rpx; padding: 24rpx; background: #fff; border: 1rpx solid #dce2dd; border-top: 5rpx solid #5a826a; border-radius: 8rpx; box-sizing: border-box; }
-.product-card-featured { border-top-color: #23809c; }
-.product-card-credits { border-top-color: #a77722; }
-.product-topline { display: flex; min-height: 34rpx; align-items: center; justify-content: space-between; }
-.product-topline text { color: #3d7f5a; font-size: 18rpx; font-weight: 850; }
-.product-card-featured .product-topline text { color: #227994; }
-.product-card-credits .product-topline text { color: #966a1f; }
-.product-topline label { padding: 5rpx 9rpx; color: #287251; background: #e6f3eb; border-radius: 4rpx; font-size: 16rpx; }
-.product-name { margin-top: 13rpx; color: #202521; font-size: 29rpx; font-weight: 900; line-height: 1.4; }
-.product-scope { margin-top: 7rpx; color: #7e8580; font-size: 20rpx; line-height: 1.5; }
-.product-benefits { margin-top: 19rpx; padding: 15rpx 0; border-top: 1rpx solid #ecefec; border-bottom: 1rpx solid #ecefec; }
-.product-benefits > view,
-.product-detail-benefits > view { display: grid; min-height: 48rpx; align-items: center; grid-template-columns: 38rpx minmax(0,1fr); }
-.product-benefits text,
-.product-detail-benefits text { color: #31805b; font-size: 18rpx; font-weight: 900; }
-.product-card-credits .product-benefits text { color: #a37323; }
-.product-benefits label,
-.product-detail-benefits label { color: #535b56; font-size: 20rpx; line-height: 1.45; }
-.product-purchase { display: flex; min-height: 88rpx; padding-top: 18rpx; align-items: center; justify-content: space-between; }
-.product-purchase > view,
-.product-detail-action > view { display: flex; align-items: baseline; }
-.product-purchase > view text,
-.product-detail-action > view text { color: #202521; font-size: 38rpx; font-weight: 900; }
-.product-purchase > view label,
-.product-detail-action > view label { margin-left: 7rpx; color: #8b918d; font-size: 17rpx; }
-.product-purchase button,
-.product-detail-action button { width: 180rpx; height: 66rpx; margin: 0; padding: 0; color: #fff; background: #303633; border-radius: 6rpx; font-size: 21rpx; font-weight: 800; line-height: 66rpx; }
-.product-purchase button::after,
-.product-detail-action button::after { border: 0; }
-.store-footnote { padding: 22rpx 6rpx; color: #979d99; font-size: 17rpx; line-height: 1.6; text-align: center; }
+/* ── 状态行（未登录 / 加载中 / 加载失败） ── */
+.state-line { margin-top: 20rpx; padding: 20rpx 24rpx; color: #6c7771; background: #eef4f2; border-radius: 14rpx; font-size: 26rpx; }
+.state-line-failed { color: #b6534c; background: #fbeeec; }
 
-.product-detail-mask { position: fixed; z-index: 1600; inset: 0; background: rgba(23,27,24,.38); }
-.product-detail { position: fixed; z-index: 1610; right: 0; bottom: 0; left: 0; padding: 14rpx 30rpx calc(28rpx + env(safe-area-inset-bottom)); background: #fbfbfa; border-radius: 16rpx 16rpx 0 0; box-sizing: border-box; }
-.product-detail-handle { width: 64rpx; height: 7rpx; margin: 0 auto 20rpx; background: #d1d5d1; border-radius: 99rpx; }
-.product-detail-head { display: flex; min-height: 84rpx; align-items: center; justify-content: space-between; }
-.product-detail-head text,
-.product-detail-head > view > view { display: block; }
-.product-detail-head text { color: #438063; font-size: 18rpx; font-weight: 850; }
-.product-detail-head > view > view { margin-top: 7rpx; color: #222723; font-size: 30rpx; font-weight: 900; }
-.product-detail-close { display: flex; width: 58rpx; height: 58rpx; align-items: center; justify-content: center; color: #626a65; font-size: 40rpx; }
-.product-detail-scope { margin-top: 16rpx; color: #727a75; font-size: 21rpx; }
-.product-detail-benefits { margin-top: 20rpx; padding: 16rpx 0; border-top: 1rpx solid #e7eae7; border-bottom: 1rpx solid #e7eae7; }
-.product-detail-action { display: flex; min-height: 100rpx; padding-top: 20rpx; align-items: center; justify-content: space-between; }
+/* ── 摘要卡（订阅页：只放订阅状态；豆币页：只放长期/限时分项） ── */
+/* 摘要卡：**纵向**布局（2026-10-05 修正——原来沿用了两栏时代的 flex 横向，导致头部行/数值/说明被排成一行） */
+.account-summary { display: block; margin-top: 24rpx; padding: 30rpx 32rpx 28rpx; }
+.member-summary { padding-top: 30rpx; padding-bottom: 44rpx; }
+.member-status-row { display: flex; margin-top: 30rpx; align-items: flex-end; justify-content: space-between; gap: 20rpx; }
+.member-status-copy, .bean-total-copy { min-width: 0; min-height: 98rpx; flex: 1; }
+.member-status-copy .summary-value { min-height: 56rpx; margin-top: 0; font-size: 48rpx; font-weight: 700; }
+.member-status-copy .member-inactive { color: #b6534c; font-size: 36rpx; }
+.member-status-copy .summary-hint { margin-top: 8rpx; color: #c8871b; line-height: 34rpx; }
+.library-summary { min-height: 700rpx; margin-top: 24rpx; box-sizing: border-box; }
+.library-summary-empty { display: flex; min-height: 700rpx; flex-direction: column; }
+.library-summary-body { display: flex; min-height: 0; flex: 1; padding: 40rpx 0; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.library-summary-body .summary-value { margin-top: 0; }
+.summary-cell { min-width: 0; flex: 1; }
+/* 摘要标签与分项标签同档（2026-10-05 产品负责人指定：颜色 #8b938d、字号 24rpx） */
+.summary-label { display: block; color: #8b938d; font-size: 24rpx; line-height: 1.3; }
+/* 状态值：2026-10-05 产品负责人要求缩小（48rpx → 36rpx），字重与颜色不变 */
+.summary-value { display: block; margin-top: 10rpx; color: #232824; font-size: 36rpx; font-weight: 500; line-height: 1.2; }
+/* 说明行与标签同号（2026-10-05 产品负责人指定：24rpx，颜色仍是更浅的 #a3aaa6） */
+.summary-hint { display: block; margin-top: 10rpx; color: #a3aaa6; font-size: 24rpx; line-height: 1.4; }
+/* 摘要卡头部：左标签 + 右上角「订单记录 ›」——与标签同字号同颜色（2026-10-05 产品负责人指定） */
+.summary-head { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; }
+.summary-orders { flex: 0 0 auto; color: #8b938d; font-size: 24rpx; }
+
+.bean-summary { margin-top: 24rpx; padding: 30rpx 32rpx 26rpx; }
+.bean-recharge, .library-subscribe { flex: 0 0 auto; padding: 20rpx 48rpx; color: #ffffff; background: #0b9588; border-radius: 999rpx; font-size: 30rpx; font-weight: 500; }
+.bean-total-row { display: flex; margin-top: 30rpx; min-width: 0; align-items: flex-end; justify-content: space-between; gap: 20rpx; }
+.bean-total { display: flex; min-width: 0; align-items: center; gap: 12rpx; }
+.bean-coin { display: block; width: 40rpx; height: 40rpx; flex: 0 0 40rpx; }
+/* 「去充值」与总资产数字同一行，右边缘与上方「订单记录」对齐。 */
+.bean-total text { color: #232824; font-size: 48rpx; font-weight: 700; line-height: 1.15; }
+.bean-expire { margin-top: 8rpx; color: #c8871b; font-size: 24rpx; line-height: 34rpx; }
+/* 三分项：左中右**等分**（各 1/3）；每列里的上下两行**彼此居中**（值居中在标签下面），
+   整块再分别贴左 / 居中 / 贴右——所以左右两边的留白相等（2026-10-05 产品负责人两次校正后的口径）。 */
+.bean-split { display: flex; margin-top: 38rpx; padding-top: 20rpx; border-top: 1rpx solid #f2f4f2; }
+.bean-split-cell { display: flex; min-width: 0; flex: 1 1 33.33%; }
+.bean-split-left { justify-content: flex-start; }
+.bean-split-mid { justify-content: center; }
+.bean-split-right { justify-content: flex-end; }
+/* 收缩到最宽那行（标签）的宽度，两行在其中居中 —— 值就居中在标签正下方 */
+.bean-split-block { text-align: center; }
+.bean-split-label { display: block; color: #8b938d; font-size: 24rpx; }
+.bean-split-value { display: block; margin-top: 6rpx; color: #232824; font-size: 34rpx; font-weight: 600; }
+/* 「暂无」：中文字在同样 rpx 下比数字显得更大更重，所以比数字小一号、常规字重、灰色
+   （2026-10-05 产品负责人两轮校正后的口径）。 */
+.bean-split-empty { color: #a3aaa6; font-size: 30rpx; font-weight: 400; }
+
+/* ── 3. 题库订阅（标题、空态和已购套餐统一收在同一张卡片内） ── */
+.subscription-list { margin: 24rpx -32rpx -28rpx; overflow: visible; }
+.subscription-row { display: flex; padding: 26rpx 28rpx; align-items: flex-start; gap: 12rpx; border-bottom: 1rpx solid #f2f4f2; }
+.subscription-row:last-child { border-bottom: 0; }
+.subscription-copy { min-width: 0; flex: 1; line-height: 1.45; }
+.subscription-name { color: #232824; font-size: 30rpx; font-weight: 500; }
+.subscription-meta { margin-left: 12rpx; color: #8b938d; font-size: 26rpx; white-space: nowrap; }
+.subscription-renew { flex: 0 0 auto; padding: 8rpx 22rpx; color: #0b9588; border: 1rpx solid #bfe3da; border-radius: 999rpx; font-size: 25rpx; }
+
+/* ── 段落标题（2026-10-05 产品负责人指定：可选套餐等段落标题用小号灰色次要字体） ── */
+.section-head { display: flex; margin: 40rpx 0 20rpx; align-items: center; justify-content: space-between; }
+.section-head > text:first-child { color: #6c7771; font-size: 24rpx; font-weight: 400; }
+.section-hint { color: #a3aaa6; font-size: 26rpx; }
+
+.store-loading, .store-empty { padding: 40rpx 0; color: #8b938d; font-size: 26rpx; text-align: center; }
+
+/* ── 4. 套餐卡（继续压缩：一行范围、赠送改辅助色、按钮不再像营销落地页） ── */
+.plan-card { margin-bottom: 24rpx; padding: 26rpx 28rpx 22rpx; }
+.plan-head { display: flex; align-items: center; gap: 14rpx; }
+.plan-name { min-width: 0; flex: 1; color: #232824; font-size: 32rpx; font-weight: 500; line-height: 1.35; }
+.plan-tag { flex: 0 0 auto; padding: 4rpx 14rpx; color: #0b7a6f; background: #e3f4ef; border-radius: 8rpx; font-size: 22rpx; }
+.plan-line { margin-top: 10rpx; color: #6c7771; font-size: 26rpx; line-height: 1.5; }
+.plan-bonus { margin-top: 6rpx; color: #8b938d; }
+.plan-foot { display: flex; margin-top: 18rpx; align-items: center; justify-content: space-between; gap: 20rpx; }
+.plan-price { display: flex; align-items: baseline; gap: 6rpx; }
+.plan-price text { color: #1f2421; font-size: 48rpx; font-weight: 700; line-height: 1; }
+.plan-price label { color: #a3aaa6; font-size: 26rpx; }
+.plan-button {
+  /* 小程序 <button> 默认会被撑满，这里固定为贴合文字（width:auto）并靠行内 space-between 贴右 */
+  width: auto;
+  min-height: 64rpx;
+  margin: 0;
+  padding: 0 26rpx;
+  flex: 0 0 auto;
+  color: #ffffff;
+  background: #0b9588;
+  border: 0;
+  border-radius: 999rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  line-height: 64rpx;
+}
+
+/* ── 6. 豆币页：充值规格做成横向规格选项；只有一个规格时给一行操作 ── */
+/* 充值规格：一行 4 个，多的自动换行（产品负责人 2026-10-05：5 个挤一行会把「10 豆币」挤成两行） */
+.recharge-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18rpx; }
+.recharge-option {
+  display: flex;
+  min-width: 0;
+  padding: 22rpx 8rpx;
+  flex-direction: column;
+  align-items: center;
+  background: #ffffff;
+  border: 2rpx solid #eef0ee;
+  border-radius: 16rpx;
+  gap: 8rpx;
+}
+.recharge-option-active { border-color: #0b9588; background: #e3f4ef; }
+/* 规格卡：数字突出；单位「豆币」用**黑色**（2026-10-05 产品负责人指定，与数字同色），价格仍走次要灰 */
+.recharge-amount { display: flex; align-items: baseline; gap: 6rpx; white-space: nowrap; }
+.recharge-number { color: #232824; font-size: 30rpx; font-weight: 600; }
+.recharge-unit { color: #232824; font-size: 24rpx; }
+.recharge-price { color: #8b938d; font-size: 26rpx; white-space: nowrap; }
+.recharge-option-active .recharge-price { color: #8b938d; }
+
+/* 充值弹窗里的支付方式行（系统目前只有微信支付这一条通道，且未启用） */
+.pay-row { display: flex; margin-top: 26rpx; padding: 24rpx 26rpx; align-items: center; justify-content: space-between; background: #f6f8f7; border-radius: 16rpx; }
+.pay-name { color: #232824; font-size: 28rpx; font-weight: 500; }
+.pay-state { color: #a3aaa6; font-size: 24rpx; }
+
+.filter-row { display: flex; padding: 4rpx; background: #f1f3f2; border-radius: 999rpx; gap: 4rpx; }
+.filter-chip { padding: 8rpx 22rpx; color: #6c7771; font-size: 24rpx; border-radius: 999rpx; }
+.filter-chip-active { color: #1f2421; background: #ffffff; font-weight: 600; }
+
+.transaction-list { overflow: hidden; }
+.transaction-row { display: flex; padding: 24rpx 28rpx; align-items: center; border-bottom: 1rpx solid #f2f4f2; gap: 16rpx; }
+.transaction-row:last-child { border-bottom: 0; }
+.transaction-copy { min-width: 0; flex: 1; }
+.transaction-name { display: block; color: #232824; font-size: 28rpx; }
+.transaction-time { display: block; margin-top: 6rpx; color: #a3aaa6; font-size: 24rpx; }
+.amount-in { flex: 0 0 auto; color: #0b7a6f; font-size: 30rpx; font-weight: 700; }
+.amount-out { flex: 0 0 auto; color: #b6534c; font-size: 30rpx; font-weight: 700; }
+
+.store-footnote { margin-top: 34rpx; color: #a3aaa6; font-size: 24rpx; line-height: 1.6; text-align: center; }
+
+/* ── 5. 详情 / 订单：底部弹层（内容滚动、底栏固定） ── */
+.sheet-mask { position: fixed; z-index: 40; top: 0; right: 0; bottom: 0; left: 0; background: rgba(21, 30, 25, .32); }
+.sheet {
+  position: fixed;
+  z-index: 41;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  max-height: 82vh;
+  padding: 16rpx 32rpx calc(24rpx + env(safe-area-inset-bottom));
+  flex-direction: column;
+  background: #ffffff;
+  border-radius: 28rpx 28rpx 0 0;
+  box-sizing: border-box;
+}
+.sheet-handle { width: 72rpx; height: 8rpx; margin: 0 auto 20rpx; background: #e3e6e4; border-radius: 4rpx; }
+.sheet-scroll { min-height: 0; flex: 1; }
+.sheet-head { padding-bottom: 20rpx; }
+.sheet-name { display: block; color: #1f2421; font-size: 40rpx; font-weight: 700; line-height: 1.35; }
+.sheet-scope { display: block; margin-top: 8rpx; color: #6c7771; font-size: 26rpx; }
+.sheet-block { margin-top: 22rpx; }
+.sheet-label { display: block; color: #8b938d; font-size: 26rpx; }
+.sheet-text { display: block; margin-top: 8rpx; color: #232824; font-size: 28rpx; line-height: 1.65; }
+.sheet-notice { margin-top: 28rpx; color: #6c7771; font-size: 26rpx; }
+/* 底栏两种形态：充值弹窗按钮居中满宽；套餐详情续订入口靠右。 */
+.sheet-bar { display: flex; margin-top: 24rpx; padding-top: 20rpx; align-items: center; justify-content: center; border-top: 1rpx solid #f2f4f2; }
+.sheet-bar-split { justify-content: flex-end; }
+.sheet-button-wide { width: 100%; }
+.sheet-agreement { margin-top: 18rpx; color: #a3aaa6; font-size: 22rpx; text-align: center; }
+.sheet-agreement-link { color: #6c7771; }
+.sheet-button {
+  /* 同样要显式 width:auto，否则小程序会把按钮撑满、贴不到右边 */
+  width: auto;
+  margin: 0;
+  padding: 0 40rpx;
+  min-height: 76rpx;
+  flex: 0 0 auto;
+  color: #ffffff;
+  background: #0b9588;
+  border: 0;
+  border-radius: 999rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 76rpx;
+}

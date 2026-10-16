@@ -1,0 +1,71 @@
+<view class="page">
+  <view class="topbar">
+    <view class="brand">
+      <view class="brand-mark">题</view>
+      <view>
+        <text class="eyebrow">SHARED QUESTION TREE</text>
+        <text class="brand-title">题林</text>
+      </view>
+    </view>
+    <view class="top-actions">
+      <view class="reset-button" bindtap="resetView" aria-label="恢复视角">↺</view>
+      <button class="share-button" open-type="share">分享题林</button>
+    </view>
+  </view>
+
+  <view class="intro">
+    <text class="kicker">A SMALL FOREST OF QUESTIONS</text>
+    <text class="headline">把零散题目，</text>
+    <text class="headline headline-accent">长成一棵树。</text>
+    <text class="description">拖动旋转，双指缩放。放大树冠后，会看到隐藏在叶片里的更多题包。</text>
+  </view>
+
+  <view class="canvas-wrap">
+    <canvas
+      id="questionTreeCanvas"
+      type="2d"
+      class="question-tree-canvas"
+      bindtouchstart="handleTouchStart"
+      bindtouchmove="handleTouchMove"
+      bindtouchend="handleTouchEnd"
+      bindtouchcancel="handleTouchCancel"
+    ></canvas>
+    <view class="canvas-status">{{statusText}}</view>
+  </view>
+
+  <view class="legend">
+    <view class="legend-item"><view class="legend-dot pack-dot"></view><text>题包</text></view>
+    <view class="legend-item"><view class="legend-dot leaf-dot"></view><text>知识叶片</text></view>
+  </view>
+
+  <view class="bottom-nav">
+    <view class="nav-item nav-active"><text class="nav-icon">✦</text><text>题林</text></view>
+    <view class="nav-item" bindtap="showAllPacks"><text class="nav-icon">◌</text><text>题包</text></view>
+    <view class="nav-item" bindtap="showAbout"><text class="nav-icon">i</text><text>说明</text></view>
+  </view>
+
+  <view wx:if="{{selectedPack}}" class="sheet-mask" catchtap="closePack"></view>
+  <view wx:if="{{selectedPack}}" class="detail-sheet">
+    <view class="sheet-handle"></view>
+    <view class="sheet-header">
+      <view>
+        <text class="panel-label">{{selectedPack.category}} · 题包</text>
+        <text class="panel-title">{{selectedPack.title}}</text>
+      </view>
+      <view class="sheet-close" catchtap="closePack">×</view>
+    </view>
+    <text class="panel-summary">{{selectedPack.summary}}</text>
+    <view class="panel-meta">
+      <text class="meta-chip">{{selectedPack.count}} 道题</text>
+      <text class="meta-chip">{{selectedPack.difficulty}}</text>
+      <text class="meta-chip">已公开</text>
+    </view>
+    <scroll-view class="question-list" scroll-y="true">
+      <view wx:for="{{selectedPack.questions}}" wx:key="number" class="question-item">
+        <text class="question-title">{{item.number}}　{{item.question}}</text>
+        <text class="question-tag">{{item.tag}}</text>
+      </view>
+    </scroll-view>
+    <button class="open-pack-button" bindtap="openPack">打开题包 ↗</button>
+  </view>
+</view>

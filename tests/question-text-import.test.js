@@ -230,6 +230,42 @@ test("plain text import splits unnumbered type headings even when separator line
   });
 });
 
+test("文本里的「教材：」只作原始来源描述，不推断教材归属、也不混进参考答案", () => {
+  // 真实录入稿的形态：答案 → 参考答案 → 分值 → 教材 → 分隔线。
+  // 历史缺陷：教材行没被识别，于是被追加进参考答案（372/372 全中）。
+  const text = [
+    "[单选题] 下列说法错误的是",
+    "A. 现代汉语有口语",
+    "B. 现代汉语是现代汉民族的语言",
+    "答案：A",
+    "参考答案：A 项正确。",
+    "分值：2",
+    "教材：《现代汉语（增订七版）》上下册",
+    "",
+    "---",
+    "",
+    "[单选题] 显式写了来源时以来源为准",
+    "A. 甲",
+    "B. 乙",
+    "答案：B",
+    "参考答案：B 项正确。",
+    "分值：2",
+    "教材：《不该覆盖的来源》",
+    "来源：某校 2023 年真题",
+  ].join("\n");
+  const candidates = parseQuestionImportText(text, defaults);
+  assert.equal(candidates.length, 2);
+  // 参考答案里不再出现教材行
+  assert.equal(candidates[0].referenceAnswer, "A 项正确。");
+  // 文本里的教材是「原始来源描述」→ sourceLabel；不据此推断 bookId（"上下册"跨两册，推不出唯一一本）
+  assert.equal(candidates[0].sourceLabel, "《现代汉语（增订七版）》上下册");
+  assert.equal(candidates[0].bookId, defaults.bookId);
+  // 显式「来源」优先，无论与「教材」的先后顺序
+  assert.equal(candidates[1].sourceLabel, "某校 2023 年真题");
+  // 分值这类单值标签会结束上一个多行字段：后面没被识别的行不再被吞进参考答案
+  assert.equal(/\n/.test(candidates[0].referenceAnswer), false);
+});
+
 test("preview isolates invalid rows and JSON import accepts a questions array", () => {
   const json = JSON.stringify({ questions: [{
     ...defaults,
@@ -257,4 +293,189 @@ test("preview isolates invalid rows and JSON import accepts a questions array", 
   const result = store.importMany(candidates);
   assert.equal(result.created.length, 1);
   assert.equal(result.errors.length, 1);
+});
+
+test("plain text import splits a material question into one question per sub-question", () => {
+  // DEC-094：文本导入复用试卷导入那套材料题拆分——材料进 material，小问各自成题并共享 materialGroupId。
+  const text = `[材料分析题] 阅读下面的语段，按要求答题。
+某市消协受理教育培训投诉近 7 万件，高居服务类第三位。
+（1）材料中画横线的文字使用了什么修辞手法？
+（2）从构词法看，画波浪线的词语“支付”是什么类型的合成词？
+（3）指出材料中“培训费用”的结构类型。
+参考答案：（1）排比。
+（2）联合型合成词。
+（3）“培训费用”是偏正短语。
+分值：6`;
+  const candidates = parseQuestionImportText(text, defaults);
+  assert.equal(candidates.length, 3);
+  assert.deepEqual(candidates.map((item) => item.subNumber), ["1", "2", "3"]);
+  assert.ok(candidates[0].material.includes("某市消协受理教育培训投诉"));
+  assert.ok(candidates.every((item) => item.materialGroupId === candidates[0].materialGroupId));
+  assert.ok(candidates.every((item) => !item.stem.includes("参考答案")));
+  assert.equal(candidates[0].referenceAnswer, "排比。");
+  assert.equal(candidates[1].referenceAnswer, "联合型合成词。");
+  assert.equal(candidates[2].referenceAnswer, "“培训费用”是偏正短语。");
+  // 分值口径见产品手册 §4.6.7 / DEC-099（2026-09-25 产品负责人确认）：
+  // 原卷没写明小问分值、此时也还没有得分点 → 按均分**占位**并标「分值待核对」（6 ÷ 3 = 2/2/2，
+  // 数字与旧口径一致，但性质是占位而不是已定分值）；正式分配在完善环节按得分点数做。
+  assert.deepEqual(candidates.map((item) => item.maxScore), [2, 2, 2]);
+  assert.deepEqual(candidates.map((item) => item.scoreBasis), ["placeholder", "placeholder", "placeholder"]);
+  assert.ok(candidates[0].warnings.some((warning) => warning.includes("分值待核对")));
+  assert.ok(candidates[0].warnings.some((warning) => warning.includes("已自动拆分")));
+  const store = createMemoryQuestionStore([]);
+  const preview = store.previewImport(candidates);
+  assert.equal(preview.filter((item) => item.valid).length, 3);
+});
+
+test("原卷写明的小问分值优先：拆出来的每个小问照抄卷面分值，不再被均分覆盖（DEC-099）", () => {
+  const text = `[材料分析题] 阅读下面的语段，按要求答题。
+某市消协受理教育培训投诉近 7 万件，高居服务类第三位。
+（1）材料中画横线的文字使用了什么修辞手法？（3分）
+（2）从构词法看，画波浪线的词语“支付”是什么类型的合成词？（2分）
+（3）指出材料中“培训费用”的结构类型。2分
+参考答案：（1）排比。
+（2）联合型合成词。
+（3）“培训费用”是偏正短语。
+分值：7`;
+  const candidates = parseQuestionImportText(text, defaults);
+  assert.equal(candidates.length, 3);
+  assert.deepEqual(candidates.map((item) => item.maxScore), [3, 2, 2], "原卷写明的小问分值必须原样保留");
+  assert.deepEqual(candidates.map((item) => item.scoreBasis), ["declared", "declared", "declared"]);
+  assert.equal(candidates.reduce((sum, item) => sum + item.maxScore, 0), 7, "各问之和等于题组总分");
+  assert.ok(candidates[0].warnings.some((warning) => warning.includes("原卷写明的小问分值")));
+  assert.ok(!candidates[0].warnings.some((warning) => warning.includes("分值待核对")));
+});
+
+test("material question split survives OCR-confused numbering without losing content", () => {
+  // 录入稿实测：第 1 问常被识别成「（l)」「（D」「（I）」，答案编号甚至变成「01）」。
+  // 要求：不丢小问、不丢答案，且给出"编号疑似有偏差"的提示。
+  const text = `[材料分析题] 阅读下面的语段，按要求答题。
+2022 年，一些学生家长在校外培训机构捆绑销售的诱导下超限额支付培训费用。
+（l)材料中画横线的文字使用了什么修辞手法"
+（2）从构词法看，画波浪线的词语“支付”是什么类型的合成词？
+（3）指出材料中“培训费用”的结构类型。
+（D）指出加点词语“维护”的词性，并简要说明判断的依据。
+参考答案：（D排比。
+（2）联合型合成词。
+（3）“培训费用”是偏正短语。
+01）动词，表示动作行为。
+分值：8`;
+  const candidates = parseQuestionImportText(text, defaults);
+  assert.equal(candidates.length, 4);
+  assert.deepEqual(candidates.map((item) => item.subNumber), ["1", "2", "3", "4"]);
+  assert.equal(candidates[0].referenceAnswer, "排比。");
+  assert.equal(candidates[3].referenceAnswer, "动词，表示动作行为。");
+  assert.ok(candidates.every((item) => item.maxScore === 2));
+  assert.ok(candidates[0].warnings.some((warning) => warning.includes("编号疑似有识别偏差")));
+});
+
+test("题组总分缺失时按科目默认满分兜底（DEC-099 修订）：现代汉语 14 分 → 各问占位且标「分值待核对」", () => {
+  const text = `[材料分析题] 阅读下面的语段，按要求答题。
+材料正文一段。
+（1）第一问？
+（2）第二问？
+参考答案：（1）甲。
+（2）乙。`;
+  const candidates = parseQuestionImportText(text, defaults);
+  assert.equal(candidates.length, 2);
+  // 产品负责人 2026-09-25：现代汉语每个材料题组 14 分、其余四科 20 分；原卷没写时才兜底。
+  assert.deepEqual(candidates.map((item) => item.maxScore), [7, 7]);
+  assert.deepEqual(candidates.map((item) => item.scoreBasis), ["placeholder", "placeholder"]);
+  assert.ok(candidates[0].warnings.some((warning) => warning.includes("科目默认材料题组满分 14 分")));
+  assert.ok(candidates[0].warnings.some((warning) => warning.includes("分值待核对")));
+  // 兜底后分值 > 0，所以不再被"缺分值"拦下（这是本轮修掉的用户可见问题）
+  const preview = createMemoryQuestionStore([]).previewImport(candidates);
+  assert.ok(preview.every((item) => item.valid), preview.map((item) => item.error).join(","));
+});
+
+test("其他四科的默认题组满分是 20（古汉／古代文学／现代文学／当代文学），原卷写了就以原卷为准", () => {
+  const text = `[材料分析题] 阅读下面的语段，按要求答题。
+材料正文一段。
+（1）第一问？
+（2）第二问？
+（3）第三问？
+（4）第四问？
+参考答案：（1）甲。
+（2）乙。
+（3）丙。
+（4）丁。`;
+  for (const subjectId of ["classical-chinese", "ancient-literature", "modern-literature", "contemporary-literature"]) {
+    const candidates = parseQuestionImportText(text, { ...defaults, subjectId });
+    assert.deepEqual(candidates.map((item) => item.maxScore), [5, 5, 5, 5], subjectId);
+    assert.ok(candidates.reduce((sum, item) => sum + item.maxScore, 0) === 20, `${subjectId} 合计应为 20`);
+  }
+  // 卷面写了题组总分（15 分）→ 15 优先，默认值不参与
+  const declared = parseQuestionImportText(`${text}
+分值：15`, { ...defaults, subjectId: "classical-chinese" });
+  assert.equal(declared.reduce((sum, item) => sum + item.maxScore, 0), 15);
+  assert.ok(declared[0].warnings.some((warning) => warning.includes("原卷未写明每问分值")));
+});
+
+test("plain text import keeps a material question intact when there is only one sub-question", () => {
+  const text = `[材料分析题] 阅读下面的语段，按要求答题。
+只有一段材料，没有问题编号。
+（1）唯一的提问？
+参考答案：（1）唯一的答案。`;
+  const [candidate] = parseQuestionImportText(text, defaults);
+  assert.equal(candidate.materialGroupId, undefined);
+  assert.ok(candidate.stem.includes("唯一的提问"));
+});
+
+test("材料题里的选项形材料行与小问行都不能丢（回归 2026-09-25：小问行被整行丢弃导致拆不开）", () => {
+  const text = `[材料分析题] 阅读下面的材料, 回答问题。
+A. 大道之行也,与三代之英,丘未之逮也。(《礼记·大同》)
+B. 姜氏何厌之有?(《左传·郑伯克段于鄢》)
+(1)以上面的三个句子为例,分析古代汉语宾语前置的多种表现形式。
+(2)分析上面句子中加点字"之"的用法和意义。
+参考答案：(1)否定句中代词宾语前置。\n(2)“之”是代词。
+分值：
+教材：《古代汉语（校订重排本）》第1—2册`;
+  const candidates = parseQuestionImportText(text, { ...defaults, subjectId: "classical-chinese", bookId: "classical-chinese-1" });
+  // 修前：小问行被丢 → 拆不开（1 条、无分值、被「缺分值」拦）；修后：拆成 2 个小问，按科目默认 20 分占位
+  assert.equal(candidates.length, 2);
+  assert.deepEqual(candidates.map((item) => item.subNumber), ["1", "2"]);
+  assert.ok(candidates[0].materialGroupId);
+  assert.deepEqual(candidates.map((item) => item.maxScore), [10, 10]);
+  assert.equal(candidates.reduce((sum, item) => sum + item.maxScore, 0), 20);
+  // 材料原句（A./B.）不能被当成选项吃掉，必须留在材料里
+  assert.deepEqual(candidates[0].options, []);
+  assert.ok(String(candidates[0].material || "").includes("大道之行也"), "材料例句应留在材料里");
+  assert.ok(candidates[1].stem.includes("分析上面句子中加点字"));
+  const preview = createMemoryQuestionStore([]).previewImport(candidates);
+  assert.ok(preview.every((item) => item.valid), preview.map((item) => item.error).join(","));
+});
+
+test("客观题没写分值 → 按题型默认值兜底（单选 2 分、多选 3 分），卷面写了仍以卷面为准", () => {
+  const text = `[单选题] 普通话以什么语音为标准音？
+A. 北京语音
+B. 北方语音
+答案：A
+章节：绪论
+
+[多选题] 下列属于合成词的有哪些？
+A. 朋友
+B. 葡萄
+答案：A
+
+[单选题] 卷面写了分值的单选题？
+A. 甲
+B. 乙
+答案：A
+分值：5
+
+[判断题] 普通话就是北京话。
+答案：错`;
+  const candidates = parseQuestionImportText(text, defaults);
+  assert.deepEqual(candidates.map((item) => item.type), ["single_choice", "multiple_choice", "single_choice", "true_false"]);
+  // 单选 2 分、多选 3 分（只补这两类）；卷面写的 5 分不动；判断题不补（保持原样的"没写分值"）
+  assert.deepEqual(candidates.map((item) => item.maxScore), [2, 3, 5, undefined]);
+  assert.deepEqual(candidates.map((item) => item.scoreBasis), ["type-default", "type-default", undefined, undefined]);
+  assert.deepEqual(candidates.map((item) => item.scoreNeedsReview), [true, true, undefined, undefined]);
+  assert.ok(candidates[0].warnings.some((warning) => warning.includes("题型默认值填入 2 分")));
+  assert.ok(candidates[1].warnings.some((warning) => warning.includes("题型默认值填入 3 分")));
+  assert.ok(!(candidates[2].warnings || []).some((warning) => warning.includes("题型默认值")));
+  // 兜底后单选/多选不再被「缺分值」拦下；判断题仍被拦（不扩大口径）
+  const preview = createMemoryQuestionStore([]).previewImport(candidates);
+  assert.deepEqual(preview.map((item) => item.valid), [true, true, true, false]);
+  assert.equal(preview[3].error, "question_score_invalid");
 });

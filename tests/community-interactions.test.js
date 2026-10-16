@@ -62,7 +62,7 @@ test("收藏与复制都必须登录：匿名一律 401", async (context) => {
   assert.equal((await call(runtime.baseUrl, "/api/community/assets/favorites")).status, 401);
 });
 
-test("收藏是引用关系：重复收藏不刷数，取消收藏回落且不减成负数", async (context) => {
+test("收藏是引用关系：重复收藏不刷数，取消收藏回落；历史峰值只增不减（社区身份只增不减的依据）", async (context) => {
   const runtime = await startServer(context);
   const user = await login(runtime.baseUrl, "fav-device");
   const asset = await firstPublishedAsset(runtime.baseUrl);
@@ -72,18 +72,33 @@ test("收藏是引用关系：重复收藏不刷数，取消收藏回落且不�
   assert.equal(first.status, 200);
   assert.equal(first.payload.changed, true);
   assert.equal(first.payload.asset.favoriteCount, base + 1);
+  // 2026-10-02：峰值随关系变化抬高，供社区身份算分（取消收藏不回退）
+  assert.equal(first.payload.asset.peakFavoriteCount, base + 1);
 
   const again = await call(runtime.baseUrl, `/api/community/assets/${asset.id}/favorite`, { method: "POST", token: user.token });
   assert.equal(again.payload.changed, false, "同一个人重复收藏不能重复计数");
   assert.equal(again.payload.asset.favoriteCount, base + 1);
+  assert.equal(again.payload.asset.peakFavoriteCount, base + 1, "重复收藏不能把峰值推高");
 
   const removed = await call(runtime.baseUrl, `/api/community/assets/${asset.id}/unfavorite`, { method: "POST", token: user.token });
   assert.equal(removed.payload.changed, true);
   assert.equal(removed.payload.asset.favoriteCount, base);
+  assert.equal(removed.payload.asset.peakFavoriteCount, base + 1, "取消收藏不回退历史峰值");
+
+  const refavorited = await call(runtime.baseUrl, `/api/community/assets/${asset.id}/favorite`, { method: "POST", token: user.token });
+  assert.equal(refavorited.payload.changed, true);
+  assert.equal(refavorited.payload.asset.favoriteCount, base + 1);
+  assert.equal(refavorited.payload.asset.peakFavoriteCount, base + 1, "同一个人再次收藏不再加分（峰值不涨）");
+
+  const removedTwice = await call(runtime.baseUrl, `/api/community/assets/${asset.id}/unfavorite`, { method: "POST", token: user.token });
+  assert.equal(removedTwice.payload.changed, true, "再次收藏后取消，关系确实又变了一次");
+  assert.equal(removedTwice.payload.asset.favoriteCount, base);
+  assert.equal(removedTwice.payload.asset.peakFavoriteCount, base + 1, "来回取消收藏也不能把峰值推高");
 
   const removedAgain = await call(runtime.baseUrl, `/api/community/assets/${asset.id}/unfavorite`, { method: "POST", token: user.token });
   assert.equal(removedAgain.payload.changed, false);
   assert.equal(removedAgain.payload.asset.favoriteCount, base, "重复取消不能把计数减成负数或漂移");
+  assert.equal(removedAgain.payload.asset.peakFavoriteCount, base + 1);
 });
 
 test("复制计数按“人 × 内容”去重，不同人分别计一次", async (context) => {

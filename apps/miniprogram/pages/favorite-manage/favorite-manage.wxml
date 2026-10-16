@@ -1,0 +1,59 @@
+<!-- 「分类管理」页（DEC-096 ⑤）。顶层管文件夹，进入某文件夹后管它的子文件夹。 -->
+<view class="manage-page">
+  <view class="manage-banner">
+    <view class="manage-banner-icon"><image src="/assets/icons/folder-brand.svg" mode="aspectFit"/></view>
+    <view class="manage-banner-text">
+      <text class="manage-banner-title">整理你的收藏目录</text>
+      <text class="manage-banner-sub">长按右边的把手拖动调整顺序，进入文件夹可继续管理子文件夹。</text>
+    </view>
+  </view>
+
+  <view wx:if="{{parentName}}" class="manage-crumb" bindtap="backToTop">
+    <text class="manage-crumb-arrow">‹</text>
+    <text class="manage-crumb-text">返回文件夹列表</text>
+  </view>
+
+  <view class="manage-section">
+    <text class="manage-section-title">{{parentName ? parentName + ' 的子文件夹' : '文件夹'}}</text>
+    <text class="manage-section-count">{{error ? '—' : folders.length + ' 个'}}</text>
+  </view>
+
+  <view wx:if="{{error}}" class="manage-error">
+    <text>{{error}}</text>
+    <text class="manage-error-action" bindtap="loadFolders">重试</text>
+  </view>
+
+  <view class="folder-list">
+    <view
+      wx:for="{{folders}}"
+      wx:key="id"
+      class="folder-row {{draggedId === item.id ? 'folder-row-dragging' : ''}}"
+      data-id="{{item.id}}"
+      bindtap="enterFolder"
+    >
+      <view class="folder-row-icon"><image src="/assets/icons/folder.svg" mode="aspectFit"/></view>
+      <view class="folder-row-text">
+        <text class="folder-row-name">{{item.name}}</text>
+        <text class="folder-row-sub">{{item.count}} 条收藏{{item.children ? ' · ' + item.children + ' 个子文件夹' : ''}}</text>
+      </view>
+      <view class="folder-row-more" data-id="{{item.id}}" catchtap="folderMenu">···</view>
+      <view
+        class="folder-row-handle"
+        data-index="{{index}}"
+        catchtouchstart="startDrag"
+        catchtouchmove="dragMove"
+        catchtouchend="endDrag"
+        catchtouchcancel="endDrag"
+      >⠿</view>
+    </view>
+  </view>
+
+  <view wx:if="{{!folders.length && !error}}" class="manage-empty">
+    <text>{{parentName ? '这个文件夹还没有子文件夹' : '还没有文件夹，先建一个吧'}}</text>
+  </view>
+
+  <view class="manage-create" bindtap="createFolder" role="button">
+    <text class="manage-create-plus">＋</text>
+    <text>{{parentName ? '新建子文件夹' : '新建文件夹'}}</text>
+  </view>
+</view>

@@ -1,3 +1,8 @@
+<!-- 错题本（产品负责人 2026-09-23 04:9x：「错题本页面需要修改一下，图1是效果图，筛选用图2」）
+     效果图＝ tmp/verify-out/ref-04-9x-design.png：状态卡四张一行、选中态浅绿底深青字、分段开关（按科目 / 按知识点）、
+     每个科目一张独立白卡（淡色圆标 + 同色箭头 + 科目名 + 「N 个章节」 + 「N 道」 + ›）。
+     04:9x 补充「图1绿框移动到左边取代标题」＝分段开关挪到标题位置，原「按科目整理」标题删掉（见下方 head 注释）。
+     筛选那颗图标＝他截的图2＝我们自己在收藏页用的 assets/icons/filter.svg（漏斗，stroke #474d49）。 -->
 <view class="page-shell wrong-book-page">
   <view class="wrong-book-intro">
     <view><view class="wrong-book-title">循序纠正，直到掌握</view><text>共 {{historyCount}} 道错题 · 本项目 {{subjectCount}} 个科目</text></view>
@@ -11,13 +16,15 @@
   </view>
 
   <view class="wrong-directory-head">
-    <view>{{selectedChapter ? '章节错题' : '错题目录'}}</view>
+    <!-- 产品负责人 2026-09-23 04:9x 补充：「图1绿框（分段开关）移动到左边取代标题」——
+         开关从右侧 actions 里挪到标题的位置，「按科目整理」这个标题随之删掉（选中章节时开关不显示，标题留作语境提示）。 -->
+    <view class="wrong-group-modes" wx:if="{{!selectedChapter}}">
+      <view class="{{groupMode === 'directory' ? 'wrong-group-mode-active' : ''}}" data-mode="directory" bindtap="selectGroupMode">按科目</view>
+      <view class="{{groupMode === 'knowledge' ? 'wrong-group-mode-active' : ''}}" data-mode="knowledge" bindtap="selectGroupMode">按知识点</view>
+    </view>
+    <view class="wrong-directory-title" wx:else>章节错题</view>
     <view class="wrong-directory-actions">
-      <view class="wrong-group-modes" wx:if="{{!selectedChapter}}">
-        <view class="{{groupMode === 'directory' ? 'wrong-group-mode-active' : ''}}" data-mode="directory" bindtap="selectGroupMode">按目录</view>
-        <view class="{{groupMode === 'knowledge' ? 'wrong-group-mode-active' : ''}}" data-mode="knowledge" bindtap="selectGroupMode">按知识点</view>
-      </view>
-      <view class="wrong-filter-button {{filterCount ? 'wrong-filter-button-active' : ''}}" bindtap="openFilterPanel"><view class="wrong-filter-icon"></view><text>筛选{{filterCount ? ' ' + filterCount : ''}}</text></view>
+      <view class="wrong-filter-button {{filterCount ? 'wrong-filter-button-active' : ''}}" bindtap="openFilterPanel" role="button" aria-label="筛选"><image class="wrong-filter-icon" src="/assets/icons/filter.svg" mode="aspectFit" /><text>筛选{{filterCount ? ' ' + filterCount : ''}}</text></view>
     </view>
   </view>
 
@@ -40,7 +47,8 @@
   <view class="wrong-group-list" wx:elif="{{groups.length}}">
     <view class="wrong-group" wx:for="{{groups}}" wx:key="id">
       <view class="wrong-group-row" data-group-id="{{item.id}}" bindtap="toggleGroup">
-        <view class="wrong-group-arrow" style="background: {{item.color}};"><view class="{{item.expanded ? 'wrong-group-arrow-open' : ''}}"></view></view>
+        <!-- 行内只给「箭头色」：圆标的淡底由 wxss 用 currentColor + opacity 铺出来（colorDeep 是加深档，见 review-library.js 注释） -->
+        <view class="wrong-group-arrow" style="color: {{item.colorDeep}};"><view class="{{item.expanded ? 'wrong-group-arrow-open' : ''}}"></view></view>
         <view class="wrong-group-main"><view>{{item.label}}</view><text>{{item.secondary}}</text></view>
         <view class="wrong-group-count">{{item.count}} 道</view>
         <view class="wrong-group-chevron {{item.expanded ? 'wrong-group-chevron-open' : ''}}"></view>

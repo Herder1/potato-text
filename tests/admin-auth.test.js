@@ -520,6 +520,7 @@ test("正式环境关闭匿名 test-user 兜底通道", async (context) => {
   assert.equal((await call(runtime.baseUrl, "/api/billing/account")).status, 401);
   assert.equal((await call(runtime.baseUrl, "/api/billing/account?userId=test-user")).status, 401, "URL 上声明 test-user 也不能绕过");
   assert.equal((await call(runtime.baseUrl, "/api/billing/credits/consume", { method: "POST", body: { amount: 1, reason: "test" } })).status, 401);
+  assert.equal((await call(runtime.baseUrl, "/api/billing/beans/consume", { method: "POST", body: { amount: 0.1, reason: "test" } })).status, 401);
   assert.equal((await call(runtime.baseUrl, "/api/exam-exports", { method: "POST", body: { examId: "x", userId: "test-user" } })).status, 401);
 });
 

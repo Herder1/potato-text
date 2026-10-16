@@ -1,87 +1,730 @@
-.favorites-page {
-  min-height: 100vh;
-  padding: 24rpx 24rpx 48rpx;
-  background: #f5f7f5;
+/* 「我的收藏」新版样式（DEC-096，2026-09-23）。视觉基准＝产品负责人当天发的四张效果图。
+   rpx 换算：750rpx = 375px → 1px = 2rpx；效果图里量到的 px 值一律 ×2 写成 rpx。 */
+
+page {
+  background: #f5f6f5;
+}
+
+.page {
+  padding: 20rpx 28rpx 60rpx;
   box-sizing: border-box;
 }
 
-.favorites-head { padding: 8rpx 4rpx 20rpx; }
-.page-title { font-size: 40rpx; font-weight: 700; color: #1f2a24; }
-.page-subtitle { margin-top: 8rpx; font-size: 24rpx; color: #7b8a83; line-height: 1.5; }
-
-.favorites-section {
-  margin-top: 20rpx;
-  padding: 24rpx;
-  background: #fff;
-  border-radius: 24rpx;
-  box-shadow: 0 6rpx 20rpx rgba(31, 42, 36, 0.05);
+/* ── 自绘导航栏：目录入口在左上角，用图标替代原来整行的目录卡片
+      （产品负责人 2026-09-23 04:0x 用箭头指出；与 card-set / profile-edit 同一套布局算法） ── */
+.fav-nav {
+  position: fixed;
+  /* 必须低于抽屉/面板的遮罩（10 / 20）：抽屉打开时导航栏不能浮在遮罩上面 */
+  z-index: 5;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  padding-left: 18rpx;
+  align-items: flex-end;
+  background: rgba(245, 246, 245, 0.98);
+  border-bottom: 1rpx solid #e5e9e6;
+  box-sizing: border-box;
 }
 
-.favorites-section-head { display: flex; align-items: baseline; justify-content: space-between; }
-.favorites-section-title { font-size: 30rpx; font-weight: 700; color: #1f2a24; }
-.favorites-section-count { font-size: 24rpx; color: #8d9a94; }
-
-.favorites-list { margin-top: 16rpx; }
-.favorite-card,
-.favorite-question {
-  padding: 20rpx 0;
-  border-bottom: 1rpx solid #eef1ef;
+.fav-nav-leading {
+  position: absolute;
+  bottom: 0;
+  left: 18rpx;
+  display: flex;
+  height: 76rpx;
+  align-items: center;
 }
-.favorite-card:last-child,
-.favorite-question:last-child { border-bottom: none; }
 
-.favorite-question { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
-.favorite-question-main { flex: 1; min-width: 0; }
-
-.favorite-card-head { display: flex; align-items: center; gap: 12rpx; }
-.favorite-type {
-  padding: 4rpx 12rpx;
-  font-size: 22rpx;
-  color: #137bff;
-  background: rgba(19, 123, 255, 0.1);
-  border-radius: 999rpx;
+/* 点击热区 68×72rpx，图标 32rpx（与卡集页一致，别把热区做成图标那么大） */
+.fav-nav-button {
+  display: flex;
+  width: 68rpx;
+  height: 72rpx;
+  align-items: center;
+  justify-content: center;
 }
-.favorite-status { font-size: 22rpx; color: #b7791f; }
-.favorite-count { margin-left: auto; font-size: 22rpx; color: #8d9a94; }
 
-.favorite-title { margin-top: 12rpx; font-size: 28rpx; color: #1f2a24; line-height: 1.45; }
-.favorite-excerpt {
-  margin-top: 8rpx;
-  font-size: 24rpx;
-  color: #6b7a73;
-  line-height: 1.5;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+.fav-nav-button image {
+  display: block;
+  width: 32rpx;
+  height: 32rpx;
 }
-.favorite-breadcrumb { margin-top: 8rpx; font-size: 22rpx; color: #8d9a94; }
 
-.favorite-card-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 16rpx; }
-.favorite-contributor { font-size: 24rpx; color: #7b8a83; }
+/* 2026-09-23 04:7x：产品负责人「去掉绿框中的文字」（绿框＝导航栏中间那行「我的收藏」）——原来的
+   `.fav-nav-title` 规则已整条撤掉，导航栏中间不再有任何节点（左上角只留返回 + 目录两颗图标）。 */
 
-.favorites-action {
-  margin: 0;
-  padding: 0 20rpx;
-  height: 56rpx;
-  line-height: 56rpx;
-  font-size: 24rpx;
-  color: #137bff;
-  background: rgba(19, 123, 255, 0.08);
-  border: 1rpx solid rgba(19, 123, 255, 0.24);
-  border-radius: 999rpx;
+/* ── 当前文件夹 ── */
+/* ── 搜索 + 筛选 + 排序（产品负责人 2026-09-23 04:4x：搜索框在「全部收藏」上面，右边依次是筛选、排序）
+      排序那颗沿用原来的 ⇅ 图标，但按他的意思**去掉了圆框**（不再是一颗白色浮起圆按钮）。 ── */
+.search-row {
+  display: flex;
+  margin-top: 24rpx;
+  align-items: center;
 }
-.favorites-action::after { border: none; }
 
-.favorites-login,
-.favorites-empty,
-.favorites-tip {
-  margin-top: 16rpx;
-  padding: 28rpx 0;
-  text-align: center;
+.search-box {
+  display: flex;
+  flex: 1;
+  height: 68rpx;
+  padding: 0 22rpx;
+  align-items: center;
+  background: #ffffff;
+  border-radius: 34rpx;
+  box-shadow: 0 4rpx 16rpx rgba(35, 55, 44, 0.06);
+}
+
+.search-icon {
+  width: 30rpx;
+  height: 30rpx;
+  flex-shrink: 0;
+}
+
+.search-input {
+  flex: 1;
+  margin-left: 12rpx;
+  color: #202824;
   font-size: 26rpx;
-  color: #7b8a83;
 }
-.favorites-login button,
-.favorites-empty button { margin-top: 18rpx; display: inline-block; }
+
+.search-placeholder {
+  color: #a8afaa;
+}
+
+.search-clear {
+  display: flex;
+  width: 40rpx;
+  height: 40rpx;
+  margin-left: 8rpx;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  background: #f2f4f3;
+  border-radius: 50%;
+}
+
+.search-clear image {
+  width: 20rpx;
+  height: 20rpx;
+}
+
+.search-tool {
+  display: flex;
+  width: 68rpx;
+  height: 68rpx;
+  margin-left: 16rpx;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.search-tool image {
+  width: 36rpx;
+  height: 36rpx;
+}
+
+.search-tool-active image {
+  /* 筛选生效时给个提示：不换图形，只让它变青（浅底上深青描边仍然看得见） */
+  opacity: 1;
+}
+
+.search-tool-active::after {
+  content: "";
+  position: absolute;
+  width: 10rpx;
+  height: 10rpx;
+  margin: 44rpx 0 0 44rpx;
+  background: #0b9588;
+  border-radius: 50%;
+}
+
+.search-tool-active {
+  position: relative;
+}
+
+.folder-head {
+  display: flex;
+  align-items: center;
+  margin-top: 24rpx;
+  padding: 0 8rpx;
+}
+
+.folder-head-icon {
+  display: flex;
+  width: 68rpx;
+  height: 68rpx;
+  align-items: center;
+  justify-content: center;
+  background: #eaf7f4;
+  border-radius: 20rpx;
+}
+
+.folder-head-icon image {
+  width: 36rpx;
+  height: 36rpx;
+}
+
+.folder-head-text {
+  display: flex;
+  flex-direction: column;
+  margin-left: 20rpx;
+}
+
+.folder-head-title {
+  color: #202824;
+  /* 字号＝原来的 34rpx（17px）。产品负责人 2026-09-23 04:8x 原话：「大小用回原来的17px」——04:7x 我误解成
+     「字号跟昵称一样」放大到了 38rpx，这里改回来。 */
+  font-size: 34rpx;
+  /* 字重＝个人页昵称的同一号（`pages/profile/profile.wxss` 的 `.nickname`：font-weight 500 = Medium）。
+     产品负责人 2026-09-23 04:8x 原话：「这个全部收藏的字体感觉像加粗了一样，用和昵称一样的细字体」——
+     04:5x 他要求「细一点」时先降到 600（Semibold），在真机上仍偏粗；昵称那颗是 500，两处同号最省心。
+     改一处要同时改另一处（`tests/favorites-page.test.js` 有跨文件契约盯着，单方面改就失败）。 */
+  font-weight: 500;
+}
+
+.folder-head-sub {
+  margin-top: 4rpx;
+  color: #8a918c;
+  font-size: 22rpx;
+}
+
+/* 原来那颗浮起的白色圆按钮（.sort-button）已随 04:4x 的「不要那个圆框」撤掉——
+   排序入口搬进了 .search-row 的第三格 .search-tool（无底色、无投影）。 */
+
+.sort-button image {
+  width: 32rpx;
+  height: 32rpx;
+}
+
+/* ── 子文件夹标签 ── */
+.chip-row {
+  display: flex;
+  width: 100%;
+  margin-top: 24rpx;
+  white-space: nowrap;
+}
+
+.chip {
+  display: flex;
+  height: 56rpx;
+  margin-right: 16rpx;
+  padding: 0 24rpx;
+  align-items: center;
+  background: #ffffff;
+  border: 2rpx solid #e6e9e7;
+  border-radius: 28rpx;
+  box-sizing: border-box;
+}
+
+.chip-label {
+  color: #39433d;
+  font-size: 22rpx;
+}
+
+.chip-count {
+  margin-left: 8rpx;
+  color: #9aa49e;
+  font-size: 22rpx;
+}
+
+.chip-active {
+  background: #19211d;
+  border-color: #19211d;
+}
+
+.chip-active .chip-label {
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.chip-active .chip-count {
+  color: #cdd5d0;
+}
+
+/* ── 提示条 ── */
+.notice {
+  display: flex;
+  margin-top: 24rpx;
+  padding: 22rpx 24rpx;
+  align-items: center;
+  background: #ffffff;
+  border-radius: 24rpx;
+}
+
+.notice-warn {
+  background: #fff8ec;
+}
+
+.notice-text {
+  flex: 1;
+  color: #7b857f;
+  font-size: 22rpx;
+  line-height: 1.5;
+}
+
+.notice-action {
+  margin-left: 16rpx;
+  color: #0b9588;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+/* ── 收藏卡片 ── */
+.favorite-list {
+  margin-top: 24rpx;
+}
+
+.favorite-card {
+  position: relative;
+  margin-bottom: 20rpx;
+  padding: 24rpx;
+  background: #ffffff;
+  border-radius: 24rpx;
+  box-shadow: 0 4rpx 20rpx rgba(39, 59, 49, 0.06);
+}
+
+.favorite-card-head {
+  display: flex;
+  align-items: center;
+}
+
+.favorite-tag {
+  flex-shrink: 0;
+  padding: 4rpx 14rpx;
+  background: #e7f6f1;
+  border-radius: 8rpx;
+  color: #0b9588;
+  font-size: 19rpx;
+}
+
+.favorite-title {
+  flex: 1;
+  min-width: 0;
+  margin-left: 12rpx;
+  overflow: hidden;
+  color: #202824;
+  font-size: 28rpx;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.favorite-pin {
+  flex-shrink: 0;
+  margin-left: 10rpx;
+  padding: 2rpx 12rpx;
+  border: 2rpx solid #e6e9e7;
+  border-radius: 8rpx;
+  color: #8a918c;
+  font-size: 17rpx;
+}
+
+.favorite-arrow {
+  flex-shrink: 0;
+  margin-left: 10rpx;
+  color: #c3c9c5;
+  font-size: 26rpx;
+}
+
+.favorite-excerpt {
+  display: -webkit-box;
+  margin-top: 14rpx;
+  overflow: hidden;
+  color: #7b857f;
+  font-size: 22rpx;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.favorite-card-foot {
+  display: flex;
+  margin-top: 18rpx;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.favorite-source,
+.favorite-date {
+  color: #9aa49e;
+  font-size: 20rpx;
+}
+
+.favorite-source {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  margin-right: 12rpx;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 「已下架」放在标题行内联：早先是绝对定位钉在右上角，会和同一角落的 › 箭头叠在一起（无头渲染复核发现的）。 */
+.favorite-status {
+  flex-shrink: 0;
+  margin-left: 10rpx;
+  padding: 2rpx 12rpx;
+  background: #fdecea;
+  border-radius: 8rpx;
+  color: #d1503f;
+  font-size: 17rpx;
+}
+
+/* ── 空态 ── */
+.empty {
+  display: flex;
+  flex-direction: column;
+  margin-top: 80rpx;
+  align-items: center;
+}
+
+.empty-title {
+  color: #8a918c;
+  font-size: 26rpx;
+}
+
+.empty-action {
+  margin-top: 24rpx;
+  padding: 16rpx 36rpx;
+  background: #19211d;
+  border-radius: 40rpx;
+  color: #ffffff;
+  font-size: 24rpx;
+}
+
+/* ── 长按操作面板 ── */
+.sheet-mask {
+  position: fixed;
+  z-index: 10;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(20, 28, 24, 0.45);
+}
+
+.action-sheet {
+  position: fixed;
+  z-index: 11;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 20rpx 36rpx calc(28rpx + env(safe-area-inset-bottom));
+  background: #ffffff;
+  border-radius: 32rpx 32rpx 0 0;
+  box-sizing: border-box;
+}
+
+.sheet-grabber {
+  width: 72rpx;
+  height: 8rpx;
+  margin: 0 auto 28rpx;
+  background: #e2e6e3;
+  border-radius: 4rpx;
+}
+
+.sheet-title {
+  color: #202824;
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+.sheet-sub {
+  margin-top: 8rpx;
+  color: #9aa49e;
+  font-size: 20rpx;
+}
+
+.sheet-actions {
+  margin-top: 24rpx;
+}
+
+.sheet-row {
+  display: flex;
+  height: 104rpx;
+  align-items: center;
+  border-top: 2rpx solid #f0f2f1;
+}
+
+.sheet-row-icon {
+  display: flex;
+  width: 56rpx;
+  height: 56rpx;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.sheet-row-icon image {
+  width: 28rpx;
+  height: 28rpx;
+}
+
+.sheet-row-icon-teal {
+  background: #e7f6f1;
+}
+
+.sheet-row-icon-red {
+  background: #fdecea;
+}
+
+.sheet-row-label {
+  margin-left: 22rpx;
+  color: #202824;
+  font-size: 28rpx;
+}
+
+.sheet-row-label-danger {
+  color: #d1503f;
+}
+
+.sheet-cancel {
+  display: flex;
+  height: 96rpx;
+  align-items: center;
+  justify-content: center;
+  border-top: 2rpx solid #f0f2f1;
+  color: #8a918c;
+  font-size: 28rpx;
+}
+
+/* ── 文件夹选择器（长按面板里的「移到文件夹…」） ── */
+.picker {
+  margin-top: 20rpx;
+  max-height: 620rpx;
+}
+
+.picker-row {
+  display: flex;
+  height: 92rpx;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2rpx solid #f4f6f5;
+  color: #27312b;
+  font-size: 27rpx;
+}
+
+.picker-row-child {
+  padding-left: 40rpx;
+  color: #5d6a63;
+}
+
+.picker-row-active {
+  color: #0b9588;
+  font-weight: 700;
+}
+
+.picker-check {
+  color: #0b9588;
+}
+
+/* 筛选面板里每行的条数（右侧，等宽位置，✓ 落在它右边） */
+.picker-count {
+  margin-left: auto;
+  margin-right: 20rpx;
+  color: #a2a9a4;
+  font-size: 24rpx;
+}
+
+.picker-cancel {
+  display: flex;
+  height: 92rpx;
+  align-items: center;
+  justify-content: center;
+  color: #8a918c;
+  font-size: 27rpx;
+}
+
+/* ── 收藏目录抽屉 ── */
+.directory-mask {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(24, 35, 29, 0.26);
+}
+
+.directory-drawer {
+  position: fixed;
+  z-index: 21;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  width: 610rpx;
+  /* padding-top 由页面按状态栏高度内联给（自绘导航栏后抽屉仍从屏幕顶部起，标题要让开状态栏） */
+  padding: 0 36rpx calc(28rpx + env(safe-area-inset-bottom));
+  padding-top: 22rpx;
+  flex-direction: column;
+  background: #ffffff;
+  box-shadow: 4rpx 0 28rpx rgba(30, 47, 37, 0.12);
+  box-sizing: border-box;
+  animation: drawer-slide-in 0.2s ease-out;
+}
+
+@keyframes drawer-slide-in {
+  from {
+    transform: translateX(-40rpx);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.drawer-head {
+  display: flex;
+  align-items: flex-start;
+}
+
+.drawer-head-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.drawer-title {
+  color: #202824;
+  font-size: 40rpx;
+  font-weight: 800;
+}
+
+.drawer-sub {
+  margin-top: 10rpx;
+  color: #8a918c;
+  font-size: 20rpx;
+}
+
+.drawer-close {
+  display: flex;
+  width: 52rpx;
+  height: 52rpx;
+  margin-left: auto;
+  align-items: center;
+  justify-content: center;
+  background: #f2f4f3;
+  border-radius: 50%;
+}
+
+.drawer-close image {
+  width: 26rpx;
+  height: 26rpx;
+}
+
+.drawer-list {
+  flex: 1;
+  margin-top: 24rpx;
+}
+
+.drawer-row {
+  display: flex;
+  height: 88rpx;
+  padding: 0 16rpx;
+  align-items: center;
+  border-radius: 16rpx;
+  box-sizing: border-box;
+}
+
+.drawer-row-active {
+  background: #eaf7f4;
+}
+
+.drawer-row-icon {
+  display: flex;
+  width: 40rpx;
+  height: 40rpx;
+  align-items: center;
+  justify-content: center;
+}
+
+.drawer-row-icon image {
+  width: 32rpx;
+  height: 32rpx;
+}
+
+.drawer-row-name {
+  margin-left: 20rpx;
+  color: #27312b;
+  font-size: 28rpx;
+}
+
+.drawer-row-active .drawer-row-name {
+  color: #0b9588;
+  font-weight: 700;
+}
+
+.drawer-row-count {
+  margin-left: auto;
+  color: #8a918c;
+  font-size: 22rpx;
+}
+
+.drawer-row-active .drawer-row-count {
+  color: #0b9588;
+}
+
+.drawer-row-arrow {
+  margin-left: 12rpx;
+  color: #0b9588;
+  font-size: 26rpx;
+}
+
+.drawer-empty {
+  padding: 40rpx 16rpx;
+  color: #9aa49e;
+  font-size: 22rpx;
+  line-height: 1.6;
+}
+
+.drawer-foot {
+  padding-top: 24rpx;
+  border-top: 2rpx solid #edf0ee;
+}
+
+.drawer-manage {
+  display: flex;
+  height: 96rpx;
+  padding: 0 28rpx;
+  align-items: center;
+  background: #19211d;
+  border-radius: 24rpx;
+}
+
+.drawer-manage-icon {
+  display: flex;
+  width: 44rpx;
+  height: 44rpx;
+  align-items: center;
+  justify-content: center;
+}
+
+.drawer-manage-icon image {
+  width: 34rpx;
+  height: 34rpx;
+}
+
+.drawer-manage-text {
+  display: flex;
+  flex-direction: column;
+  margin-left: 18rpx;
+}
+
+.drawer-manage-title {
+  color: #ffffff;
+  font-size: 27rpx;
+  font-weight: 700;
+}
+
+.drawer-manage-sub {
+  margin-top: 2rpx;
+  color: #a9b3ad;
+  font-size: 19rpx;
+}
+
+.drawer-manage-arrow {
+  margin-left: auto;
+  color: #ffffff;
+  font-size: 26rpx;
+}

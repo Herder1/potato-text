@@ -7,17 +7,20 @@ const {
   createGuard,
 } = require("../apps/admin/knowledge-inspection-apply-guard");
 
-test("knowledge inspection only enables apply after Agent 2 resolves a primary node", () => {
+test("knowledge inspection is read-only: the apply path has no UI entry and no write control renders", () => {
   const script = fs.readFileSync(path.resolve(__dirname, "../apps/admin/app.js"), "utf8");
+  const html = fs.readFileSync(path.resolve(__dirname, "../apps/admin/index.html"), "utf8");
+  // DEC-100（产品手册 §4.6.12）：巡检只诊断、不改库 —— 原来这套"满足条件才能采纳"的判定不再有界面入口。
   assert.match(script, /function knowledgeInspectionResolvedNodeId/);
   assert.match(script, /agent2\.primaryNodeId \|\| agent2\.primaryNode\?\.id/);
   assert.match(script, /本次巡检没有形成明确知识节点，不能直接采纳/);
-  assert.match(script, /data-knowledge-node-choice/);
-  assert.match(script, /data-knowledge-primary-choice/);
+  assert.doesNotMatch(html, /id="apply-knowledge-inspection"/);
+  assert.doesNotMatch(html, /data-knowledge-node-choice/);
+  assert.doesNotMatch(html, /data-knowledge-primary-choice/);
+  assert.doesNotMatch(script, /lockedCore \? "disabled"/);
   assert.match(script, /knowledgeInspectionPrimaryNodeRole/);
   assert.match(script, /knowledge-inspection-primary-node-role/);
   assert.match(script, /handleKnowledgeInspectionChoiceChange/);
-  assert.match(script, /lockedCore \? "disabled"/);
   assert.match(script, /button\.textContent = result\.answerConflict[\s\S]*?无可采纳建议/);
 });
 
@@ -45,7 +48,7 @@ test("knowledge inspection hides the textbook knowledge tree so the review works
     const to = setTabSource.indexOf("]", from);
     return setTabSource.slice(from, to + 1);
   })();
-  for (const tab of ["inspections", "gold-review", "enrichment", "adjudication"]) {
+  for (const tab of ["inspections", "gold-review", "enrichment"]) {
     assert.match(hiddenList, new RegExp(`"${tab}"`), `隐藏知识树的标签应包含 ${tab}；实际=${hiddenList}`);
   }
   assert.match(setTabSource, /querySelector\("\.question-browser-section"\)\?\.classList\.toggle\(\s*"without-knowledge-tree",[\s\S]{0,140}?\.includes\(state\.questionLibraryTab\),\s*\)/);
@@ -118,15 +121,19 @@ test("knowledge inspection separates knowledge evidence from primary and related
   assert.match(script, /function knowledgeInspectionSuggestedFamilyMemberships/);
   assert.match(script, /function knowledgeInspectionSelectedFamilyMemberships/);
   assert.match(script, /确认知识与题族归类/);
-  assert.match(script, /selections:\s*\[\{[\s\S]*?familyMemberships,/);
+  // DEC-100：载荷构造的唯一实现在 guard 纯函数里（老弹窗函数体已删成转发壳）。
+  const guardSource = fs.readFileSync(path.resolve(__dirname, "../apps/admin/knowledge-inspection-apply-guard.js"), "utf8");
+  assert.match(guardSource, /selections:\s*\[\{[\s\S]*?familyMemberships,/);
 });
 
-test("knowledge inspection requires human confirmation before creating an editable candidate family", () => {
+test("inspection shows the Agent 3 candidate family draft read-only instead of an editable form", () => {
   const html = fs.readFileSync(path.resolve(__dirname, "../apps/admin/index.html"), "utf8");
   const script = fs.readFileSync(path.resolve(__dirname, "../apps/admin/app.js"), "utf8");
   const styles = fs.readFileSync(path.resolve(__dirname, "../apps/admin/styles.css"), "utf8");
-  assert.match(html, /id="knowledge-inspection-create-candidate-family"/);
-  assert.match(html, /人工确认创建并归入/);
+  // DEC-100（产品手册 §4.6.12）：原来这里是一套可编辑的"新建候选题族"表单（含"人工确认创建并归入"勾选），
+  // 巡检只诊断不改库后整块改成只读展示；创建候选题族只能在「完善题目」里做。
+  assert.doesNotMatch(html, /id="knowledge-inspection-create-candidate-family"/);
+  assert.doesNotMatch(html, /人工确认创建并归入/);
   [
     "family-draft-name",
     "family-draft-focus-key",
@@ -138,15 +145,27 @@ test("knowledge inspection requires human confirmation before creating an editab
     "family-draft-exclusion",
     "family-draft-evidence-chunks",
     "family-draft-evidence-summary",
-  ].forEach((id) => assert.match(html, new RegExp(`id="knowledge-inspection-${id}"`)));
+  ].forEach((id) => assert.doesNotMatch(html, new RegExp(`id="knowledge-inspection-${id}"`)));
+  assert.match(html, /id="knowledge-inspection-family-draft"[^>]*hidden/);
+  const draftRenderSource = script.slice(
+    script.indexOf("function renderKnowledgeInspectionCandidateFamilyDraft"),
+    script.indexOf("function openKnowledgeInspection", script.indexOf("function renderKnowledgeInspectionCandidateFamilyDraft")),
+  );
+  assert.match(draftRenderSource, /候选题族名称/);
+  assert.match(draftRenderSource, /题族判别焦点/);
+  assert.match(draftRenderSource, /只读展示，不能在这里创建/);
+  assert.doesNotMatch(draftRenderSource, /<input|<select|<textarea/);
+  // 写路径的数据形状没有变（应用层契约仍由既有接口消费），只是不再由巡检界面提交：
   assert.match(script, /function renderKnowledgeInspectionCandidateFamilyDraft/);
   assert.match(script, /function knowledgeInspectionSelectedCandidateFamilyDraft/);
-  assert.match(script, /createCandidateFamily:\s*true,\s*candidateFamilyDraft/);
+  // DEC-100：字段形状（含新建题族时的草案夹带）现在由 guard 纯函数唯一实现，巡检界面不再提交。
+  const guardSource = fs.readFileSync(path.resolve(__dirname, "../apps/admin/knowledge-inspection-apply-guard.js"), "utf8");
+  assert.match(guardSource, /createCandidateFamily \? \{ createCandidateFamily: true, candidateFamilyDraft \} : \{\}/);
   assert.match(script, /const isPrimary = !createCandidateFamily && input\.value === primaryFamilyId/);
   assert.match(script, /membership:\s*\{[\s\S]*?coverageRole:\s*"required",[\s\S]*?contributionKnowledgeNodeIds/);
   assert.match(script, /familyDeferred/);
   assert.match(script, /candidateFamilyDraft:\s*content\.createCandidateFamily/);
-  assert.match(styles, /\.knowledge-inspection-family-draft-form\s*\{[\s\S]*?max-height:\s*440px[\s\S]*?overflow-y:\s*auto/);
+  assert.match(styles, /\.knowledge-inspection-family-draft\s*\{[\s\S]*?display:\s*grid/);
 });
 
 test("inspection candidate families separate scope from coverage and can use the full knowledge tree", () => {
@@ -160,8 +179,9 @@ test("inspection candidate families separate scope from coverage and can use the
   const validationSource = sourceBetween("knowledgeInspectionCandidateFamilyDraftError", "knowledgeInspectionNodeLabelById");
   const renderSource = sourceBetween("renderKnowledgeInspectionCandidateFamilyDraft", "openKnowledgeInspection");
 
-  assert.match(html, /后台目录锚点[\s\S]*?用于组织和检索，不会自动写入题目知识/);
-  assert.match(html, /题族覆盖知识[\s\S]*?这个题族稳定判别任务能够覆盖的知识/);
+  // DEC-100（产品手册 §4.6.12）：这两句说明现在由只读展示函数输出（原来是可编辑表单的字段说明）。
+  assert.match(renderSource, /后台目录锚点[\s\S]*?用于组织和检索，不会自动写入题目知识/);
+  assert.match(renderSource, /题族覆盖知识[\s\S]*?这个题族稳定判别任务能够覆盖的知识/);
   assert.match(selectedSource, /const scopeAnchorNodeId = document\.querySelector\("#knowledge-inspection-family-draft-core"\)/);
   assert.match(selectedSource, /const coverageKnowledgeNodeIds = selectedValues\("#knowledge-inspection-family-draft-required"\)/);
   assert.match(selectedSource, /focusKey: document\.querySelector\("#knowledge-inspection-family-draft-focus-key"\)\?\.value\.trim\(\) \|\| ""/);
@@ -195,8 +215,18 @@ test("inspection family memberships submit explicit roles and per-question contr
   const openSource = sourceBetween("openKnowledgeInspection", "closeKnowledgeInspectionDialog");
   const applyStart = script.indexOf("async function applyKnowledgeInspection");
   const applySource = script.slice(applyStart, script.indexOf("async function rejectKnowledgeInspection", applyStart));
+  // DEC-100：老入口只剩三行转发壳；载荷构造与提交判据的唯一实现在 guard 纯函数里。
+  const guard = fs.readFileSync(path.resolve(__dirname, "../apps/admin/knowledge-inspection-apply-guard.js"), "utf8");
+  const guardValidateSource = guard.slice(guard.indexOf("function validateApplySelection"), guard.indexOf("function buildApplyRequest"));
+  const guardBuildSource = guard.slice(guard.indexOf("function buildApplyRequest"), guard.indexOf("return { createGuard"));
+  const submitSource = script.slice(
+    script.indexOf("async function submitKnowledgeClassificationApply"),
+    script.indexOf("function renderEnrichmentClassificationReadonly"),
+  );
 
-  assert.match(html, /主题族固定为作答必需；每个关联族需明确用途，并标注它在本题中实际承担的知识/);
+  // DEC-100：原来的"每个关联族需明确用途"是编辑态文案；只读态改成说明归属改动只能去「完善题目」。
+  assert.match(html, /题族归属（只读展示）/);
+  assert.match(html, /题族归属（主题族／关联族／新建候选题族）的修改在「完善题目」里完成/);
   assert.match(selectedSource, /const coverageRole = isPrimary \? "required" : String\(row\?\.dataset\.knowledgeFamilyCoverageRole \|\| ""\)/);
   assert.match(selectedSource, /const contributionKnowledgeNodeIds = coverageRole === "reference" \? \[\]/);
   assert.match(selectedSource, /return \{ familyId: input\.value, isPrimary, coverageRole, contributionKnowledgeNodeIds \}/);
@@ -204,9 +234,14 @@ test("inspection family memberships submit explicit roles and per-question contr
   assert.match(suggestedSource, /return \{ familyId, isPrimary, coverageRole, contributionKnowledgeNodeIds \}/);
   assert.doesNotMatch(suggestedSource, /contributionKnowledgeNodeIds\s*=\s*knowledgeInspectionSelectedQuestionNodes/);
 
-  assert.match(openSource, /data-knowledge-family-primary-role hidden>主题族 · 作答必需</);
-  assert.match(openSource, /data-knowledge-family-role="required"[\s\S]*?>作答必需<\/button>/);
-  assert.match(openSource, /data-knowledge-family-role="reference"[\s\S]*?>普通关联<\/button>/);
+  // DEC-100（产品手册 §4.6.12）：巡检弹窗不再渲染可提交的题族用途按钮与主题族单选，
+  // 题族归属改成只读展示（主题族／关联族／普通关联只能看，改在「完善题目」里做）。
+  const readonlyFamilySource = sourceBetween("renderKnowledgeInspectionReadonlyFamilies", "renderKnowledgeInspectionAuditState");
+  assert.doesNotMatch(openSource, /data-knowledge-family-role="/);
+  assert.doesNotMatch(openSource, /data-knowledge-primary-family/);
+  assert.match(readonlyFamilySource, /建议主题族（作答必需）/);
+  assert.match(readonlyFamilySource, /建议关联题族（普通关联）/);
+  assert.match(readonlyFamilySource, /只读展示/);
   assert.match(refreshSource, /roleControls\.hidden = !selected \|\| primary/);
   assert.match(refreshSource, /primaryRole\.hidden = !primary/);
   assert.match(refreshSource, /contribution\.hidden = !selected \|\| role !== "required"/);
@@ -214,9 +249,16 @@ test("inspection family memberships submit explicit roles and per-question contr
   assert.match(clickSource, /roleButton\.dataset\.knowledgeFamilyRole === "reference"[\s\S]*?knowledgeInspectionRememberFamilyContribution/);
   assert.match(clickSource, /data-use-knowledge-inspection-contribution-suggestion/);
 
-  assert.match(applySource, /familyKnowledgeProtocolVersion: blindGoldFamilyKnowledgeProtocolVersion/);
-  assert.match(applySource, /familyMemberships,/);
-  assert.match(applySource, /createCandidateFamily \? \{ createCandidateFamily: true, candidateFamilyDraft \} : \{\}/);
+  // DEC-100：/apply 的调用点只剩 submitKnowledgeClassificationApply 一处，载荷构造抽到
+  // knowledge-inspection-apply-guard.js 的 buildApplyRequest（逐字保留原来的形状）——
+  // 形状断言因此改到那份唯一实现上，老入口（applySource）则断言"不得再有 DOM 读取与载荷构造"。
+  assert.match(guardBuildSource, /familyMemberships,/);
+  assert.match(guardBuildSource, /createCandidateFamily \? \{ createCandidateFamily: true, candidateFamilyDraft \} : \{\}/);
+  assert.match(guardBuildSource, /schemaVersion: APPLY_SCHEMA_VERSION/);
+  assert.match(submitSource, /requestJson\("\/api\/admin\/knowledge-classification\/apply", \{ method: "POST", body: JSON\.stringify\(body\) \}\)/);
+  assert.equal((script.match(/knowledge-classification\/apply/g) || []).length, 1, "app.js 里改库地址字符串只允许出现一次");
+  assert.doesNotMatch(applySource, /querySelector|selectedNodeIds|familyMemberships|candidateFamilyDraft/, "老入口不得再读 DOM 或构造载荷");
+  assert.match(applySource, /return openEnrichmentClassification\(/, "老入口只能是转发到「完善题目」的壳");
 });
 
 test("inspection family coverage validates member contributions and only requires a core focus", () => {
@@ -232,7 +274,9 @@ test("inspection family coverage validates member contributions and only require
   const summarySource = sourceBetween("syncKnowledgeInspectionFamilyCoverageSummary", "setKnowledgeInspectionCandidateFamilyDraftEnabled");
 
   assert.match(html, /id="knowledge-inspection-family-coverage-summary"[^>]*aria-live="polite"/);
-  assert.match(html, /id="knowledge-inspection-candidate-contribution"/);
+  // DEC-100（产品手册 §4.6.12）："候选题族的本题贡献"下拉是可提交控件，随只读化一起移除；
+  // 覆盖校验（下面那些断言）仍是写路径契约的一部分，保留在服务端与校验函数里。
+  assert.doesNotMatch(html, /id="knowledge-inspection-candidate-contribution"/);
   assert.match(candidateSource, /membership:\s*\{[\s\S]*?coverageRole:\s*"required",[\s\S]*?contributionKnowledgeNodeIds/);
   assert.match(auditSource, /contributionKnowledgeNodeIds: candidateFamilyDraft\.membership\?\.contributionKnowledgeNodeIds \|\| \[\]/);
   assert.match(auditSource, /const expectedNodes = expectedIds\.map/);
@@ -257,17 +301,25 @@ test("inspection keeps a scope anchor outside required knowledge and submits its
   const applyStart = script.indexOf("async function applyKnowledgeInspection");
   const applyEnd = script.indexOf("async function rejectKnowledgeInspection", applyStart);
   const applySource = script.slice(applyStart, applyEnd);
+  const guard = fs.readFileSync(path.resolve(__dirname, "../apps/admin/knowledge-inspection-apply-guard.js"), "utf8");
+  const guardValidateSource = guard.slice(guard.indexOf("function normalizeApplySelection"), guard.indexOf("function buildApplyRequest"));
   const requiredStart = script.indexOf("function knowledgeInspectionRequiredNodes");
   const requiredEnd = script.indexOf("function knowledgeInspectionCurrentPath", requiredStart);
   const requiredSource = script.slice(requiredStart, requiredEnd);
 
   assert.match(html, /id="knowledge-inspection-primary-node-role"/);
-  assert.match(script, /value="scope_anchor"/);
+  // DEC-100：角色单选（value="core"／value="scope_anchor" 的 radio）随只读化移除，角色只作只读展示；
+  // 角色的语义与写路径校验保留在 guard 纯函数（validateApplySelection）与完善题目侧。
+  assert.doesNotMatch(html, /knowledge-inspection-primary-node-role"[^>]*role="radiogroup"/);
+  assert.match(script, /范围锚点（不计入最小充分知识集）/);
   assert.match(requiredSource, /primaryNodeRole === "core"/);
   assert.match(requiredSource, /primaryNodeRole === "scope_anchor" && node\.id === primaryId/);
-  assert.match(applySource, /primaryNodeRole === "core" && !selectedNodeIds\.includes\(selectedPrimary\)/);
-  assert.match(applySource, /primaryNodeRole === "scope_anchor" && selectedNodeIds\.includes\(selectedPrimary\)/);
-  assert.match(applySource, /primaryNodeRole,/);
+  assert.match(guardValidateSource, /primaryNodeRole === "core" && !selection\.selectedNodeIds\.includes\(selection\.selectedPrimary\)/);
+  assert.match(guardValidateSource, /primaryNodeRole === "scope_anchor" && selection\.selectedNodeIds\.includes\(selection\.selectedPrimary\)/);
+  assert.match(guardValidateSource, /primaryNodeRole: normalizeApplyPrimaryNodeRole\(selection\.primaryNodeRole\)/);
+  // 完善题目侧也提交同一个角色字段（界面上的 core／scope_anchor 单选）。
+  assert.match(html, /name="question-enrichment-primary-node-role" value="scope_anchor"/);
+  assert.match(script, /const primaryNodeRole = normalizeQuestionFingerprintPrimaryNodeRole\(document\.querySelector\('input\[name="question-enrichment-primary-node-role"\]:checked'\)\?\.value\)/);
 });
 
 test("inspection role changes immediately normalize required knowledge and refresh coverage", () => {
@@ -276,7 +328,9 @@ test("inspection role changes immediately normalize required knowledge and refre
   const handlerEnd = script.indexOf("function handleKnowledgeInspectionFamilyChoiceChange", handlerStart);
   const handlerSource = script.slice(handlerStart, handlerEnd);
 
-  assert.match(script, /#knowledge-inspection-primary-node-role"\)\.addEventListener\("change", handleKnowledgeInspectionChoiceChange\)/);
+  // DEC-100：只读弹窗里已没有角色单选，change 监听随写控件一起摘除
+  //（处理函数体保留，供写路径与静态契约继续引用）。
+  assert.doesNotMatch(script, /#knowledge-inspection-primary-node-role"\)\.addEventListener/);
   assert.match(handlerSource, /primaryNodeRole === "core"\) input\.checked = true/);
   assert.match(handlerSource, /primaryNodeRole === "scope_anchor"\) input\.checked = false/);
   assert.match(handlerSource, /input\.disabled = isPrimary && primaryNodeRole === "core"/);

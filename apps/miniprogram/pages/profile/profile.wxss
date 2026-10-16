@@ -1,5 +1,10 @@
 .profile-page { min-height: 100vh; background: #f7f7f5; }
-.profile-nav { position: fixed; z-index: 900; top: 0; right: 0; left: 0; display: flex; padding-left: 18rpx; align-items: flex-end; background: #fbfbfa; border-bottom: 1rpx solid #e8eae7; box-sizing: border-box; }
+/* 2026-09-23 00:2x：顶栏（状态栏 + 胶囊那一条）也算在「这块区域」里——底色必须与 .profile-hero 的**顶边**逐像素同色，
+   两者拼起来才看不出接缝；原来那条 1rpx 分隔线会把这块区域从中间切一道，一并去掉（改一处色值就得同步另一处）。
+   2026-09-23 00:3x 底色改成 150deg 对角撞色后，顶边的颜色是**横向变化**的（左端冷绿 → 右端中性灰），
+   所以顶栏也换成同一走向的横向过渡——这几档色值是按 150deg 的投影算出来的：
+   渐变线长 L=|W·sin150°|+|H·cos150°|≈391，顶边右端 t=375×0.5/391≈0.479（即第二档 #f4f6f2 落在顶边的 87.6% 处）。 */
+.profile-nav { position: fixed; z-index: 900; top: 0; right: 0; left: 0; display: flex; padding-left: 18rpx; align-items: flex-end; background: linear-gradient(90deg, #e6f7f1 0%, #f4f6f2 87.6%, #f5f4ee 100%); box-sizing: border-box; }
 
 .profile-topbar,
 .section-heading,
@@ -9,36 +14,80 @@
   justify-content: space-between;
 }
 
+/* 2026-09-23 00:2x 产品负责人：「要拉满这个区域」＋「我指背景色」——
+   绿框画的是"从屏幕最上沿一直到底部资产卡片"这一整块，上一版只铺到身份区就淡没了，所以这版：
+   ① 把资产卡片也挪进这一层（见 profile.wxml），底色一路铺到卡片下沿；
+   ② 顶栏（状态栏 + 胶囊那一条）也换成同一块底色的起点色，见下面的 .profile-nav——否则最上面留一条白边；
+   ③ 100% 处正好落在页面底色 #f7f7f5 上（且卡片下沿就是这一层的下沿），所以卡片以下不会出现硬边；
+   左右仍用负外边距把色块通铺到屏幕两边，上下不加任何内边距 = 文字位置与各处间距与改前逐像素一致。 */
+.profile-hero {
+  /* 上：-28rpx 的负外边距把这一层顶到 .page-shell 的内边距之上，正好贴住顶栏下沿（否则顶栏与色块之间会露出
+     28rpx 的页面底色，截图里那一整块就断了一截）；同时用 28rpx 的 padding-top 把原来的 14rpx 顶部间距接过来，
+     内容绝对位置与改前逐像素一致（实测见 tmp/verify-profile-hero-bg.js 的 C5）。
+     2026-09-23 00:3x 真机反馈「否则这里就涂成一片了」：180deg 竖渐变在 58%~88% 是两个同色 stop，
+     中间是一段没有变化的平台，于是整块看起来就是一片平色。改成 150deg 对角**撞色**（冷绿在上左、暖米杏在下右，
+     中间走中性灰白），同一块里有两处色相，不再是平色。 */
+  margin: -28rpx -28rpx 0;
+  padding: 28rpx 28rpx 0;
+  background: linear-gradient(150deg, #e6f7f1 0%, #f4f6f2 42%, #fbeedd 72%, #f7f7f5 100%);
+}
+
 .profile-topbar {
   display: flex;
   min-height: 72rpx;
   margin-top: 14rpx;
   align-items: center;
-  justify-content: space-between;
+  /* 2026-09-22 23:4x 真机反馈：消息通知从句首挪到右边「设置」旁边——两颗图标并排靠右，不再一左一右。 */
+  justify-content: flex-end;
+  gap: 4rpx;
 }
 
-.profile-notification-button { position: relative; display: flex; width: 72rpx; height: 72rpx; align-items: center; justify-content: center; background: #eeeeec; border-radius: 36rpx; box-sizing: border-box; }
-.profile-notification-button:active { background: #e3e6e2; }
+/* 2026-09-22 真机反馈：顶栏两颗图标按钮都不要灰色外框——保留 72rpx 的点击区，只去掉底色圆。 */
+.profile-notification-button { position: relative; display: flex; width: 72rpx; height: 72rpx; align-items: center; justify-content: center; box-sizing: border-box; }
+.profile-notification-button:active { opacity: .6; }
 .profile-notification-button image { width: 32rpx; height: 32rpx; opacity: .86; }
-.notification-dot { position: absolute; top: 7rpx; right: 7rpx; width: 12rpx; height: 12rpx; background: #d84b43; border: 3rpx solid #eeeeec; border-radius: 50%; box-sizing: content-box; }
+.notification-dot { position: absolute; top: 7rpx; right: 7rpx; width: 12rpx; height: 12rpx; background: #d84b43; border: 3rpx solid #f7f7f5; border-radius: 50%; box-sizing: content-box; }
 
-.profile-topbar button {
-  width: 96rpx;
+/* 顶栏右侧「设置」：与左侧铃铛对称的圆形图标按钮（2026-09-22 按产品负责人给的齿轮图标替换文字按钮）。
+   点它进 openSettings——退出登录的出口挂在这颗按钮上。 */
+.profile-settings-button {
+  display: flex;
+  width: 72rpx;
   height: 72rpx;
-  margin: 0;
-  padding: 0;
-  color: #555555;
-  background: #eeeeec;
-  border-radius: 36rpx;
-  font-size: 22rpx;
-  line-height: 72rpx;
+  align-items: center;
+  justify-content: center;
 }
+.profile-settings-button:active { opacity: .6; }
+.profile-settings-button image { width: 34rpx; height: 34rpx; opacity: .86; }
 
 .identity-block {
   display: flex;
-  padding: 20rpx 0 32rpx;
-  flex-direction: column;
+  /* 2026-09-23 00:2x：底部内边距 24rpx → 34rpx，把上一版挂在 .profile-hero 上的 padding-bottom 10rpx 挪进来。
+     资产卡片现在是这一层的子节点（背景色要铺到卡片下沿），而 hero 的 padding-bottom 会跑到卡片**下面**去，
+     卡片会整体上移 10rpx——那正是你 23:5x 特意让卡片下移过的地方，所以用身份区的内边距把这段间距原样补回，
+     卡片与下面所有内容的绝对位置与改前逐像素一致（已由 tmp/verify-profile-hero-bg.js 实测）。 */
+  padding: 20rpx 0 34rpx;
   align-items: center;
+}
+
+/* 2026-09-22 真机参考图（产品负责人二选一后选定横向排布）：头像在左，昵称/小字/签名成列在右、整列左对齐。 */
+.identity-main {
+  display: flex;
+  min-width: 0;
+  margin-left: 24rpx;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.avatar-wrap {
+  position: relative;
+  display: flex;
+  width: 122rpx;
+  height: 122rpx;
+  flex: none;
+  align-items: center;
+  justify-content: center;
 }
 
 .avatar {
@@ -49,9 +98,44 @@
   justify-content: center;
   color: #ffffff;
   background: #303030;
+  /* 2026-09-22 23:4x 真机反馈：头像改成正圆看看效果（此前按 10:3x 参考图做的圆角方形色块已作废）。 */
   border-radius: 50%;
   font-size: 42rpx;
   font-weight: 900;
+}
+
+/* 没有可用头像时的回落：浅绿底 + 青绿「薯」+ 一圈淡绿描边——要的是绿色点缀，不是换成纯绿实心。
+   老账号存的是失效的微信外链头像（thirdwx.qlogo.cn），一律走这里（见 utils/avatar.js）。 */
+.avatar-fallback {
+  color: #0b9588;
+  background: linear-gradient(160deg, #f4fcf9 0%, #e3f6f1 100%);
+  box-shadow: inset 0 0 0 2rpx rgba(11, 149, 136, .16);
+}
+
+/* 未登录的引导标志（2026-09-23 01:1x 产品负责人参考图定案）：**浅绿回落底圆** + 圆正中一个**青绿人形轮廓图标**。
+   走过的弯路都留在这儿（别再来回）：
+   ① 00:4x「➕号移动到头像中间，去掉林」→ 「+」从右下角角标挪到正中，未登录不再渲染昵称首字；
+   ② 00:5x「去掉这层深色的绿」→ 不要"浅绿圆里再嵌一颗深绿小圆"；
+   ③ 00:58「这个加号感觉没居中，而且可以换成白色」→ 实测字形「+」的墨水比圆心低 2.63px（字体给 descender 留空，
+      盒子居中≠笔画居中），于是换成几何画法；「白色」那半句最后被 01:05 的「要原来这种颜色，中间+号改白色就行」
+      与 01:1x 的参考图收敛成"浅绿圆 + 白色「+」"；
+   ④ 01:1x 参考图 → 白色「+」**整个作废**，改成这个青绿人形轮廓（颜色 #0b9588 就是品牌青绿，也是圆环/文字同色）。
+   所以这里只剩一个透明壳（不许上色——上色就盖掉浅绿回落底），里面是图标图片本身。
+   图标尺寸 48rpx：该 svg 的 24 视口里墨水占 14×18，48rpx（24px）渲染后墨水≈28×36rpx，
+   与参考图量到的 36.5×39.8rpx 同量级（视觉上一颗"小半身像"）；改大小只动这个 width/height。 */
+.avatar-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.avatar-user {
+  width: 48rpx;
+  height: 48rpx;
 }
 
 .avatar-image {
@@ -59,56 +143,112 @@
   object-fit: cover;
 }
 
+/* 2026-09-22 23:5x 真机反馈「这些文字太粗了」（绿框点的是昵称、卡片三个数字、「账户与服务」标题）：
+   三处 900 → **500**（Medium）。为什么不取 600：PingFang SC / 同类中文字体只有 Medium(500) 与 Semibold(600+)，
+   600 会和 900 落到同一个字面（本机渲染实测：400/500 一档、600/700/900 另一档），等于没改；500 才是真的细一档。
+   头像圈里那个首字仍是 900（它没被点，单字在圆里粗一点才立得住）。 */
+/* 2026-09-22 23:5x 真机反馈「点击头像、点击昵称、点击签名都会进入编辑资料」（三处共用 tapAvatar）：
+   昵称与签名都只有一行字高（约 46 / 31rpx），给上下内边距把手感补到 ~70rpx 以上，
+   并用等量负外边距把文字位置与行距**原样抵消**——只加纵向内边距，绝不加横向（横向会把文字推离左对齐）。 */
 .nickname {
-  margin-top: 20rpx;
+  margin: -14rpx 0;
+  padding: 14rpx 0;
   font-size: 38rpx;
-  font-weight: 900;
+  font-weight: 500;
 }
 
-.identity-note {
-  margin-top: 8rpx;
-  color: #777777;
-  font-size: 21rpx;
-}
-
-.login-link {
-  height: 66rpx;
-  margin-top: 16rpx;
-  padding: 0 24rpx;
-  color: #555555;
-  background: transparent;
+/* 名字下面一行小字（参考图里红框那行）：「已加入 N 天」，数据来自账号的 createdAt。 */
+.identity-meta {
+  margin-top: 2rpx;
+  color: #8a918c;
   font-size: 22rpx;
-  line-height: 66rpx;
 }
-
-.section-heading {
-  margin: 44rpx 2rpx 18rpx;
-}
-.asset-heading { margin-top: 34rpx; }
-.asset-summary { display: grid; min-height: 128rpx; padding: 15rpx 8rpx; background: rgba(255,255,255,.82); border-radius: 8rpx; grid-template-columns: repeat(4,1fr); box-sizing: border-box; }
-.asset-summary view { display: flex; align-items: center; justify-content: center; flex-direction: column; border-right: 1rpx solid #e9ece9; }
-.asset-summary view:last-child { border-right: 0; }
-.asset-summary text { display: block; }
-.asset-summary text:first-child { color: #252925; font-size: 35rpx; font-weight: 900; }
-.asset-summary text:last-child { margin-top: 5rpx; color: #7e8580; font-size: 18rpx; }
-
-.section-title {
-  font-size: 34rpx;
-  font-weight: 900;
-}
-
-.section-more {
+.identity-user-id {
   display: flex;
-  min-height: 88rpx;
-  margin: -22rpx 0;
-  padding: 22rpx 0;
+  max-width: 100%;
+  min-height: 40rpx;
+  margin-top: 4rpx;
   align-items: center;
-  color: #777777;
+  color: #8a918c;
+  font-size: 20rpx;
+  line-height: 1.4;
+}
+.identity-id-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.identity-id-copy { margin-left: 10rpx; flex: 0 0 auto; color: #0b9588; }
+
+/* 2026-09-22 真机反馈：个性签名不要胶囊外框（白底 + 描边 + 内边距都去掉），
+   不然内边距会把签名文字往右推、跟上一行「身份标签 · 已加入 N 天」对不齐。
+   2026-09-22 23:5x：签名也成了「编辑资料」入口，这里补的是**纵向**内边距（12→20rpx 的点击区），
+   横向仍是 0，所以左对齐不受影响；负外边距抵消后文字位置与行距与改前逐像素一致。 */
+.identity-signature {
+  max-width: 520rpx;
+  margin: -12rpx 0 -22rpx;
+  padding: 22rpx 0;
+  overflow: hidden;
+  color: #46524b;
   font-size: 22rpx;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 未登录时的唯一登录入口（2026-09-22 23:4x 真机反馈）：轻盈文字——无底色、无边框、不摆占位昵称；
+   点击区仍留够 72rpx 高，免得"看起来是文字、其实点不到"。
+   2026-09-23 01:1x 参考图：由一行变两行——主行「点击登录」+ 副行「登录后同步学习记录与进度」。
+   尺寸/颜色都按参考图实测换算（圆直径 122rpx 当标尺）：主行 28rpx 青绿、副行 18rpx 灰 #717873，
+   两行墨迹间距约 22rpx（所以副行 margin-top 16rpx + 行盒自身的空隙正好落在 22rpx 附近）。 */
+.login-entry {
+  display: flex;
+  min-height: 72rpx;
+  margin-top: -8rpx;
+  flex-direction: column;
+  justify-content: center;
+}
+.login-text {
+  color: #0b9588;
+  font-size: 28rpx;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.login-sub {
+  margin-top: 16rpx;
+  color: #717873;
+  font-size: 18rpx;
+  line-height: 1.2;
+}
+.login-entry:active { opacity: .6; }
+
+/* 2026-09-22 真机反馈：资产入口改成参考图那张卡片（白底圆角 + 三列），整张卡片可点。
+   位置紧跟身份区（个性签名正下方），所以自身只留一点上间距。
+   2026-09-22 23:4x 二次反馈「这张卡片太大了」——压掉一圈高度：内边距 32→20rpx、数字 44→34rpx、标签 20→18rpx。
+   2026-09-22 23:5x 三次反馈「绿框的卡片可以整体下移一点，大概是学习天数那张卡片一半的高度」——
+   上间距 8→60rpx（≈ 半张卡片高 107/2 ≈ 54rpx + 原有 8rpx），卡片与下面的「账户与服务」一起下沉。 */
+.asset-card {
+  display: grid;
+  margin-top: 60rpx;
+  padding: 20rpx 8rpx;
+  background: #ffffff;
+  border-radius: 18rpx;
+  box-shadow: 0 2rpx 10rpx rgba(30, 40, 35, .045);
+  grid-template-columns: repeat(3, 1fr);
+  box-sizing: border-box;
+}
+.asset-card:active { background: #f6faf8; }
+.asset-card-item { display: flex; align-items: center; justify-content: center; flex-direction: column; border-right: 1rpx solid #eef1ee; }
+.asset-card-item:last-child { border-right: 0; }
+.asset-card-value { display: block; color: #252925; font-size: 34rpx; font-weight: 500; }
+.asset-card-label { display: block; margin-top: 4rpx; color: #8a918c; font-size: 18rpx; }
+
+/* 2026-10-05 产品负责人指定：本页段落标题（「账户与服务」）改用「编辑资料」页
+   `.group-title`（基础资料 / 学习偏好）那套——小号、灰色、常规字重，不再是大号半粗。 */
+.section-title {
+  color: #6c7771;
+  font-size: 24rpx;
+  font-weight: 400;
 }
 
 .menu-title {
-  margin: 40rpx 2rpx 18rpx;
+  margin: 42rpx 6rpx 16rpx;
 }
 
 .menu-list {

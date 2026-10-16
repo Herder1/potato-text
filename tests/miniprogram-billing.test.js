@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-test("mini program synchronizes server balance and settles successful AI usage", () => {
+test("mini program synchronizes server bean balance and settles successful AI usage", () => {
   let definition;
   const storage = new Map();
   const requests = [];
@@ -9,12 +9,13 @@ test("mini program synchronizes server balance and settles successful AI usage",
   global.wx = {
     getStorageSync: (key) => storage.get(key) || "",
     setStorageSync: (key, value) => storage.set(key, value),
+    removeStorageSync: (key) => storage.delete(key),
     request(options) {
       requests.push(options);
       if (options.url.includes("/api/billing/account")) {
-        options.success({ statusCode: 200, data: { account: { creditBalance: 20, subscriptions: [], transactions: [] } } });
+        options.success({ statusCode: 200, data: { account: { beanBalance: 2, subscriptions: [], transactions: [] } } });
       } else {
-        options.success({ statusCode: 200, data: { account: { creditBalance: 19, subscriptions: [], transactions: [] } } });
+        options.success({ statusCode: 200, data: { account: { beanBalance: 1.9, subscriptions: [], transactions: [] } } });
       }
     },
   };
@@ -23,12 +24,47 @@ test("mini program synchronizes server balance and settles successful AI usage",
   require(appPath);
 
   definition.onLaunch();
-  assert.equal(definition.globalData.aiCredits, 20);
-  assert.equal(definition.spendAiCredit(1, { referenceId: "ai-call-test", source: "subjective_scoring", description: "主观题评分" }), true);
-  assert.equal(definition.globalData.aiCredits, 19);
-  const consumptionRequest = requests.find((request) => request.url.includes("/api/billing/credits/consume"));
+  assert.equal(definition.globalData.beans, 2);
+  assert.equal(definition.spendBeans(0.1, { referenceId: "ai-call-test", source: "subjective_scoring", description: "主观题评分" }), true);
+  assert.equal(definition.globalData.beans, 1.9);
+  const consumptionRequest = requests.find((request) => request.url.includes("/api/billing/beans/consume"));
+  assert.equal(consumptionRequest.data.amount, 0.1);
   assert.equal(consumptionRequest.data.referenceId, "ai-call-test");
   assert.equal(consumptionRequest.data.description, "主观题评分");
+  // 不足 0.1 豆币时不再扣费，也不会发出请求
+  const requestCount = requests.length;
+  definition.globalData.beans = 0;
+  assert.equal(definition.spendBeans(0.1, { referenceId: "ai-call-insufficient" }), false);
+  assert.equal(requests.length, requestCount);
+
+  delete global.App;
+  delete global.wx;
+});
+
+test("mini program migrates the legacy local AI credit cache to beans exactly once", () => {
+  let definition;
+  const storage = new Map([["shukao_ai_credits", 20]]);
+  global.App = (value) => { definition = value; };
+  global.wx = {
+    getStorageSync: (key) => (storage.has(key) ? storage.get(key) : ""),
+    setStorageSync: (key, value) => storage.set(key, value),
+    removeStorageSync: (key) => storage.delete(key),
+    request() {},
+  };
+  const appPath = require.resolve("../apps/miniprogram/app.js");
+  delete require.cache[appPath];
+  require(appPath);
+
+  definition.onLaunch();
+  // 20 点 AI 额度 → 2 豆币，旧键清掉
+  assert.equal(definition.globalData.beans, 2);
+  assert.equal(storage.get("shukao_beans"), 2);
+  assert.equal(storage.has("shukao_ai_credits"), false);
+
+  // 再次启动（模拟热重启）不会二次折算
+  definition.globalData.beans = 2;
+  definition.onLaunch();
+  assert.equal(definition.globalData.beans, 2);
 
   delete global.App;
   delete global.wx;

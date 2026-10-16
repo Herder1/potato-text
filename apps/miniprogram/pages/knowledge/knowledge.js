@@ -108,8 +108,10 @@ Page({
     selectedLibraryAsset: null,
   },
 
-  onLoad() {
+  onLoad(options) {
     this.measureNavigation();
+    // 从收藏页点进来时带 ?assetId=xxx：等社区内容到位后直接展开这一条（DEC-096「点击收藏跳转」）。
+    this.pendingAssetId = String((options && options.assetId) || "");
   },
 
   measureNavigation() {
@@ -169,7 +171,7 @@ Page({
           ...asset,
           isRecommended: asset.featured === true || asset.moderationStatus === "featured",
         }));
-        this.setData({ communityAssets: [...questionPacks, ...remoteAssets] }, () => this.applyFilter());
+        this.setData({ communityAssets: [...questionPacks, ...remoteAssets] }, () => { this.applyFilter(); this.openPendingAsset(); });
       },
     });
     wx.request({
@@ -191,7 +193,7 @@ Page({
           copyCount: Number(pack.metrics && pack.metrics.copies) || 0,
           isRecommended: pack.status === "featured",
         }));
-        this.setData({ communityAssets: [...questionPacks, ...communityAssets] }, () => this.applyFilter());
+        this.setData({ communityAssets: [...questionPacks, ...communityAssets] }, () => { this.applyFilter(); this.openPendingAsset(); });
       },
     });
   },
@@ -292,7 +294,21 @@ Page({
   },
 
   openLibraryAsset(event) {
-    const asset = this.data.communityAssets.find((item) => item.id === event.currentTarget.dataset.id);
+    this.openAssetById(event.currentTarget.dataset.id);
+  },
+
+  // 收藏页跳转过来时用：内容还没加载完就先记着，加载完这两个 setData 回调里各试一次。
+  openPendingAsset() {
+    if (!this.pendingAssetId) return;
+    const found = (this.data.communityAssets || []).some((asset) => asset.id === this.pendingAssetId);
+    if (!found) return;
+    const id = this.pendingAssetId;
+    this.pendingAssetId = "";
+    this.openAssetById(id);
+  },
+
+  openAssetById(id) {
+    const asset = this.data.communityAssets.find((item) => item.id === id);
     if (!asset) return;
     const importedPack = asset.type === "question_pack"
       ? loadPrivatePacks().find((pack) => pack.sourcePackId === asset.id)
@@ -318,7 +334,7 @@ Page({
   openSelectedPack() {
     const asset = this.data.selectedLibraryAsset;
     if (!asset || !asset.importedPackId) return;
-    wx.navigateTo({ url: `/pages/pack-collection/pack-collection?id=${encodeURIComponent(asset.importedPackId)}` });
+    wx.navigateTo({ url: `/pages/pack-collection/pack-collection?id=${encodeURIComponent(asset.importedPackId)}&source=private` });
   },
 
   collectSelectedLibraryAsset() {

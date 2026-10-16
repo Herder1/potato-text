@@ -37,19 +37,48 @@ test("library navigation uses stable fallbacks without capsule metrics", () => {
   assert.equal(metrics.navTotalHeight, 60);
 });
 
-// DEC-078：题库页（题包/资料 tab）的悬浮创建入口原来只有一个「＋」，补上文字。
-test("the library floating create button carries a text label", () => {
+// 2026-09-23 04:Bx 产品负责人真机反馈「去掉新建这两个字」：题库页（题包/资料 tab）的悬浮创建入口
+// 回到纯「＋」的圆钮。此前 DEC-078 曾给它补过文字（那条编号只出现在旧测试注释里，见 docs/OPEN_DECISIONS.md C2），
+// 本轮按这条直接指令取代——所以这里反过来守：**两种状态下都不许再有可见文字**。
+test("the library floating create button is an icon-only circle", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   const dir = path.resolve(__dirname, "../apps/miniprogram/pages/library");
   const markup = fs.readFileSync(path.join(dir, "library.wxml"), "utf8");
   const styles = fs.readFileSync(path.join(dir, "library.wxss"), "utf8");
 
-  assert.match(markup, /class="library-fab"[\s\S]{0,420}class="library-fab-label">\{\{actionMenuOpen \? '收起' : '新建'\}\}<\/text>/);
-  assert.match(styles, /\.library-fab \{[^}]*border-radius: 44rpx/);
-  assert.match(styles, /\.library-fab \{[^}]*padding: 0 28rpx/);
-  assert.match(styles, /\.library-fab \{[^}]*gap: 12rpx/);
-  assert.match(styles, /\.library-fab-label \{[^}]*color: #fff;[^}]*font-size: 22rpx/);
+  const fab = markup.match(/<view class="library-fab"[\s\S]*?<\/view>\s*<\/view>/);
+  assert.ok(fab, "题库页应当还有那颗悬浮创建入口");
+  const fabMarkup = fab[0];
+
+  // ① 不再有任何可见文字（含原来的「新建」/ 展开态的「收起」）；aria-label 是给读屏的名字，不算可见文字
+  assert.doesNotMatch(fabMarkup, /<text/, "悬浮入口里不应再有 text 节点");
+  assert.doesNotMatch(markup, /library-fab-label/, "library-fab-label 这条规则与节点都应删干净");
+  assert.doesNotMatch(styles, /\.library-fab-label/, "wxss 里不应再留 .library-fab-label");
+  assert.equal(fabMarkup.replace(/<[^>]*>/g, "").trim(), "", "按钮上不应有任何可见文字");
+
+  // ② 去掉文字后必须是正圆（88rpx 见方），不能留成靠 padding 撑出来的椭圆
+  assert.match(styles, /\.library-fab \{[^}]*width: 88rpx/);
+  assert.match(styles, /\.library-fab \{[^}]*height: 88rpx/);
+  assert.match(styles, /\.library-fab \{[^}]*padding: 0;/);
+  assert.match(styles, /\.library-fab \{[^}]*border-radius: 50%/);
+  assert.doesNotMatch(styles, /\.library-fab \{[^}]*min-width/, "不该再靠 min-width 撑宽");
+  assert.doesNotMatch(styles, /\.library-fab \{[^}]*gap:/, "没有第二个子元素了，gap 该删");
+
+  // ③ 无障碍不能一起丢：aria-label 按 tab 说清这一颗现在会做什么（题包＝新建题包、资料＝新建笔记）
+  assert.match(fabMarkup, /role="button" aria-label="\{\{activeContentTab === 'packs' \? '新建题包' : '新建笔记'\}\}"/);
+  assert.match(fabMarkup, /bindtap="createFromLibraryFab"/);
+  assert.match(fabMarkup, /library-fab-stroke-horizontal/);
+  assert.match(fabMarkup, /library-fab-stroke-vertical/);
+
+  // ④ 2026-09-23 04:Cx：绿框里那两行菜单（录入题目 / 新建题包）整块撤掉——节点、样式、展开态都不许留
+  assert.doesNotMatch(markup, /library-fab-menu/, "展开菜单的节点应已删除");
+  assert.doesNotMatch(markup, /library-fab-action|library-fab-small/, "菜单里那两行（含「题」「包」圆标）应已删除");
+  assert.doesNotMatch(markup, /toggleActionMenu|library-fab-glyph-close/, "不再有「＋→×」的展开/收起状态");
+  // 注释里可以提到这些规则名（说明"删了什么"），所以比对前先去掉 CSS 注释
+  const styleRules = styles.replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(styleRules, /\.library-fab-menu|\.library-fab-action|\.library-fab-small|\.library-fab-glyph-close/,
+    "菜单与旋转态的样式规则应一并删除");
 });
 
 // DEC-081：长按题包 / 分类弹出的深色工具栏原来只有图标，补上文字（与卡片工具栏同一套“图标在上、文字在下”）。
@@ -104,7 +133,6 @@ test("library long-press toolbars cannot leave an invisible full-screen mask beh
     categoryManageOpen: true,
     selectedCategory: { id: "category-1" },
     sourceMenuOpen: true,
-    actionMenuOpen: true,
     drawerOpen: true,
   });
   page.onHide();
@@ -114,8 +142,8 @@ test("library long-press toolbars cannot leave an invisible full-screen mask beh
   assert.equal(page.data.categoryManageOpen, false);
   assert.equal(page.data.selectedCategory, null);
   assert.equal(page.data.sourceMenuOpen, false);
-  assert.equal(page.data.actionMenuOpen, false);
   assert.equal(page.data.drawerOpen, false, "抽屉也要收掉，否则遮罩会挡住底部导航");
+  assert.equal(page.data.actionMenuOpen, undefined, "悬浮「＋」的展开态已随菜单撤掉，这份状态不该再存在");
 
   // onShow 也必须先收浮层：跨页残留不能让回到本页的用户一进来就点不动
   const source = fs.readFileSync(path.join(__dirname, "../apps/miniprogram/pages/library/library.js"), "utf8");

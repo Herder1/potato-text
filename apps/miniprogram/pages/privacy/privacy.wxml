@@ -1,3 +1,4 @@
+<!-- ⚠️ 已下线（2026-10-02）：已从 app.json 移除；内容拆分到 pages/settings 与 pages/personal-info。保留仅供参考。 -->
 <view class="page-shell privacy-page">
   <view class="privacy-heading">
     <view class="privacy-title">隐私与数据</view>
@@ -5,6 +6,25 @@
   </view>
 
   <view class="privacy-intro">薯考是一款题库与练习工具。我们仅在提供登录、练习同步、AI 辅助和问题反馈所必需的范围内处理个人信息。</view>
+  <view class="privacy-sync-status">{{personalSyncLabel}}</view>
+  <view class="cloud-warning" wx:if="{{blockedCount}}">{{blockedCount}} 条内容含本机附件或超过同步大小限制，尚未上传。附件云存储未接通，请勿清除本机缓存。</view>
+  <view class="cloud-warning" wx:if="{{draftCount}}">{{draftCount}} 篇笔记草稿仅保留在本机，完成保存后才会同步。</view>
+  <view class="cloud-warning" wx:if="{{unownedCount}}">本机有 {{unownedCount}} 项尚未归属账号的旧内容，暂不自动上传。原内容仍保留在未登录工作区。</view>
+  <view class="cloud-actions" wx:if="{{loggedIn}}">
+    <button class="secondary-button" bindtap="retryPersonalAssets" disabled="{{cloudBusy}}" loading="{{cloudBusy}}">重试同步</button>
+    <button class="secondary-button" bindtap="exportPersonalAssets" disabled="{{cloudBusy}}">导出已同步资产</button>
+  </view>
+  <view class="cloud-conflict" wx:for="{{cloudConflicts}}" wx:key="id">
+    <view class="privacy-section-title">{{item.title}}</view>
+    <view class="privacy-item">云端当前版本</view>
+    <scroll-view class="cloud-version" scroll-y="true"><text selectable="true">{{item.currentText}}</text></scroll-view>
+    <view class="privacy-item">待确认版本</view>
+    <scroll-view class="cloud-version" scroll-y="true"><text selectable="true">{{item.incomingText}}</text></scroll-view>
+    <view class="cloud-actions">
+      <button class="secondary-button" data-id="{{item.id}}" data-choice="current" bindtap="resolvePersonalConflict" disabled="{{cloudBusy}}">保留云端版本</button>
+      <button class="secondary-button" data-id="{{item.id}}" data-choice="incoming" bindtap="resolvePersonalConflict" disabled="{{cloudBusy}}">采用待确认版本</button>
+    </view>
+  </view>
 
   <view class="privacy-section" wx:for="{{sections}}" wx:key="title">
     <view class="privacy-section-title">{{item.title}}</view>
@@ -16,7 +36,12 @@
     <view class="privacy-item">微信登录标识：登录时收集；用于账号识别和登录；保存至账号注销。</view>
     <view class="privacy-item">昵称、头像：你授权微信资料时收集；用于个人页展示；保存至账号注销或你重新授权更新。</view>
     <view class="privacy-item">学习记录：登录后同步；用于跨设备保存练习进度；保存至账号注销。</view>
-    <view class="privacy-item">AI 输入与结果：你使用 AI 功能时收集；用于完成本次分析、评分或问答；保存至账号注销。</view>
+    <view class="privacy-item">性别、年龄段、目标考试项目、报考年份：注册引导时你主动选择；用于匹配考试范围与复习节奏、并用于了解用户构成；保存至账号注销。</view>
+    <view class="privacy-item">私人题包、独立笔记和 AI 会话：登录后按账号隔离同步；保存至账号注销或你删除相关内容。</view>
+    <view class="privacy-item">AI 输入与结果：你使用 AI 功能时收集；用于完成本次分析、评分或问答；账号注销后删除。</view>
+    <view class="privacy-item">公开投稿：已公开内容会保留用于公共题库服务，但作者信息会匿名化并解除账号关联；未公开投稿在注销时删除。</view>
+    <view class="privacy-item">反馈与举报：普通反馈原文和截图在问题关闭后最多保留 30 天；举报、处罚材料在问题关闭后最多保留 180 天，法律或安全事件另有要求的除外。</view>
+    <view class="privacy-item">订单与交易：仅保留依法需要的最小财务、退款和审计记录，并解除业务账号关联。</view>
     <view class="privacy-item">反馈内容、联系方式和截图：你主动提交时收集；用于处理客服工单；按处理需要保存。</view>
   </view>
 

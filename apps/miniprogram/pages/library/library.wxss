@@ -402,19 +402,17 @@
   font-size: 27rpx;
 }
 
-.library-fab { position: fixed; z-index: 1200; right: 30rpx; bottom: calc(142rpx + env(safe-area-inset-bottom)); display: flex; height: 88rpx; min-width: 88rpx; padding: 0 28rpx; align-items: center; justify-content: center; color: #fff; background: #303330; border-radius: 44rpx; gap: 12rpx; box-sizing: border-box; }
-/* DEC-078：悬浮「＋」补上文字，和页面里的主操作（添加卡片 / 新建卡集）保持同一套表达。 */
-.library-fab-label { color: #fff; font-size: 22rpx; font-weight: 750; line-height: 1; }
+/* 2026-09-23 04:Bx 产品负责人真机反馈「去掉新建这两个字」：悬浮入口回到纯「＋」的圆钮
+   （原来 DEC-078 给它补过文字，本轮被这条直接指令取代——编号不重编，只在变更日志记轨迹）。
+   去掉文字后不能再靠 padding/min-width 撑宽，直接写死 88rpx 见方＝正圆，和其它页的 .fab 一致。 */
+.library-fab { position: fixed; z-index: 1200; right: 30rpx; bottom: calc(142rpx + env(safe-area-inset-bottom)); display: flex; width: 88rpx; height: 88rpx; padding: 0; align-items: center; justify-content: center; color: #fff; background: #303330; border-radius: 50%; box-sizing: border-box; }
+/* .library-fab-glyph-close 已随「＋→×」的展开菜单一起撤掉（2026-09-23 04:Cx），这里不再有旋转态。
+   .library-fab-menu / -menu-open / -action / -small 四条规则同步删除：绿框里那两行菜单（录入题目 / 新建题包）整块撤掉，
+   ＋ 现在直接执行本 tab 的唯一动作（题包 tab＝新建题包、资料 tab＝新建笔记），没有"展开态"这回事了。 */
 .library-fab-glyph { position: relative; width: 32rpx; height: 32rpx; flex: 0 0 32rpx; transform: rotate(0); transform-origin: center; transition: transform .18s ease; }
 .library-fab-stroke { position: absolute; top: 50%; left: 50%; display: block; background: #fff; border-radius: 2rpx; transform: translate(-50%, -50%); }
 .library-fab-stroke-horizontal { width: 32rpx; height: 3rpx; }
 .library-fab-stroke-vertical { width: 3rpx; height: 32rpx; }
-.library-fab-glyph-close { transform: rotate(45deg); }
-.library-fab-menu { position: fixed; z-index: 1190; right: 34rpx; bottom: calc(244rpx + env(safe-area-inset-bottom)); visibility: hidden; opacity: 0; transform: translateY(18rpx); transition: opacity .18s ease, transform .18s ease; }
-.library-fab-menu-open { visibility: visible; opacity: 1; transform: translateY(0); }
-.library-fab-action { display: flex; margin-top: 12rpx; align-items: center; justify-content: flex-end; color: #3d433f; font-size: 21rpx; font-weight: 750; }
-.library-fab-action > text { padding: 10rpx 14rpx; background: rgba(255,255,255,.96); border-radius: 6rpx; }
-.library-fab-small { display: flex; width: 62rpx; height: 62rpx; margin-left: 12rpx; align-items: center; justify-content: center; color: #fff; background: #525753; border-radius: 50%; font-size: 19rpx; }
 
 .resource-detail-layer {
   position: fixed;

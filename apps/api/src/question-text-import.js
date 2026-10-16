@@ -1,3 +1,8 @@
+const { splitMaterialQuestion } = require("./material-question-split");
+const { materialGroupTotalForSubject } = require("./exam-project-registry");
+const { defaultScoreForQuestionType } = require("./question-score-defaults");
+const { normalizeQuestionType } = require("../../miniprogram/utils/question-type");
+
 const chineseTypeMap = {
   单选: "single_choice",
   单选题: "single_choice",
@@ -19,8 +24,9 @@ const chineseTypeMap = {
   名词解释题: "term_definition",
   材料分析: "material_analysis",
   材料分析题: "material_analysis",
-  作品赏析: "appreciation",
-  作品赏析题: "appreciation",
+  作品赏析: "material_analysis",
+  作品赏析题: "material_analysis",
+  赏析题: "material_analysis",
   论述: "essay",
   论述题: "essay",
 };
@@ -183,14 +189,37 @@ function normalizeFillBlankStem(value, correctAnswer = []) {
   return stem;
 }
 
+// 录入稿/JSON 导入没写分值时按**题型默认值**兜底（产品手册 §4.6.8 / DEC-099 修订）：
+// 当前只补单选 2 分、多选 3 分；判断题／填空题等不在默认表里，保持 0 分仍由校验提示人工补。
+// 卷面写了（>0）一律不动。兜底填入的不是卷面事实 → 同样标「分值待核对」。
+function withTypeDefaultScore(candidate) {
+  if (Number(candidate.maxScore) > 0) return candidate;
+  const fallback = defaultScoreForQuestionType(candidate.type);
+  if (!fallback) return candidate;
+  return {
+    ...candidate,
+    maxScore: fallback,
+    scoreBasis: "type-default",
+    scoreNeedsReview: true,
+    warnings: [...new Set([
+      ...(candidate.warnings || []),
+      `录入稿没写分值：已按题型默认值填入 ${fallback} 分并标「分值待核对」，请核对（卷面写了分值的题不受影响）`,
+    ])],
+  };
+}
+
 function normalizeImportedCandidate(candidate) {
-  if (candidate.type !== "fill_blank") return candidate;
-  return { ...candidate, stem: normalizeFillBlankStem(candidate.stem, candidate.correctAnswer) };
+  candidate = { ...candidate, type: normalizeQuestionType(candidate.type) };
+  const normalized = candidate.type === "fill_blank"
+    ? { ...candidate, stem: normalizeFillBlankStem(candidate.stem, candidate.correctAnswer) }
+    : candidate;
+  return withTypeDefaultScore(normalized);
 }
 
 function parsePlainBlock(block, defaults) {
   const candidate = {
     ...defaults,
+    type: normalizeQuestionType(defaults.type),
     knowledgePoints: [],
     options: [],
     correctAnswer: [],
@@ -207,25 +236,36 @@ function parsePlainBlock(block, defaults) {
     if (!line) return;
     const heading = line.match(/^\s*(?:\d+[.、]\s*)?(?:\[([^\]]+)\]|【([^】]+)】)\s*(.*)$/);
     if (lineIndex === 0 && heading) {
-      candidate.type = chineseTypeMap[normalizeLabel(heading[1] || heading[2])] || String(heading[1] || heading[2]).trim();
+      candidate.type = normalizeQuestionType(chineseTypeMap[normalizeLabel(heading[1] || heading[2])] || heading[1] || heading[2]);
       candidate.stem = heading[3].trim();
       activeField = "stem";
       return;
     }
     const options = parseOptionLine(line);
-    if (options.length) {
+    // 材料题没有选项：材料里的例句常写成「A. …／B. …」（2026-09-25 实测古汉材料题），
+    // 若按选项吃掉，材料内容会从题干里消失，拆分器也就看不到材料与小问。
+    if (options.length && candidate.type !== "material_analysis") {
       candidate.options.push(...options);
       activeField = "";
       return;
     }
-    const field = line.match(/^(题型|题目|题干|章节|知识点|答案|正确答案|参考答案|解析|得分点|分值|总分|来源|答案依据|页码|教材页码|试看)\s*[：:]\s*(.*)$/);
+    const field = line.match(/^(题型|题目|题干|章节|知识点|答案|正确答案|参考答案|解析|得分点|分值|总分|来源|答案依据|教材|教材名称|页码|教材页码|试看)\s*[：:]\s*(.*)$/);
     if (field) {
       const label = normalizeLabel(field[1]);
       const value = field[2].trim();
-      if (label === "题型") candidate.type = chineseTypeMap[normalizeLabel(value)] || value;
+      // 认得出来的标签都算"上一个多行字段到此结束"：否则「分值：2」之后的行会继续被追加到
+      // 参考答案/解析里（历史缺陷：录入稿里每题的「教材：《…》」都被吞进参考答案）。
+      activeField = "";
+      if (label === "题型") candidate.type = normalizeQuestionType(chineseTypeMap[normalizeLabel(value)] || value);
       else if (label === "题目" || label === "题干") { candidate.stem = value; activeField = "stem"; }
       else if (label === "章节") candidate.chapter = normalizeChapterPath(value);
       else if (label === "知识点") candidate.knowledgePoints = value.split(/[，,]/).map((item) => item.trim()).filter(Boolean);
+      else if (label === "教材" || label === "教材名称") {
+        // 文本里写的教材是**原始来源描述**，不是已确认的教材关联：按 DEC-093「原始来源描述与已确认
+        // 教材关联分开保存」，只落到 sourceLabel；**不**据此推断 bookId（如"上下册"跨两册，推不出唯一一本）。
+        // 显式写了「来源」的以来源为准（无论先后顺序）。
+        if (!candidate.sourceLabel) candidate.sourceLabel = value;
+      }
       else if (label === "答案") {
         if (["single_choice", "multiple_choice", "true_false", "fill_blank"].includes(candidate.type)) {
           candidate.correctAnswer = parseCorrectAnswer(value, candidate.type);
@@ -259,10 +299,53 @@ function parsePlainBlock(block, defaults) {
       return;
     }
     if (["stem", "referenceAnswer", "analysis"].includes(activeField)) append(activeField, line);
+    // 材料题：其余未打标签的行都算题干内容（材料原文与小问行）。
+    // 2026-09-25 修——选项行之后 `activeField` 被清空，紧跟其后的「(1)…(2)…」小问行原本会被**整行丢弃**，
+    // 于是"录入稿明明写了小问编号"的材料题拆不开（`split=false`）、又没有分值，被「缺分值」整条拦下。
+    else if (candidate.type === "material_analysis") append("stem", line);
     else if (!candidate.stem) candidate.stem = line.replace(/^\s*\d+[.、]\s*/, "");
   });
   if (!candidate.referenceAnswer && candidate.analysis) candidate.referenceAnswer = candidate.analysis;
   return candidate;
+}
+
+// 材料题（组合题）拆分：一个 `---` 块里的「材料 + (1)(2)(3) 小问」不再整块入库，
+// 而是材料进 `material`、每个小问成为独立题目（共享 materialGroupId、各自 subNumber）。
+// 规则唯一定义在 material-question-split.js（与试卷导入共用，AGENTS §5 / DEC-094 ⑤）。
+// 分值口径（产品手册 §4.6.7 / DEC-099，2026-09-25）：原卷写明的小问分值最优先（拆出来照抄）；
+// 原卷没写时**不编造**——文本导入连题组总分常常也没有，各小问保留 0（保持"缺分值"这一真实状态，
+// 仍由校验提示缺分值、由人工补）；有题组总分但没写明小问分值时，得到的是"均分占位 + 标「分值待核对」"。
+function expandMaterialQuestion(candidate, groupIndex) {
+  if (candidate.type !== "material_analysis") return [candidate];
+  const split = splitMaterialQuestion({
+    stem: candidate.stem,
+    material: candidate.material,
+    materialGroupId: candidate.materialGroupId,
+    maxScore: candidate.maxScore,
+    // 题组总分缺省兜底＝该科目的默认材料题组满分（现代汉语 14／其余四科 20，见产品手册 §4.6.7）
+    defaultGroupTotal: materialGroupTotalForSubject(candidate.subjectId),
+    referenceAnswer: candidate.referenceAnswer,
+    answerVariants: candidate.answerVariants,
+    groupNumber: String(groupIndex + 1),
+    emptyScoreFallback: 0,
+  });
+  if (!split.split) return [candidate];
+  const materialGroupId = `text-material-${groupIndex + 1}`;
+  return split.subQuestions.map((subQuestion) => ({
+    ...candidate,
+    stem: subQuestion.stem,
+    material: split.material,
+    materialGroupId,
+    groupNumber: String(groupIndex + 1),
+    subNumber: subQuestion.subNumber,
+    referenceAnswer: subQuestion.referenceAnswer,
+    answerVariants: subQuestion.answerVariants,
+    maxScore: subQuestion.maxScore,
+    // 分值从哪来：declared＝原卷写明；placeholder＝均分占位（待核对）；missing＝连题组总分都没有。
+    scoreBasis: subQuestion.scoreBasis,
+    scoreNeedsReview: split.scoreAllocation ? split.scoreAllocation.needsReview === true : false,
+    warnings: [...new Set([...(candidate.warnings || []), split.warning])],
+  }));
 }
 
 function parseQuestionImportText(text, defaults = {}) {
@@ -283,10 +366,10 @@ function parseQuestionImportText(text, defaults = {}) {
   }
   const blocks = locatePlainTextBlocks(text);
   if (!blocks.length) throw new Error("question_import_text_required");
-  return blocks.map((block) => normalizeImportedCandidate({
+  return blocks.flatMap((block, blockIndex) => expandMaterialQuestion(normalizeImportedCandidate({
     ...parsePlainBlock(block.text, defaults),
     sourceRange: block.sourceRange,
-  }));
+  }), blockIndex));
 }
 
 module.exports = { normalizeChapterPath, normalizeFillBlankStem, parseQuestionImportText, splitPlainTextBlocks };

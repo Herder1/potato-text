@@ -1,6 +1,7 @@
 const { closeTransientLayers } = require("../../utils/page-layers");
 const { subjects } = require("../../data/catalog");
 const { COMPREHENSIVE_SUBJECT_ID, buildLearningAnalysis } = require("../../utils/learning-analysis");
+const { BEAN_COST_PER_AI_CALL, isBeanAmount } = require("../../utils/bean-pricing");
 
 const DIAGNOSIS_REPORTS_KEY = "shukao_learning_diagnosis_reports";
 const DIAGNOSIS_REQUEST_TIMEOUT_MS = 60 * 1000;
@@ -448,8 +449,8 @@ Page({
   requestAiAdvice() {
     if (this.data.aiGenerating || !this.data.analysis) return;
     const app = getApp();
-    if (app.globalData.aiCredits < 1) {
-      wx.showToast({ title: "AI 额度不足", icon: "none" });
+    if (!isBeanAmount(app.globalData.beans)) {
+      wx.showToast({ title: "豆币不足", icon: "none" });
       return;
     }
     const apiBaseUrl = String(app.globalData.apiBaseUrl || "").replace(/\/$/, "");
@@ -490,10 +491,10 @@ Page({
         const result = payload.result || {};
         if (response.statusCode !== 200 || !payload.success || !String(result.text || "").trim()) {
           this.setData({ aiGenerating: false });
-          wx.showToast({ title: "生成失败，未扣额度", icon: "none" });
+          wx.showToast({ title: "生成失败，未扣豆币", icon: "none" });
           return;
         }
-        if (!app.spendAiCredit(1, {
+        if (!app.spendBeans(BEAN_COST_PER_AI_CALL, {
           referenceId: result.requestId,
           source: "learning_diagnosis",
           description: "学情诊断建议",
@@ -513,7 +514,7 @@ Page({
       },
       fail: () => {
         this.setData({ aiGenerating: false });
-        wx.showToast({ title: "生成失败，未扣额度", icon: "none" });
+        wx.showToast({ title: "生成失败，未扣豆币", icon: "none" });
       },
     });
   },

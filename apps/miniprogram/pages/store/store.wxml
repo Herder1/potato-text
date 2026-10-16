@@ -1,88 +1,205 @@
 <view class="store-page">
-  <view class="store-account-band">
-    <view><text>{{subscriptions.length}}</text><label>有效订阅</label></view>
-    <view><text>{{aiCredits}}</text><label>AI 额度</label></view>
+  <view class="store-segment" role="tablist" aria-label="账户类别">
+    <view
+      wx:for="{{tabs}}"
+      wx:key="id"
+      class="segment-item {{activeTab === item.id ? 'segment-item-active' : ''}}"
+      data-id="{{item.id}}"
+      bindtap="selectTab"
+      role="tab"
+      aria-selected="{{activeTab === item.id}}"
+    >{{item.label}}</view>
   </view>
 
-  <view class="store-tabs">
-    <view wx:for="{{tabs}}" wx:key="id" class="store-tab {{activeTab === item.id ? 'store-tab-active' : ''}}" data-id="{{item.id}}" bindtap="selectTab">{{item.label}}</view>
-  </view>
+  <!-- 加载中 / 加载失败：留在顶部，便于立刻看到状态 -->
+  <view class="state-line" wx:if="{{accountState === 'loading'}}">正在读取账户信息…</view>
+  <view class="state-line state-line-failed" wx:elif="{{accountState === 'failed'}}" bindtap="loadProducts" role="button" aria-label="重试">暂时无法加载账户，请稍后重试</view>
 
   <block wx:if="{{activeTab === 'subscriptions'}}">
-    <view class="store-section-head account-section-head">
-      <text>当前订阅</text>
-      <label>{{subscriptions.length}} 项有效</label>
-    </view>
-    <view class="account-empty" wx:if="{{!subscriptions.length}}">当前没有有效订阅</view>
-    <view class="account-list" wx:else>
-      <view class="subscription-row" wx:for="{{subscriptions}}" wx:key="id">
-        <view>
-          <text>{{item.product.name || '学习订阅'}}</text>
-          <label>{{item.product.scopeLabel || '订阅权益'}}</label>
+    <!-- 会员功能权益独立于题库订阅，不用题库套餐推断会员状态。 -->
+    <view class="account-summary member-summary panel">
+      <view class="summary-head">
+        <text class="summary-label">会员状态</text>
+        <view class="summary-orders" bindtap="openOrders" role="button" aria-label="订单记录">订单记录 ›</view>
+      </view>
+      <view class="member-status-row">
+        <view class="member-status-copy">
+          <text class="summary-value {{memberActive ? '' : 'member-inactive'}}">{{memberActive ? '已开通' : '未开通'}}</text>
+          <text class="summary-hint">{{memberActive ? memberExpiryText : '会员功能权益尚未开放'}}</text>
         </view>
-        <text>至 {{item.expiresText}}</text>
+        <view class="library-subscribe" bindtap="openOrderPage" role="button" aria-label="去订阅">去订阅</view>
       </view>
     </view>
+
+    <view class="account-summary library-summary panel {{subscriptions.length ? 'library-summary-filled' : 'library-summary-empty'}}">
+      <text class="summary-label">题库订阅</text>
+
+      <view class="subscription-list" wx:if="{{subscriptions.length}}">
+        <view class="subscription-row" wx:for="{{subscriptions}}" wx:key="id" data-id="{{item.productId}}" bindtap="openSubscriptionDetail" role="button" aria-label="查看套餐详情">
+          <view class="subscription-copy">
+            <text class="subscription-name">{{index + 1}}. {{item.product.packageName || item.product.name || '学习订阅'}}</text>
+            <text class="subscription-meta">{{item.expiresLabel}}</text>
+          </view>
+          <view class="subscription-renew" data-id="{{item.productId}}" catchtap="renewSubscription" role="button" aria-label="续订">续订</view>
+        </view>
+      </view>
+
+      <view class="library-summary-body" wx:else>
+        <text class="summary-value">暂未开通订阅</text>
+        <text class="summary-hint">订阅后解锁对应题库</text>
+      </view>
+    </view>
+
   </block>
 
   <block wx:else>
-    <view class="store-section-head account-section-head">
-      <text>额度账户</text>
-      <label>共 {{aiCredits}} 点</label>
-    </view>
-    <view class="credit-balance-strip">
-      <view><text>{{aiCredits}}</text><label>总余额</label></view>
-      <view><text>{{expiringCredits}}</text><label>限时额度</label></view>
-      <view><text>{{permanentCredits}}</text><label>长期额度</label></view>
+    <!-- 豆币页摘要（2026-10-05 第三版）：总资产 + 三个分项（个人充值 / 平台赠送 / 优惠券）+ 去充值；
+         订单记录在卡片右上角 -->
+    <view class="bean-summary panel">
+      <view class="summary-head">
+        <text class="summary-label">总资产（豆币）</text>
+        <view class="summary-orders" bindtap="openOrders" role="button" aria-label="订单记录">订单记录 ›</view>
+      </view>
+      <view class="bean-total-row">
+        <view class="bean-total-copy">
+          <view class="bean-total"><image class="bean-coin" src="/assets/icons/bean-coin.svg" mode="aspectFit" /><text>{{beanBalanceText}}</text></view>
+          <view class="bean-expire" wx:if="{{expiringText}}">其中 {{expiringBeans}} 将于 {{expiringText}}</view>
+        </view>
+        <view class="bean-recharge" bindtap="openRechargeSheet" role="button" aria-label="去充值">去充值</view>
+      </view>
+      <view class="bean-split">
+        <view class="bean-split-cell bean-split-left">
+          <view class="bean-split-block">
+            <text class="bean-split-label">个人充值</text>
+            <text class="bean-split-value">{{rechargeBeans}}</text>
+          </view>
+        </view>
+        <view class="bean-split-cell bean-split-mid">
+          <view class="bean-split-block">
+            <text class="bean-split-label">平台赠送</text>
+            <text class="bean-split-value">{{grantBeans}}</text>
+          </view>
+        </view>
+        <view class="bean-split-cell bean-split-right">
+          <view class="bean-split-block">
+            <text class="bean-split-label">优惠券</text>
+            <text class="bean-split-value bean-split-empty">{{couponText}}</text>
+          </view>
+        </view>
+      </view>
     </view>
 
-    <view class="store-section-head transaction-section-head">
-      <text>额度流水</text>
-      <label>最近 {{creditTransactions.length}} 条</label>
+    <view class="section-head">
+      <text>收支明细</text>
+      <view class="filter-row">
+        <view
+          wx:for="{{transactionFilters}}"
+          wx:key="id"
+          class="filter-chip {{transactionFilter === item.id ? 'filter-chip-active' : ''}}"
+          data-id="{{item.id}}"
+          bindtap="selectTransactionFilter"
+          role="button"
+          aria-label="{{item.label}}"
+        >{{item.label}}</view>
+      </view>
     </view>
-    <view class="account-empty" wx:if="{{!creditTransactions.length}}">暂无额度流水</view>
-    <view class="account-list" wx:else>
-      <view class="credit-transaction-row" wx:for="{{creditTransactions}}" wx:key="id">
-        <view><text>{{item.description || '额度变动'}}</text><label>{{item.timeText}}</label></view>
-        <text class="{{item.amount > 0 ? 'credit-positive' : 'credit-negative'}}">{{item.amountText}}</text>
+    <view class="store-empty" wx:if="{{!visibleTransactions.length}}">{{transactionFilter === 'all' ? '暂无收支记录' : (transactionFilter === 'expired' ? '暂无过期记录' : (transactionFilter === 'in' ? '暂无获取记录' : '暂无消耗记录'))}}</view>
+    <view class="panel transaction-list" wx:else>
+      <view class="transaction-row" wx:for="{{visibleTransactions}}" wx:key="id">
+        <view class="transaction-copy">
+          <text class="transaction-name">{{item.description || '豆币变动'}}</text>
+          <text class="transaction-time">{{item.timeText}}</text>
+        </view>
+        <text class="{{item.income ? 'amount-in' : 'amount-out'}}">{{item.amountText}}</text>
       </view>
     </view>
   </block>
 
-  <view class="store-section-head product-section-head">
-    <text>{{activeTab === 'subscriptions' ? '订阅套餐' : '补充 AI 额度'}}</text>
-    <label>{{visibleProducts.length}} 个商品</label>
-  </view>
+  <!-- 未登录提示按设计稿放页面底部（加载中/失败仍在顶部，便于立刻看到原因） -->
+  <view class="state-line state-line-guest" wx:if="{{accountState === 'guest'}}">登录后可同步订阅与豆币记录</view>
+  <view class="store-footnote">套餐订单与赠送豆币分账，权益以支付确认页为准。</view>
 
-  <view class="store-loading" wx:if="{{loading && !visibleProducts.length}}">正在读取商品…</view>
-  <view class="store-empty" wx:elif="{{loadFailed && !visibleProducts.length}}" bindtap="loadProducts">商品加载失败，点击重试</view>
-  <view class="store-empty" wx:elif="{{!loading && !visibleProducts.length}}">当前暂无可购买商品</view>
-
-  <view
-    class="product-card {{item.featured ? 'product-card-featured' : ''}} {{item.storeType === 'credits' ? 'product-card-credits' : ''}}"
-    wx:for="{{visibleProducts}}"
-    wx:key="id"
-    data-id="{{item.id}}"
-    bindtap="openProduct"
-  >
-    <view class="product-topline"><text>{{item.featured ? '推荐套餐' : item.storeType === 'credits' ? '额度包' : '单科订阅'}}</text><label wx:if="{{item.owned}}">已订阅</label></view>
-    <view class="product-name">{{item.name}}</view>
-    <view class="product-scope">{{item.scopeLabel}}</view>
-    <view class="product-benefits"><view wx:for="{{item.benefits}}" wx:for-item="benefit" wx:key="*this"><text>✓</text><label>{{benefit}}</label></view></view>
-    <view class="product-purchase">
-      <view><text>{{item.priceLabel}}</text><label>{{item.priceSuffix}}</label></view>
-      <button data-id="{{item.id}}" catchtap="startPurchase">{{item.actionLabel}}</button>
+  <!-- 充值：下滑弹窗（余额 + 规格 + 支付方式 + 固定底栏「立即支付」） -->
+  <view class="sheet-mask" wx:if="{{rechargeSheetOpen}}" bindtap="closeRechargeSheet"></view>
+  <view class="sheet" wx:if="{{rechargeSheetOpen}}">
+    <view class="sheet-handle"></view>
+    <view class="sheet-head">
+      <text class="sheet-name">充值</text>
+      <text class="sheet-scope">余额 {{beanBalanceText}} 豆币（充值币 {{rechargeBeans}} ｜ 赠送币 {{grantBeans}}）</text>
     </view>
+    <scroll-view class="sheet-scroll" scroll-y="true">
+      <view class="store-loading" wx:if="{{loading && !beanProducts.length}}">正在读取充值规格…</view>
+      <view class="store-empty" wx:elif="{{!beanProducts.length}}">当前暂无可充值规格</view>
+      <view class="recharge-row" wx:else>
+        <view
+          class="recharge-option {{selectedBeanId === item.id ? 'recharge-option-active' : ''}}"
+          wx:for="{{beanProducts}}"
+          wx:key="id"
+          data-id="{{item.id}}"
+          bindtap="selectBeanPack"
+          role="button"
+          aria-label="{{item.name}}"
+        >
+          <view class="recharge-amount"><text class="recharge-number">{{item.beanAmountNumber}}</text><text class="recharge-unit">豆币</text></view>
+          <text class="recharge-price">{{item.priceLabel}}</text>
+        </view>
+      </view>
+      <!-- 支付方式：系统目前只有微信支付这一条通道（未启用），不摆出用不了的支付宝选项。 -->
+      <view class="pay-row">
+        <text class="pay-name">微信支付</text>
+        <text class="pay-state">通道未启用</text>
+      </view>
+    </scroll-view>
+    <view class="sheet-bar">
+      <!-- 按钮居中、金额进按钮里；下方是豆币用户协议入口（口径同其他法务文本） -->
+      <button class="sheet-button sheet-button-wide" bindtap="paySelectedBeanPack">立即支付{{selectedBean ? ' ' + selectedBean.priceLabel : ''}}</button>
+    </view>
+    <view class="sheet-agreement">点击支付即代表同意<text class="sheet-agreement-link" bindtap="openLegal" data-doc="terms" role="button" aria-label="用户协议">《用户协议》</text>与<text class="sheet-agreement-link" bindtap="openLegal" data-doc="refund" role="button" aria-label="退款政策">《退款政策》</text></view>
   </view>
 
-  <view class="store-footnote">订阅与额度相互独立，权益以支付确认页为准。</view>
+  <!-- 订单记录：沿用同一套行样式的轻量弹层（orders 来自账户接口） -->
+  <view class="sheet-mask" wx:if="{{ordersOpen}}" bindtap="closeOrders"></view>
+  <view class="sheet" wx:if="{{ordersOpen}}">
+    <view class="sheet-handle"></view>
+    <view class="sheet-head">
+      <text class="sheet-name">订单记录</text>
+      <text class="sheet-scope">最近 {{orders.length}} 条</text>
+    </view>
+    <scroll-view class="sheet-scroll" scroll-y="true">
+      <view class="transaction-row" wx:for="{{orders}}" wx:key="id">
+        <view class="transaction-copy">
+          <text class="transaction-name">{{item.productName || item.name || '套餐订单'}}</text>
+          <text class="transaction-time">{{item.timeText}} · {{item.statusText}}</text>
+        </view>
+        <text class="amount-out">{{item.amountText}}</text>
+      </view>
+    </scroll-view>
+  </view>
 
-  <view class="product-detail-mask" wx:if="{{selectedProduct}}" bindtap="closeProduct"></view>
-  <view class="product-detail" wx:if="{{selectedProduct}}">
-    <view class="product-detail-handle"></view>
-    <view class="product-detail-head"><view><text>{{selectedProduct.storeType === 'credits' ? 'AI 额度' : '学习订阅'}}</text><view>{{selectedProduct.name}}</view></view><view class="product-detail-close" bindtap="closeProduct">×</view></view>
-    <view class="product-detail-scope">{{selectedProduct.scopeLabel}}</view>
-    <view class="product-detail-benefits"><view wx:for="{{selectedProduct.benefits}}" wx:key="*this"><text>✓</text><label>{{item}}</label></view></view>
-    <view class="product-detail-action"><view><text>{{selectedProduct.priceLabel}}</text><label>{{selectedProduct.priceSuffix}}</label></view><button data-id="{{selectedProduct.id}}" bindtap="startPurchase">{{selectedProduct.actionLabel}}</button></view>
+  <!-- 已购套餐详情：点击套餐行从底部展开，行内按钮仍直接执行对应动作。 -->
+  <view class="sheet-mask" wx:if="{{subscriptionDetailOpen}}" bindtap="closeSubscriptionDetail"></view>
+  <view class="sheet subscription-detail-sheet" wx:if="{{subscriptionDetailOpen}}">
+    <view class="sheet-handle"></view>
+    <view class="sheet-head">
+      <text class="sheet-name">{{selectedSubscription.product.packageName || selectedSubscription.product.name || '学习订阅'}}</text>
+      <text class="sheet-scope">题库订阅详情</text>
+    </view>
+    <scroll-view class="sheet-scroll" scroll-y="true">
+      <view class="sheet-block">
+        <text class="sheet-label">套餐范围</text>
+        <text class="sheet-text">{{selectedSubscription.scopeText}}</text>
+      </view>
+      <view class="sheet-block">
+        <text class="sheet-label">套餐时间</text>
+        <text class="sheet-text">{{selectedSubscription.expiresLabel}}</text>
+      </view>
+      <view class="sheet-block">
+        <text class="sheet-label">订购记录</text>
+        <text class="sheet-text">已订购 {{selectedSubscription.purchaseCount}} 次</text>
+      </view>
+    </scroll-view>
+    <view class="sheet-bar sheet-bar-split">
+      <view class="subscription-renew" data-id="{{selectedSubscription.productId}}" catchtap="renewSubscription" role="button" aria-label="续订">续订</view>
+    </view>
   </view>
 </view>

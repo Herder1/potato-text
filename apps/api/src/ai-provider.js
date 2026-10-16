@@ -17,11 +17,25 @@ function extractMessageContent(message) {
   return message.map((item) => (typeof item === "string" ? item : item.text || "")).join("");
 }
 
+// 上游错误正文里可能带 HTML/纯文本（例如 Cloudflare 的地区限制页），也可能带 JSON 错误。
+// 规则：能取到结构化 message 就用它；取不到就退回 HTTP 状态 + 正文片段（截断、去掉疑似密钥），
+// 否则后台只能看到「HTTP 451」这种无从下手的提示。
 function providerErrorMessage(body, status) {
   if (typeof body?.error === "string" && body.error.trim()) return body.error.trim();
   if (body?.error && typeof body.error.message === "string" && body.error.message.trim()) return body.error.message.trim();
   if (typeof body?.message === "string" && body.message.trim()) return body.message.trim();
+  if (body && typeof body.detail === "object" && typeof body.detail.message === "string" && body.detail.message.trim()) return body.detail.message.trim();
+  if (typeof body?.title === "string" && body.title.trim()) return `HTTP ${status} ${body.title.trim()}`;
+  if (typeof body === "string" && body.trim()) return `HTTP ${status} ${body.trim().replace(/[A-Za-z0-9_-]{24,}/g, "***").slice(0, 200)}`;
   return `HTTP ${status}`;
+}
+
+// 451 = 上游按地区/法务原因拒绝当前网络出口（Cloudflare 常见）。这是出口问题，不是密钥问题，
+// 单独给一个错误码，后台才能提示「让服务端也走本机代理」而不是让人反复改 Base URL。
+function providerHttpError(status, body) {
+  const message = providerErrorMessage(body, status);
+  if (status === 451) return new Error(`provider_region_blocked:${message}`);
+  return new Error(`provider_http_error:${message}`);
 }
 
 function providerHeaders(provider) {
@@ -130,7 +144,69 @@ function geminiRequest(provider, request) {
   };
 }
 
+// Typesafe / Jev（System One，https://docs.typesafe.ai/api）：POST /v1/systemone，
+// body = { state, model, questions }，返回按 question id 命名的结构化答案（noul/score/choice）。
+// 它**不生成文本**，所以只用于连通性测试（以及将来的结构化判定接入），不能当对话模型用。
+const SYSTEM_ONE_PROBE_QUESTION_ID = "connectivity_probe";
+const SYSTEM_ONE_PROBE_QUESTION = {
+  type: "noul",
+  instructions: "Is this request reachable and well formed?",
+};
+
+function isConversationalProtocol(protocol) {
+  return protocol !== "typesafe_systemone";
+}
+
+function assertConversationalProtocol(provider) {
+  if (!isConversationalProtocol(provider && provider.protocol)) {
+    throw new Error("provider_protocol_not_conversational");
+  }
+}
+
+function systemOneState(request) {
+  // 约定：调用方给 state 就直接用（结构化判定场景）；否则把 messages 拼成可读文本。
+  if (request.state !== undefined && request.state !== null) return request.state;
+  return (request.messages || [])
+    .map((message) => `${message.role === "assistant" ? "assistant" : (message.role === "system" ? "system" : "user")}: ${extractMessageContent(message.content) || message.content || ""}`)
+    .join("\n\n");
+}
+
+function systemOneRequest(provider, request) {
+  const questions = request.questions && Object.keys(request.questions).length
+    ? request.questions
+    : { [SYSTEM_ONE_PROBE_QUESTION_ID]: SYSTEM_ONE_PROBE_QUESTION };
+  return {
+    url: endpointUrl(provider, "systemone"),
+    payload: {
+      state: systemOneState(request),
+      model: request.model,
+      questions,
+    },
+  };
+}
+
+/** 把 SystemOne 的答案压成一行可读预览（后台「测试」与批量测试都用它）。形状未知时退化为紧凑 JSON。 */
+function systemOnePreview(body, questionIds = []) {
+  const answers = (body && (body.answers || body.results || body.output)) || body || {};
+  const picked = questionIds.map((id) => (answers && answers[id] !== undefined ? [id, answers[id]] : null)).filter(Boolean);
+  const pairs = picked.length ? picked : Object.entries(answers).slice(0, 3);
+  const rendered = pairs.map(([id, answer]) => {
+    if (answer === null || typeof answer !== "object") return `${id}=${String(answer)}`;
+    const numeric = ["noul", "value", "score", "probability"].map((key) => (answer[key] !== undefined ? `${key}=${answer[key]}` : "")).filter(Boolean).join(" ");
+    const choice = answer.choice !== undefined ? `choice=${answer.choice}` : "";
+    const confidence = answer.confidence !== undefined ? `confidence=${answer.confidence}` : "";
+    return `${id}(${[numeric, choice, confidence].filter(Boolean).join(" ") || "已返回答案"})`;
+  });
+  if (rendered.length) return rendered.join(" · ").slice(0, 200);
+  try {
+    return JSON.stringify(body).slice(0, 200);
+  } catch (error) {
+    return "";
+  }
+}
+
 function buildProviderRequest(provider, request) {
+  if (provider.protocol === "typesafe_systemone") return systemOneRequest(provider, request);
   if (provider.protocol === "openai_responses") return openAiResponsesRequest(provider, request);
   if (provider.protocol === "anthropic_messages") return anthropicRequest(provider, request);
   if (provider.protocol === "google_gemini") return geminiRequest(provider, request);
@@ -138,6 +214,10 @@ function buildProviderRequest(provider, request) {
 }
 
 function extractCompletion(provider, body, fallbackModel) {
+  if (provider.protocol === "typesafe_systemone") {
+    // System One 不返回文本：把结构化答案压成一行，供调用方展示/记录。
+    return { content: systemOnePreview(body), usage: body.usage || null, model: body.model || fallbackModel };
+  }
   if (provider.protocol === "openai_responses") {
     const content = body.output_text || (body.output || []).flatMap((item) => item.content || []).map((item) => item.text || "").join("");
     return { content, usage: body.usage || null, model: body.model || fallbackModel };
@@ -152,6 +232,26 @@ function extractCompletion(provider, body, fallbackModel) {
   }
   const content = extractMessageContent(body.choices && body.choices[0] && body.choices[0].message && body.choices[0].message.content);
   return { content, usage: body.usage || null, model: body.model || fallbackModel };
+}
+
+function emptyCompletionError(provider, body) {
+  const choice = provider.protocol === "openai_chat_completions" ? body?.choices?.[0] : null;
+  const finishReason = choice?.finish_reason || body?.status || body?.candidates?.[0]?.finishReason;
+  const usage = body?.usage || body?.usageMetadata;
+  const outputTokens = Number(usage?.completion_tokens ?? usage?.output_tokens ?? usage?.candidatesTokenCount);
+  if (finishReason === "length" || finishReason === "MAX_TOKENS") {
+    return new Error("provider_output_budget_exhausted");
+  }
+  if (choice?.message?.reasoning_content && !choice?.message?.content) {
+    return new Error("provider_reasoning_only_response");
+  }
+  if (finishReason === "content_filter" || finishReason === "SAFETY") {
+    return new Error("provider_output_filtered");
+  }
+  if (Number.isFinite(outputTokens) && outputTokens > 0) {
+    return new Error("provider_empty_response_with_usage");
+  }
+  return new Error("provider_empty_response");
 }
 
 function buildStreamingRequest(provider, request) {
@@ -205,14 +305,14 @@ async function callChatCompletion(provider, request) {
     try {
       body = responseText ? JSON.parse(responseText) : {};
     } catch (error) {
-      if (!response.ok) throw new Error(`provider_http_error:HTTP ${response.status}`);
+      if (!response.ok) throw providerHttpError(response.status, responseText);
       throw new Error("provider_invalid_json_response");
     }
     if (!response.ok) {
-      throw new Error(`provider_http_error:${providerErrorMessage(body, response.status)}`);
+      throw providerHttpError(response.status, body);
     }
     const completion = extractCompletion(provider, body, request.model);
-    if (!completion.content) throw new Error("provider_empty_response");
+    if (!completion.content || !String(completion.content).trim()) throw emptyCompletionError(provider, body);
     return completion;
   } catch (error) {
     if (error.name === "AbortError") throw new Error("provider_timeout");
@@ -246,8 +346,8 @@ async function streamChatCompletion(provider, request, handlers = {}) {
     if (!response.ok) {
       const responseText = await response.text();
       let body = {};
-      try { body = responseText ? JSON.parse(responseText) : {}; } catch (error) { body = {}; }
-      throw new Error(`provider_http_error:${providerErrorMessage(body, response.status)}`);
+      try { body = responseText ? JSON.parse(responseText) : {}; } catch (error) { body = responseText; }
+      throw providerHttpError(response.status, body);
     }
     if (!response.body || typeof response.body.getReader !== "function") throw new Error("provider_stream_unavailable");
     if (handlers.onReady) handlers.onReady({ model: responseModel });
@@ -325,10 +425,18 @@ async function listProviderModels(provider) {
       headers: providerHeaders(provider),
       signal: controller.signal,
     });
-    const body = await response.json().catch(() => { throw new Error("provider_invalid_json_response"); });
-    if (!response.ok) {
-      throw new Error(`provider_http_error:${providerErrorMessage(body, response.status)}`);
+    const responseText = await response.text();
+    let body = null;
+    try {
+      body = responseText ? JSON.parse(responseText) : {};
+    } catch (error) {
+      body = null;
     }
+    if (!response.ok) {
+      // 非 JSON 正文（WAF / 网关页面）：原样透出片段，后台才看得到「地区不可用」这类真因。
+      throw providerHttpError(response.status, body === null ? responseText : body);
+    }
+    if (body === null) throw new Error("provider_invalid_json_response");
     const models = normalizeListedModels(provider, body);
     if (!models.length) throw new Error("provider_models_empty");
     return models;
@@ -580,7 +688,13 @@ function buildScoringMessages(question, answer, prompt = null) {
   ];
 }
 
+/** 场景调用入口统一挡住「非对话上游」：System One 只做结构化判定，不能当对话模型用。 */
+function assertSceneProvider(provider) {
+  assertConversationalProtocol(provider);
+}
+
 async function scoreWithProvider(provider, route, question, answer, requestId, prompt = null) {
+  assertSceneProvider(provider);
   const upstreamStartedAt = Date.now();
   const completion = await callChatCompletion(provider, {
     model: route.model,
@@ -607,6 +721,7 @@ async function scoreWithProvider(provider, route, question, answer, requestId, p
 }
 
 async function completePromptWithProvider(provider, route, prompt, values, options = {}) {
+  assertSceneProvider(provider);
   const completion = await callChatCompletion(provider, {
     model: route.model,
     messages: [
@@ -622,6 +737,7 @@ async function completePromptWithProvider(provider, route, prompt, values, optio
 }
 
 async function completeVisionPromptWithProvider(provider, route, prompt, values, images, options = {}) {
+  assertSceneProvider(provider);
   const renderedPrompt = renderPromptTemplate(prompt.userPromptTemplate, values);
   const imageContent = (Array.isArray(images) ? images : []).flatMap((image, index) => {
     const dataBase64 = String(image.dataBase64 || "");
@@ -658,6 +774,7 @@ async function completeVisionPromptWithProvider(provider, route, prompt, values,
 }
 
 async function streamPromptWithProvider(provider, route, prompt, values, handlers) {
+  assertSceneProvider(provider);
   return streamChatCompletion(provider, {
     model: route.model,
     messages: [
@@ -699,6 +816,7 @@ module.exports = {
   callChatCompletion,
   completePromptWithProvider,
   completeVisionPromptWithProvider,
+  isConversationalProtocol,
   listProviderModels,
   normalizeModelScore,
   parseJsonContent,
@@ -706,5 +824,6 @@ module.exports = {
   scoreWithProvider,
   streamChatCompletion,
   streamPromptWithProvider,
+  systemOnePreview,
   testProvider,
 };

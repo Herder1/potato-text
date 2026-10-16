@@ -1,5 +1,6 @@
 const { loadManagedAssets } = require("../../utils/asset-store");
 const { buildCommunityIdentity, buildContributionItems } = require("../../utils/community-profile");
+const { usableAvatarUrl } = require("../../utils/avatar");
 
 Page({
   data: {
@@ -15,7 +16,7 @@ Page({
     this.remoteAssets = [];
     this.setData({
       nickname: app.globalData.user && app.globalData.user.nickname || "薯考同学",
-      avatarUrl: app.globalData.user && app.globalData.user.avatarUrl || "",
+      avatarUrl: usableAvatarUrl(app.globalData.user && app.globalData.user.avatarUrl),
     });
     this.refresh();
     this.loadRemoteContributions();

@@ -985,7 +985,7 @@ test("material subquestions keep shared material and independent scoring items",
   assert.deepEqual(merged.questions.slice(1, 3).map((question) => question.maxScore), [2, 2]);
 });
 
-test("modern Chinese marking questions and material inheritance are preserved", () => {
+test("modern Chinese marking questions stay text answering while material inheritance is preserved", () => {
   const recognized = normalizeExamModelOutput({
     questions: [{
       number: "1",
@@ -998,11 +998,11 @@ test("modern Chinese marking questions and material inheritance are preserved", 
       maxScore: 2,
     }],
   });
-  assert.equal(recognized.questions[0].responseMode, "annotation");
+  assert.equal(recognized.questions[0].responseMode, "text");
   assert.equal(recognized.questions[0].usesSharedMaterial, false);
 });
 
-test("original material marks stay separate from the user's annotation response", () => {
+test("original material marks stay separate from the answering field", () => {
   const recognized = normalizeExamModelOutput({
     questions: [{
       number: "48",

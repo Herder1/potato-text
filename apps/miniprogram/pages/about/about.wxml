@@ -1,0 +1,32 @@
+<view class="page-shell about-page">
+  <view class="about-hero panel">
+    <view class="about-mark">学</view>
+    <view class="about-name">{{appName}}</view>
+    <view class="about-version">版本 {{version}}</view>
+  </view>
+
+  <view class="about-list panel">
+    <view
+      class="about-row"
+      wx:for="{{docs}}"
+      wx:key="key"
+      data-doc="{{item.key}}"
+      bindtap="openDoc"
+      hover-class="about-row-press"
+      role="button"
+      aria-label="{{item.title}}"
+    >
+      <image class="about-icon" src="{{item.icon}}" mode="aspectFit" />
+      <view class="about-copy">
+        <text class="about-title">{{item.title}}</text>
+        <text class="about-desc">{{item.desc}}</text>
+      </view>
+      <text class="about-arrow">›</text>
+    </view>
+  </view>
+
+  <view class="about-footer">
+    <view>{{copyright}}</view>
+    <view>{{slogan}}</view>
+  </view>
+</view>

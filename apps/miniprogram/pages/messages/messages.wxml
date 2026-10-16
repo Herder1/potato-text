@@ -1,0 +1,30 @@
+<!-- 消息中心（产品负责人 2026-09-23 04:9x：「做一个消息中心页面，效果图是图2，入口在绿框图3」）
+     效果图＝ tmp/verify-out/ref-04-Ax-messages.png：按天分组（居中浅灰小字）＋ 白卡列表；
+     卡片＝标题 / 正文摘要 /（点开后）全文 / 右下角「#类型」与「点击查看 ››」；
+     未读＝卡片左侧留白处一颗橙点（效果图是 #fe6900，按非文本 ≥3:1 深一档取 #f25c00），点开即已读。
+     数据来源＝公开公告与当前账号反馈通知（utils/message-center.js）。 -->
+<view class="page-shell message-page">
+  <view class="message-error" wx:if="{{loadError}}">{{loadError}}</view>
+  <block wx:if="{{groups.length}}">
+    <view class="message-group" wx:for="{{groups}}" wx:key="key">
+      <view class="message-group-label">{{item.label}}</view>
+      <view class="message-item" wx:for="{{item.items}}" wx:for-item="message" wx:key="id">
+        <view class="message-dot-col"><view class="message-dot" wx:if="{{message.unread}}"></view></view>
+        <view class="message-card" data-message-id="{{message.id}}" bindtap="toggleMessage" role="button" aria-label="{{message.expanded ? '收起' : '查看全文'}}：{{message.title}}">
+          <view class="message-title">{{message.title}}</view>
+          <view class="message-body">{{message.summary}}</view>
+          <view class="message-content" wx:if="{{message.expanded && message.expandable}}">{{message.content}}</view>
+          <view class="message-feedback-link" wx:if="{{message.feedbackId}}" data-message-id="{{message.id}}" catchtap="openFeedback" role="button">查看处理进度</view>
+          <view class="message-foot" wx:if="{{message.tag || message.expandable}}">
+            <text class="message-tag" wx:if="{{message.tag}}">{{message.tag}}</text>
+            <text class="message-action" wx:if="{{message.expandable}}">{{message.expanded ? '收起' : '点击查看 ››'}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </block>
+  <view class="message-empty" wx:else>
+    <view>暂无消息</view>
+    <text wx:if="{{loading}}">正在加载</text>
+  </view>
+</view>

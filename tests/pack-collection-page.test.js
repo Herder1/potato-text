@@ -121,6 +121,11 @@ test("collection markup keeps the card grid, deleted state, and bottom navigatio
   assert.match(markup, /bindtap="startPractice"/);
   assert.match(markup, /class="more-mark">···<\/text>/);
   assert.match(markup, /class="hero-mark">题<\/view>/);
+  // 2026-10-05 产品负责人指定：本页原先的蓝色（题包标记与「待录入」文字）统一改成品牌绿 #0b9588。
+  assert.match(styles, /\.hero-mark \{[^}]*background: #0b9588/);
+  assert.match(styles, /\.card-tag \{[^}]*color: #0b9588/);
+  assert.match(styles, /\.study-foot text:first-child \{ color: #0b9588; \}/);
+  assert.doesNotMatch(styles, /#237bff/, "蓝色不应再有残留");
   assert.doesNotMatch(markup, /collection-meta|meta-value|meta-label/, "统计行已按产品负责人要求去掉");
   assert.doesNotMatch(styles, /\.collection-meta|\.meta-value|\.meta-label/);
   assert.match(styles, /\.collection-footer \{[^}]*right: 48rpx;[^}]*left: 48rpx;[^}]*height: 106rpx;[^}]*border-radius: 56rpx/);

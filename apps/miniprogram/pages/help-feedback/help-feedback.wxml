@@ -26,9 +26,19 @@
     </view>
     <view class="help-empty" wx:else>没有找到相关问题</view>
 
-    <view class="feedback-entry" bindtap="openSubmit">
-      <view><text>仍未解决</text><view>提交问题，我们会保留处理进度</view></view>
+    <view class="contact-card">
+      <view class="contact-blob contact-blob-top"></view>
+      <view class="contact-blob contact-blob-bottom"></view>
+      <view class="contact-icon">
+        <image class="contact-icon-img" src="/assets/icons/customer-service.svg" mode="aspectFit" />
+      </view>
+      <view class="contact-copy">
+        <view class="contact-title">在线客服</view>
+        <view class="contact-subtitle">有任何问题，请联系我们的在线客服</view>
+      </view>
       <view class="entry-arrow"></view>
+      <!-- 原生客服按钮做成整卡透明的点击层：它不参与布局，组件自带样式也就影响不到卡片外观 -->
+      <button class="contact-hit" open-type="contact" type="button" aria-label="在线客服"></button>
     </view>
   </block>
 
@@ -45,7 +55,7 @@
       </view>
 
       <view class="form-label form-label-spaced"><text>问题描述</text><text>{{feedbackContent.length}} / 1000</text></view>
-      <textarea class="feedback-textarea" value="{{feedbackContent}}" maxlength="1000" placeholder="请说明发生了什么、如何操作可以复现" bindinput="updateContent" />
+      <textarea class="feedback-textarea" value="{{feedbackContent}}" maxlength="1000" placeholder="请说明发生了什么、如何操作可以复现（不少于五个字才能提交）" bindinput="updateContent" />
 
       <view class="form-label form-label-spaced"><text>截图</text><text>最多 3 张，每张不超过 200KB</text></view>
       <view class="image-list">
@@ -70,6 +80,10 @@
     </view>
 
     <view class="history-loading" wx:if="{{loggedIn && historyLoading && !feedbackItems.length}}">正在读取反馈记录</view>
+    <view class="history-empty" wx:elif="{{loggedIn && historyError}}">
+      <view>{{historyError}}</view>
+      <button bindtap="loadHistory">重试</button>
+    </view>
     <view class="history-empty" wx:elif="{{loggedIn && !feedbackItems.length}}">
       <view>还没有反馈记录</view>
       <button bindtap="openSubmit">提交第一条反馈</button>
@@ -83,6 +97,17 @@
         <view class="history-content">{{item.content}}</view>
         <view class="history-meta" wx:if="{{item.attachmentCount}}">已附 {{item.attachmentCount}} 张截图</view>
         <view class="history-response" wx:if="{{item.response && item.status !== 'pending'}}"><text>处理说明</text><view>{{item.response}}</view></view>
+        <view class="feedback-thread" wx:if="{{item.messages.length}}">
+          <view class="feedback-thread-title">沟通记录</view>
+          <view class="feedback-thread-message {{message.role}}" wx:for="{{item.messages}}" wx:key="id">
+            <text>{{message.role === 'staff' ? '平台追问' : '我的补充'}}</text>
+            <view>{{message.content}}</view>
+          </view>
+        </view>
+        <view class="feedback-reply" wx:if="{{item.canReply}}">
+          <textarea value="{{item.replyContent}}" maxlength="1000" placeholder="请补充题目、操作步骤或教材依据" bindinput="updateReply" data-index="{{index}}" />
+          <button bindtap="submitReply" data-index="{{index}}" loading="{{item.replying}}" disabled="{{item.replying}}">补充信息</button>
+        </view>
       </view>
     </view>
   </block>

@@ -28,13 +28,13 @@ test("admin knowledge scope: anchor helpers exist and share one judgment with th
   assert.match(appSource, /const guard = new Set\(\);/);
 });
 
-test("admin knowledge scope: saving a fingerprint blocks cross-theme range nodes before the API call", () => {
-  assert.match(appSource, /partitionKnowledgeNodesByThemeAnchor\(\s*nodeMap,\s*problemKnowledgeRangeNodeIds,\s*knowledgeThemeRangeAnchorNodeId,/);
-  assert.match(appSource, /不能加入问题知识范围/);
-  assert.match(appSource, /跨主题的选项知识请只标注在该选项行/);
-  // 文案不得再声称"题干和选项实际涉及的相关知识"（与主题锚点硬校验矛盾）
-  assert.doesNotMatch(appSource, /题干和选项实际涉及的相关知识/);
-  assert.match(appSource, /本题主题范围内的相关知识（受下方主题范围锚点约束）/);
+test("admin knowledge scope: daily fingerprint saving omits the legacy theme anchor", () => {
+  const save = functionSource("saveQuestionFingerprint");
+  assert.doesNotMatch(save, /knowledgeThemeRangeAnchorNodeId,/);
+  assert.doesNotMatch(save, /scopeAnchorNodeId:/);
+  assert.match(save, /primaryNodeId,/);
+  assert.match(save, /requiredNodeIds,/);
+  assert.match(save, /problemKnowledgeRangeNodeIds,/);
 });
 
 test("admin knowledge scope: option badge is driven by the anchor and degrades safely", () => {
@@ -65,32 +65,18 @@ test("admin knowledge scope: badge styles exist", () => {
   assert.match(stylesSource, /\.blind-gold-option-scope-badge\.is-cross-theme/);
 });
 
-test("admin knowledge scope: range field shows anchor coverage and warns before save", () => {
+test("admin knowledge scope: range help no longer blocks on the legacy anchor", () => {
   assert.match(appSource, /function syncQuestionFingerprintRangeCoverageHint\(\)/);
   assert.match(appSource, /syncQuestionFingerprintRangeCoverageHint\(\);/);
-  // 覆盖良好时给出确认；越界时提前点名并说明会被拦下
-  assert.match(appSource, /已覆盖全部 \$\{rangeNodeIds\.length\} 项/);
-  assert.match(appSource, /未覆盖 \$\{outside\.length\} 项/);
-  assert.match(appSource, /保存会被拦下，请移除这些节点或改锚点/);
-  // 与保存前拦截共用同一个判据函数
-  assert.match(appSource, /partitionKnowledgeNodesByThemeAnchor\(nodeMap, rangeNodeIds, anchorNodeId\)/);
+  assert.match(functionSource("syncQuestionFingerprintRangeCoverageHint"), /旧知识范围锚点不再限制日常编辑/);
+  assert.doesNotMatch(functionSource("saveQuestionFingerprint"), /partitionKnowledgeNodesByThemeAnchor/);
 });
 
-test("admin knowledge scope: cross-theme range node is rejected at the moment of the attempt, with a modal", () => {
-  // 单点受控判据复用同一个 isNodeWithinAnchor，避免"界面说能纳入、保存却被拒"
-  assert.match(appSource, /function isQuestionRangeNodeWithinThemeAnchor\(nodeId\)/);
-  assert.match(appSource, /return isNodeWithinAnchor\(nodeMap, nodeId, anchorNodeId\);/);
-  // 勾选跨主题节点的当场撤销 + 弹窗，而不是只留一行小字、也不是拖到保存时才拦
-  assert.match(appSource, /if \(optionInput\.checked && !isQuestionRangeNodeWithinThemeAnchor\(rangeNodeId\)\)/);
-  assert.match(appSource, /optionInput\.checked = false;/);
-  assert.match(appSource, /showQuestionRangeAnchorBlockedDialog\(rangeNodeId\);/);
-  assert.match(appSource, /function showQuestionRangeAnchorBlockedDialog\(nodeId\)/);
-  // 纯告知：隐藏"取消"，不制造一个没有意义的二选一
-  assert.match(appSource, /confirmOnly: true/);
-  assert.match(appSource, /cancelButton\.hidden = options\.confirmOnly === true;/);
-  // 锚点未设置或知识树未加载时不得误判为跨主题（与后端"只有设了锚点才硬校验"一致）
-  assert.match(appSource, /if \(!anchorNodeId\) return true;/);
-  assert.match(appSource, /if \(!nodeMap\.has\(anchorNodeId\)\) return true;/);
+test("admin knowledge scope: old anchor is not an editable picker", () => {
+  const htmlSource = fs.readFileSync(path.join(__dirname, "..", "apps", "admin", "index.html"), "utf8");
+  assert.doesNotMatch(htmlSource, /id="question-fingerprint-theme-anchor"/);
+  assert.match(htmlSource, /id="question-family-set-attribution-list"/);
+  assert.doesNotMatch(appSource, /data-question-fingerprint-picker="theme-anchor"/);
 });
 
 test("admin knowledge scope: option-table controls share one height rule that can actually win", () => {
@@ -126,22 +112,16 @@ test("admin knowledge scope: every anchor judgement reads one shared tree, prefe
   assert.match(appSource, /return own\.length \? own : \(\(state\.knowledgeStructure && state\.knowledgeStructure\.nodes\) \|\| \[\]\);/);
   assert.match(appSource, /function questionFingerprintNodeMap\(\)/);
   assert.match(appSource, /return new Map\(questionFingerprintNodes\(\)\.map\(\(node\) => \[String\(node\.id\), node\]\)\);/);
-  // 判据与两个显示位都必须走它，不得再各自从 state.knowledgeStructure 现搭 nodeMap
-  // （两棵树不一致时——为空或另一本书——旧写法会让判据静默放行）
-  assert.match(appSource, /function isQuestionRangeNodeWithinThemeAnchor\(nodeId\) \{[\s\S]{0,200}const nodeMap = questionFingerprintNodeMap\(\);/);
+  // 旧选项知识分组仍使用题目自己的树，不用于归集关系或保存门禁。
+  assert.match(appSource, /const nodeMap = questionFingerprintNodeMap\(\);/);
   assert.doesNotMatch(appSource, /new Map\(\(\(state\.knowledgeStructure && state\.knowledgeStructure\.nodes\) \|\| \[\]\)/);
   assert.doesNotMatch(appSource, /const nodes = \(\(state\.knowledgeStructure && state\.knowledgeStructure\.nodes\) \|\| \[\]\);\n  const nodeMap = new Map\(nodes\.map/);
 });
 
-test("admin knowledge scope: an unverifiable tree is reported instead of silently passing", () => {
-  // 旧写法在"锚点不在树里"时直接退回通用文案，等于假装通过；现在必须明说这次没校验
-  assert.doesNotMatch(appSource, /if \(!anchorNodeId \|\| !nodeMap\.has\(anchorNodeId\)\) \{\n    help\.textContent = base;/);
-  assert.match(appSource, /if \(!nodeMap\.size \|\| !nodeMap\.has\(anchorNodeId\)\) \{/);
-  assert.match(appSource, /知识树未加载/);
-  assert.match(appSource, /当前知识树里找不到所选主题锚点/);
-  assert.match(appSource, /本次无法校验问题知识范围是否在锚点内；保存时仍会被服务端拦下。/);
-  // 仍然"不拦"：拿不到树时不误伤，交给服务端的锚点硬校验兜底
-  assert.match(appSource, /if \(!nodeMap\.has\(anchorNodeId\)\) return true;/);
+test("admin knowledge scope: historical option grouping is removed from the question editor", () => {
+  assert.doesNotMatch(appSource, /问题知识范围分组/);
+  assert.match(appSource, /function questionOptionScopeCellHtml\(/);
+  assert.match(appSource, /function partitionKnowledgeNodesByThemeAnchor\(/);
 });
 
 test("admin knowledge scope: the range help text has exactly one owner", () => {

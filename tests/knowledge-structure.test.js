@@ -337,3 +337,22 @@ test("manual backup can be created on demand and lists newest first", () => {
   assert.equal(backups.length, 1);
   assert.equal(store.listBackups("another-book").length, 0);
 });
+
+test("成环的父指针给具名错误，不把调用方拖进 RangeError 栈溢出", () => {
+  // 2026-09-26 实例：确定性通道第 1 步 POST /knowledge-structure/generate 曾抛
+  // RangeError: Maximum call stack size exceeded（buildNodes 里的 resolve 没有环检测，
+  // 标题节点与目录节点撞名时 parentId 指向自己就无限递归），外层 catch 再包成 422 + 一句英文错误。
+  // 现在按 id 记 seen：遇环停止下钻，交由下游成环校验给出具名错误 knowledge_node_cycle。
+  // 触发条件必须是"标题节点 id 撞上目录节点 id"（只写一个孤立的自指 id 会在更早一步被丢弃，复现不出来）。
+  const cyclicOutline = [
+    { id: "content-word", parentId: "content-word", title: "一、实词", startPage: 3, endPage: 25, pdfPageStart: 9, pdfPageEnd: 11 },
+  ];
+  assert.throws(
+    () => buildKnowledgeStructure({ bookId, catalogNodes, outlineNodes: cyclicOutline, chunks: [], questions: [] }),
+    (error) => {
+      assert.equal(error instanceof RangeError, false, "不得以 RangeError（栈溢出）收场");
+      assert.equal(error.message, "knowledge_node_cycle");
+      return true;
+    },
+  );
+});

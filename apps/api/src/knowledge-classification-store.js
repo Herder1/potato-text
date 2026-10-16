@@ -23,9 +23,18 @@ const classificationOutcomes = new Set([
   "agent2_contract_failed",
   "semantic_no_candidate",
   "provider_or_infrastructure_failed",
+  // 缺条件跳过：题目没有教材上下文（教材/章节/知识点暂缺），Agent 无法工作。
+  // 与上面几种「跑了但失败」不同，这一类是「没条件跑」，必须显式记录而不是无限重试。
+  // 见 docs/modules/03-knowledge-fingerprint-agent-classification.md。
+  "missing_textbook_context",
 ]);
 const navigationDiagnosticStatuses = new Set(["valid", "format_invalid", "contract_invalid", "transport_failed"]);
 const primaryNodeRoles = new Set(["core", "scope_anchor"]);
+// AI 巡检记录的四态（产品手册 §4.6.12【已确认 2026-09-26，DEC-100】）：
+// 巡检只诊断不改库，所以记录状态只表达"人有没有看过、看过后怎么处置"，不再是原来的五张卡片。
+// 「归为通过」是 AI／规则的结论，不是记录状态——通过 ≠ 已复核。
+const AUDIT_REVIEW_STATES = new Set(["pending_review", "reviewed", "repaired", "ignored"]);
+const DEFAULT_AUDIT_REVIEW_STATE = "pending_review";
 const { normalizeFeatureProfile } = require("./question-classification-features");
 const { filterRelatedFamilySuggestions } = require("./classification-verification-policy");
 
@@ -49,6 +58,33 @@ function normalizeKnowledgeRevisionFormat(value) {
 function normalizePrimaryNodeRole(value) {
   const role = String(value || "").trim();
   return primaryNodeRoles.has(role) ? role : "core";
+}
+
+// 巡检记录的复核状态（白名单之外的输入一律归一为 pending_review）。
+function normalizeAuditReviewState(value) {
+  const state = String(value || "").trim();
+  return AUDIT_REVIEW_STATES.has(state) ? state : DEFAULT_AUDIT_REVIEW_STATE;
+}
+
+/**
+ * 复核留痕：{ state, note(≤1000), actor(≤100), actorLabel(≤100), at }。
+ * `actor` 是**登录账号名**（审计要能唯一定位账号，展示名会重名、也会改）；
+ * `actorLabel` 是同时记下的展示名，界面想显示中文名就用它。
+ * 缺省是待复核（历史记录没有这个字段时读出来也是待复核，不改历史文件）。
+ * `at` 表示**这四态上一次被人工改动**的时刻，没动过就是 null。
+ */
+function normalizeAuditReview(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { state: DEFAULT_AUDIT_REVIEW_STATE, note: "", actor: "", actorLabel: "", at: null };
+  }
+  const at = Number(value.at);
+  return {
+    state: normalizeAuditReviewState(value.state),
+    note: cleanText(value.note, 1000),
+    actor: cleanText(value.actor, 100),
+    actorLabel: cleanText(value.actorLabel, 100),
+    at: Number.isFinite(at) && at > 0 ? at : null,
+  };
 }
 
 function normalizeQuestionVersions(value, questionIds = []) {
@@ -540,6 +576,11 @@ function normalizeResult(input = {}) {
     error: cleanText(input.error, 500),
     reviewedBy: cleanText(input.reviewedBy, 100),
     reviewNote: cleanText(input.reviewNote, 1000),
+    // AI 巡检的四态复核留痕（产品手册 §4.6.12 / DEC-100）：只读诊断产物的"人看没看过"。
+    // 与上面的 reviewStatus（建议层状态机）并存，不改后者的既有语义。
+    auditReview: normalizeAuditReview(input.auditReview),
+    // 「送去完善题目」：只记"什么时候送过"，不改库、不采纳。
+    sentToEnrichmentAt: Number(input.sentToEnrichmentAt) > 0 ? Number(input.sentToEnrichmentAt) : null,
     createdAt: Number(input.createdAt) || now,
     updatedAt: Number(input.updatedAt) || now,
     reviewedAt: input.reviewedAt ? Number(input.reviewedAt) : null,
@@ -641,6 +682,35 @@ function createKnowledgeClassificationStore(adapter) {
       state.results[index] = normalizeResult({ ...state.results[index], ...patch, id, updatedAt: Date.now() });
       write(state);
       return clone(state.results[index]);
+    },
+    /**
+     * 人工确认巡检记录的复核状态（四态，产品手册 §4.6.12 / DEC-100）。
+     * 只写 auditReview 这一条留痕，**不动** status／reviewStatus（那是建议层状态机，语义不同）。
+     * 若只改 note、不改 state，则保留原来的 state 与 actor；state 变了才换 actor 并记新的 at。
+     * actor＝登录账号名（唯一可定位），actorLabel＝展示名（界面用）。
+     */
+    updateAuditReview(id, { state, note, actor, actorLabel } = {}) {
+      const current = this.getResult(id);
+      if (!current) throw new Error("knowledge_classification_result_not_found");
+      const previous = current.auditReview || normalizeAuditReview(null);
+      const hasState = state !== undefined && state !== null;
+      const nextState = hasState ? normalizeAuditReviewState(state) : previous.state;
+      const stateChanged = hasState && nextState !== previous.state;
+      const patch = {
+        auditReview: {
+          state: nextState,
+          note: note === undefined ? previous.note : cleanText(note, 1000),
+          actor: stateChanged ? cleanText(actor, 100) : previous.actor,
+          actorLabel: stateChanged ? cleanText(actorLabel, 100) : previous.actorLabel,
+          at: stateChanged ? Date.now() : previous.at,
+        },
+      };
+      return this.updateResult(id, patch);
+    },
+    // 「送去完善题目」只留痕：有没有送过、什么时候送的。生成建议本身走题目完善的产线，不在这里发生。
+    markSentToEnrichment(id, at = Date.now()) {
+      const sentAt = Number(at) > 0 ? Number(at) : Date.now();
+      return this.updateResult(id, { sentToEnrichmentAt: sentAt });
     },
     saveAgent1Features(id, features, metadata = {}) {
       const current = this.getResult(id);
@@ -808,4 +878,7 @@ module.exports = {
   createMemoryKnowledgeClassificationStore,
   normalizeJob,
   normalizeResult,
+  // 四态白名单（产品手册 §4.6.12 / DEC-100）：路由与测试都从这里取，不再各自发明一份。
+  AUDIT_REVIEW_STATES,
+  DEFAULT_AUDIT_REVIEW_STATE,
 };

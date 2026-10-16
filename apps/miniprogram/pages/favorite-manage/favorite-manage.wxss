@@ -1,0 +1,220 @@
+/* 「分类管理」页样式（DEC-096 ⑤）。视觉基准＝产品负责人 2026-09-23 的第四张效果图。
+   注意：.folder-row 高度必须是 112rpx（= 56px），拖拽排序按这个行高换算落点（见 favorite-manage.js）。 */
+
+page {
+  background: #f5f6f5;
+}
+
+.manage-page {
+  min-height: 100vh;
+  padding: 24rpx 28rpx 200rpx;
+  box-sizing: border-box;
+}
+
+/* ── 顶部横幅 ── */
+/* 顶部横幅：产品负责人 2026-09-23 04:3x 真机指正「绿框用颜色用浅绿，文字别这么粗，整体轻盈点」
+   —— 从「饱和青色渐变 + 白字 + 白图标」改成「浅绿底 + 深字 + 白底片 + 青色标」：
+   底浅了，白图标就又会看不见（见 tests/icon-contrast.test.js），所以图标一并换成青色的 folder-brand.svg。 */
+.manage-banner {
+  display: flex;
+  padding: 28rpx 28rpx;
+  align-items: center;
+  background: #e7f6f1;
+  border-radius: 28rpx;
+}
+
+.manage-banner-icon {
+  display: flex;
+  width: 68rpx;
+  height: 68rpx;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border-radius: 20rpx;
+}
+
+.manage-banner-icon image {
+  width: 38rpx;
+  height: 38rpx;
+}
+
+.manage-banner-text {
+  display: flex;
+  flex: 1;
+  margin-left: 22rpx;
+  flex-direction: column;
+}
+
+.manage-banner-title {
+  color: #191f1d;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.manage-banner-sub {
+  margin-top: 6rpx;
+  color: #5f6d66;
+  font-size: 21rpx;
+  line-height: 1.5;
+}
+
+/* ── 返回上层 ── */
+.manage-crumb {
+  display: flex;
+  margin-top: 24rpx;
+  padding: 0 8rpx;
+  align-items: center;
+}
+
+.manage-crumb-arrow {
+  color: #0b9588;
+  font-size: 32rpx;
+}
+
+.manage-crumb-text {
+  margin-left: 8rpx;
+  color: #0b9588;
+  font-size: 24rpx;
+}
+
+/* ── 分组标题 ── */
+.manage-section {
+  display: flex;
+  margin-top: 32rpx;
+  padding: 0 8rpx;
+  align-items: baseline;
+}
+
+.manage-section-title {
+  color: #202824;
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+.manage-section-count {
+  margin-left: auto;
+  color: #9aa49e;
+  font-size: 22rpx;
+}
+
+/* ── 文件夹列表 ── */
+.folder-list {
+  margin-top: 18rpx;
+}
+
+.folder-row {
+  display: flex;
+  height: 112rpx;
+  margin-bottom: 16rpx;
+  padding: 0 20rpx 0 24rpx;
+  align-items: center;
+  background: #ffffff;
+  border-radius: 24rpx;
+  box-shadow: 0 4rpx 16rpx rgba(39, 59, 49, 0.05);
+  box-sizing: border-box;
+}
+
+.folder-row-dragging {
+  background: #eaf7f4;
+  box-shadow: 0 10rpx 28rpx rgba(11, 149, 136, 0.22);
+}
+
+.folder-row-icon {
+  display: flex;
+  width: 64rpx;
+  height: 64rpx;
+  align-items: center;
+  justify-content: center;
+  background: #eaf7f4;
+  border-radius: 20rpx;
+}
+
+.folder-row-icon image {
+  width: 34rpx;
+  height: 34rpx;
+}
+
+.folder-row-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  margin-left: 20rpx;
+  flex-direction: column;
+}
+
+.folder-row-name {
+  overflow: hidden;
+  color: #202824;
+  font-size: 28rpx;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-row-sub {
+  margin-top: 6rpx;
+  color: #9aa49e;
+  font-size: 21rpx;
+}
+
+.folder-row-more {
+  padding: 10rpx 16rpx;
+  color: #9aa49e;
+  font-size: 30rpx;
+  letter-spacing: 4rpx;
+}
+
+.folder-row-handle {
+  padding: 16rpx 8rpx 16rpx 16rpx;
+  color: #c3c9c5;
+  font-size: 32rpx;
+}
+
+/* ── 空态 / 错误态 ── */
+.manage-empty {
+  padding: 60rpx 8rpx;
+  color: #9aa49e;
+  font-size: 24rpx;
+  text-align: center;
+}
+
+.manage-error {
+  display: flex;
+  margin-top: 18rpx;
+  padding: 24rpx;
+  align-items: center;
+  background: #fff8ec;
+  border-radius: 24rpx;
+  color: #8a6d3b;
+  font-size: 23rpx;
+}
+
+.manage-error-action {
+  margin-left: auto;
+  color: #0b9588;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+/* ── 新建文件夹（底部主按钮） ── */
+.manage-create {
+  position: fixed;
+  right: 28rpx;
+  bottom: calc(40rpx + env(safe-area-inset-bottom));
+  left: 28rpx;
+  display: flex;
+  height: 104rpx;
+  align-items: center;
+  justify-content: center;
+  background: #19211d;
+  border-radius: 28rpx;
+  box-shadow: 0 10rpx 28rpx rgba(25, 33, 29, 0.28);
+  color: #ffffff;
+  font-size: 29rpx;
+  font-weight: 700;
+}
+
+.manage-create-plus {
+  margin-right: 12rpx;
+  font-size: 32rpx;
+}

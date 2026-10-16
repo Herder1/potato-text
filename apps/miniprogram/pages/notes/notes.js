@@ -27,6 +27,12 @@ Page({
     this.setData({ query, visibleNotes });
   },
 
+  onPersonalAssetsSynced() {
+    const query = this.data.query || "";
+    this.onShow();
+    this.search({ detail: { value: query } });
+  },
+
   createNote() {
     wx.navigateTo({ url: "/pages/note-editor/note-editor" });
   },

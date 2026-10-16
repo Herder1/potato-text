@@ -5,42 +5,58 @@
 .wrong-book-mark { display: flex; width: 54rpx; height: 54rpx; align-items: center; justify-content: center; color: #119587; }
 .wrong-book-mark > view { position: relative; width: 31rpx; height: 36rpx; border: 4rpx solid currentColor; border-radius: 4rpx; box-sizing: border-box; }
 .wrong-book-mark > view::after { position: absolute; right: 5rpx; bottom: 7rpx; width: 14rpx; height: 7rpx; border-bottom: 4rpx solid currentColor; border-left: 4rpx solid currentColor; content: ""; transform: rotate(-45deg); }
-.wrong-status-tabs { display: grid; margin-top: 28rpx; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9rpx; }
-.wrong-status-tab { display: flex; height: 98rpx; min-width: 0; align-items: center; justify-content: center; color: #363b37; background: #fff; border: 1rpx solid #dfe4df; border-radius: 8rpx; flex-direction: column; box-sizing: border-box; }
-.wrong-status-tab view { font-size: 28rpx; line-height: 1; }
-.wrong-status-tab text { margin-top: 10rpx; overflow: hidden; font-size: 17rpx; text-overflow: ellipsis; white-space: nowrap; }
-.wrong-status-tab-active { color: #fff; background: #202522; border-color: #202522; }
-.wrong-directory-head { display: flex; margin: 32rpx 0 15rpx; align-items: center; justify-content: space-between; gap: 12rpx; }
-.wrong-directory-head > view:first-child { color: #232723; font-size: 27rpx; font-weight: 850; }
-.wrong-directory-actions { display: flex; min-width: 0; align-items: center; gap: 9rpx; }
-.wrong-group-modes { display: flex; padding: 4rpx; background: #eff1ee; border-radius: 7rpx; }
-.wrong-group-modes view { display: flex; height: 46rpx; padding: 0 13rpx; align-items: center; color: #8a908b; border-radius: 5rpx; font-size: 16rpx; white-space: nowrap; }
-.wrong-group-modes .wrong-group-mode-active { color: #333834; background: #fff; font-weight: 750; }
-.wrong-filter-button { display: flex; height: 54rpx; padding: 0 14rpx; align-items: center; color: #656c67; background: #fff; border: 1rpx solid #dfe4df; border-radius: 7rpx; gap: 7rpx; box-sizing: border-box; }
-.wrong-filter-button text { font-size: 16rpx; white-space: nowrap; }
-.wrong-filter-button-active { color: #0b887d; background: #e6f7f4; border-color: #b9e3dc; }
-.wrong-filter-icon { position: relative; width: 21rpx; height: 16rpx; border-top: 3rpx solid currentColor; border-bottom: 3rpx solid currentColor; box-sizing: border-box; }
-.wrong-filter-icon::after { position: absolute; top: 5rpx; right: 4rpx; left: 4rpx; border-top: 3rpx solid currentColor; content: ""; }
+/* 状态卡：产品负责人 2026-09-23 04:9x 效果图（tmp/verify-out/ref-04-9x-design.png）——四张卡一行、更大的
+   间距与圆角、**无描边**；选中态从"深底白字"改成"**浅绿底 + 深青字**"（他这几轮一直在要"轻盈"，深色块是反例）。
+   字号/尺寸按效果图量出来的值（图宽 662px ≙ 750rpx）：卡高 108rpx、卡间距 20rpx、数字 34rpx、标签 18rpx。 */
+.wrong-status-tabs { display: grid; margin-top: 28rpx; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20rpx; }
+.wrong-status-tab { display: flex; height: 108rpx; min-width: 0; align-items: center; justify-content: center; color: #262b27; background: #fff; border: 0; border-radius: 20rpx; flex-direction: column; box-sizing: border-box; }
+.wrong-status-tab view { font-size: 34rpx; line-height: 1; }
+.wrong-status-tab text { margin-top: 12rpx; overflow: hidden; color: #717873; font-size: 18rpx; text-overflow: ellipsis; white-space: nowrap; }
+/* 选中态的青色是**加深过的**：效果图里的 #0a8f83 落在 #e4f4f1 上只有 3.51:1，小字标签（18rpx）够不到 4.5:1，
+   所以取同色系深一档的 #0b7a6f（4.60:1）；数字是大字号本来就过 3:1。两处同一个色，避免一深一浅。 */
+.wrong-status-tab-active,
+.wrong-status-tab-active text { color: #0b7a6f; }
+.wrong-status-tab-active { background: #e4f4f1; }
+/* 产品负责人 2026-09-23 04:9x 补充：绿框（分段开关）移到左边**取代标题**，所以这里不再按 `> view:first-child`
+   给标题上样式（那段规则会套到开关上），改成给"章节态标题"一个独立 class。 */
+.wrong-directory-head { display: flex; margin: 30rpx 0 20rpx; align-items: center; justify-content: space-between; gap: 12rpx; }
+.wrong-directory-title { color: #171a18; font-size: 27rpx; font-weight: 850; }
+.wrong-directory-actions { display: flex; min-width: 0; align-items: center; gap: 12rpx; }
+/* 分段开关（按科目 / 按知识点）：效果图里是一条浅灰轨道 + 白色药丸，轨道高 62rpx、内边距 6rpx、圆角 24rpx。 */
+.wrong-group-modes { display: flex; padding: 6rpx; background: #edefed; border-radius: 24rpx; }
+.wrong-group-modes view { display: flex; height: 50rpx; padding: 0 16rpx; align-items: center; color: #717873; border-radius: 18rpx; font-size: 20rpx; white-space: nowrap; }
+.wrong-group-modes .wrong-group-mode-active { color: #171a18; background: #fff; font-weight: 750; }
+/* 筛选入口：产品负责人 2026-09-23 04:9x「筛选用图2」——图2 就是他截图里我们自己在收藏页用的那颗漏斗标
+   （assets/icons/filter.svg，stroke #474d49），原来这里是 CSS 画的三条横线图形，已整个换掉。 */
+.wrong-filter-button { display: flex; height: 62rpx; padding: 0 16rpx; align-items: center; color: #474d49; background: #fff; border: 0; border-radius: 20rpx; gap: 8rpx; box-sizing: border-box; }
+.wrong-filter-button text { font-size: 18rpx; white-space: nowrap; }
+.wrong-filter-button-active { color: #0b7a6f; background: #e4f4f1; }
+.wrong-filter-icon { width: 28rpx; height: 28rpx; flex: 0 0 28rpx; }
 .wrong-filter-tags { margin: -2rpx 0 14rpx; white-space: nowrap; }
 .wrong-filter-tags-inner { display: inline-flex; gap: 8rpx; }
 .wrong-filter-tag { display: inline-flex; height: 45rpx; padding: 0 10rpx 0 13rpx; align-items: center; color: #177d74; background: #e4f5f2; border-radius: 6rpx; gap: 8rpx; }
 .wrong-filter-tag text { max-width: 210rpx; overflow: hidden; font-size: 16rpx; text-overflow: ellipsis; white-space: nowrap; }
 .wrong-filter-tag view { font-size: 22rpx; line-height: 1; }
-.wrong-group-list { overflow: hidden; background: #fff; border: 1rpx solid #dfe4df; border-radius: 8rpx; }
-.wrong-group { border-bottom: 1rpx solid #e6e9e6; }
-.wrong-group:last-child { border-bottom: 0; }
-.wrong-group-row { display: flex; min-height: 96rpx; padding: 14rpx 18rpx; align-items: center; box-sizing: border-box; }
-.wrong-group-arrow { display: flex; width: 46rpx; height: 46rpx; margin-right: 16rpx; flex: 0 0 46rpx; align-items: center; justify-content: center; border-radius: 50%; }
-.wrong-group-arrow view { width: 10rpx; height: 10rpx; margin-top: -5rpx; border-right: 3rpx solid #fff; border-bottom: 3rpx solid #fff; transform: rotate(45deg); transition: transform .18s ease; }
-.wrong-group-arrow .wrong-group-arrow-open { margin-top: 5rpx; transform: rotate(225deg); }
+/* 目录列表：效果图里**每个科目是一张独立白卡**（不再是"一个大白容器 + 分隔线"）——卡高 112rpx、卡间距 12rpx、
+   圆角 20rpx、无描边。 */
+.wrong-group-list { display: flex; overflow: visible; background: transparent; border: 0; flex-direction: column; gap: 12rpx; }
+.wrong-group { overflow: hidden; background: #fff; border: 0; border-radius: 20rpx; }
+.wrong-group-row { display: flex; min-height: 112rpx; padding: 0 20rpx; align-items: center; box-sizing: border-box; }
+/* 学科圆标：底色＝学科色的**淡色**（同色 13% 铺一层），箭头＝同色的**实色**——效果图里是浅蓝/浅紫/浅橙圆 + 同色系深箭头；
+   原来的"实色圆底 + 白箭头"这一轮改掉。行内 `style="color: {{item.color}}"` 只给一个色，淡底用 currentColor + opacity
+   生成，省掉在 JS 里算 rgba。 */
+.wrong-group-arrow { position: relative; display: flex; width: 56rpx; height: 56rpx; margin-right: 24rpx; flex: 0 0 56rpx; align-items: center; justify-content: center; border-radius: 50%; }
+.wrong-group-arrow::before { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: currentColor; border-radius: 50%; content: ""; opacity: .13; }
+.wrong-group-arrow view { position: relative; z-index: 1; width: 14rpx; height: 14rpx; margin-top: -7rpx; border-right: 3rpx solid currentColor; border-bottom: 3rpx solid currentColor; transform: rotate(45deg); transition: transform .18s ease; }
+.wrong-group-arrow .wrong-group-arrow-open { margin-top: 7rpx; transform: rotate(225deg); }
 .wrong-group-main { min-width: 0; flex: 1; }
-.wrong-group-main view { overflow: hidden; color: #292e2a; font-size: 23rpx; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-.wrong-group-main text { display: block; margin-top: 5rpx; color: #929793; font-size: 17rpx; }
-.wrong-group-count { margin-left: 12rpx; color: #718095; font-size: 19rpx; }
+.wrong-group-main view { overflow: hidden; color: #202522; font-size: 24rpx; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.wrong-group-main text { display: block; margin-top: 6rpx; color: #929793; font-size: 17rpx; }
+.wrong-group-count { margin-left: 12rpx; color: #717873; font-size: 20rpx; }
 .wrong-group-chevron,
 .wrong-question-chevron { width: 12rpx; height: 12rpx; margin-left: 14rpx; border-top: 3rpx solid #818783; border-right: 3rpx solid #818783; transform: rotate(45deg); }
 .wrong-group-chevron-open { transform: rotate(135deg); }
-.wrong-question-list { padding: 0 18rpx 18rpx 80rpx; background: #fafbfa; }
+.wrong-question-list { padding: 0 20rpx 20rpx 100rpx; background: #fafbfa; }
 .wrong-child { border-top: 1rpx solid #e8ebe8; }
 .wrong-child-row { display: flex; min-height: 76rpx; padding: 10rpx 4rpx; align-items: center; }
 .wrong-child-main { min-width: 0; flex: 1; }
@@ -57,6 +73,9 @@
 .wrong-question > view:first-child view { display: -webkit-box; overflow: hidden; color: #3a403b; font-size: 20rpx; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .wrong-question text { display: block; margin-top: 5rpx; color: #929793; font-size: 16rpx; }
 .wrong-group-review { display: flex; width: 100%; height: 62rpx; margin: 8rpx 0 0; align-items: center; justify-content: center; color: #0b887d; background: #e7f7f4; border-radius: 7rpx; font-size: 18rpx; font-weight: 750; line-height: 1; }
+/* 小程序 <button> 自带一圈 ::after 细边框（1px rgba(0,0,0,.2)、圆角 10px 再 scale(.5)）——压在浅青底上就是一圈多余灰框，
+   而且它自己的圆角与按钮的 7rpx 对不齐。这里是「按钮不是框」的那类多余边框，按不要框清掉（2026-09-23 04:9x 顺带修）。 */
+.wrong-group-review::after { border: 0; }
 .wrong-empty { margin-top: 14rpx; padding: 70rpx 30rpx; color: #8a908b; background: #fff; border: 1rpx solid #e2e6e2; border-radius: 8rpx; text-align: center; }
 .wrong-empty view { color: #424843; font-size: 24rpx; font-weight: 800; }
 .wrong-empty text { display: block; margin-top: 10rpx; font-size: 18rpx; line-height: 1.6; }

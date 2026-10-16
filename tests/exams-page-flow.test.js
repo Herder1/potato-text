@@ -131,7 +131,7 @@ test("published exam detail keeps subjective questions in the exam queue", () =>
     },
   ];
   global.Page = (value) => { definition = value; };
-  global.getApp = () => ({ globalData: { apiBaseUrl: "http://exam.test", aiCredits: 20 } });
+  global.getApp = () => ({ globalData: { apiBaseUrl: "http://exam.test", beans: 2 } });
   global.wx = {
     getStorageSync: (key) => store.get(key) || "",
     setStorageSync: (key, value) => store.set(key, value),
@@ -158,8 +158,9 @@ test("published exam detail keeps subjective questions in the exam queue", () =>
 
   assert.equal(page.data.practiceMode, "exam");
   assert.equal(page.data.practiceScopeTitle, "综合真题");
+  // C17（F1）：视图层队列只有 id 序列，完整题目（含 answerMode）在页面实例的 _questionQueue 上。
   assert.deepEqual(page.data.questionQueue.map((question) => question.id), ["choice-1", "essay-1"]);
-  assert.equal(page.data.questionQueue[1].answerMode, "text");
+  assert.equal(page._questionQueue[1].answerMode, "text");
   if (page.examTimer) clearInterval(page.examTimer);
 
   delete global.Page;

@@ -1,0 +1,13 @@
+<import src="../../templates/platform-doc.wxml" />
+<view class="page-shell pi-page">
+  <view class="pi-heading">
+    <view class="pi-title">{{doc.title}}</view>
+    <view class="pi-subtitle">{{doc.statusLine}}</view>
+  </view>
+
+  <template is="platformDocBody" data="{{doc: doc}}" />
+
+  <view class="pi-actions">
+    <button class="secondary-button" bindtap="openService">客服与反馈</button>
+  </view>
+</view>

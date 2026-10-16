@@ -240,16 +240,24 @@ function resolveQuestionTextbookContext({ question, books, getCatalog, getKnowle
     : selected && selected.directChunks || [];
   const evidenceChunks = uniqueChunks([...directInNode, ...focusedChunks]).slice(0, 12);
 
+  // 题目没有教材时：候选里既有「章节命中确认识别目录 + 直接证据」这种可采信的推断
+  // （highConfidence），也有 score 0 的纯兜底猜测。只放行前者——没有依据的候选返回 null，
+  // 并把缺失条件如实说出来，避免把猜测当成已确认的教材关联（不伪造教材）。
+  const missingTextbookContext = !String(question.bookId || "").trim();
+  const textbookResolved = decisiveWorkEvidence || unresolvedBookEvidence;
+  const textbookUnknown = missingTextbookContext && !textbookResolved;
+
   return {
     anchors,
     workTitles,
     creator,
     changed: Boolean(selected && selected.book.id !== question.bookId),
-    highConfidence: decisiveWorkEvidence || unresolvedBookEvidence,
+    highConfidence: textbookResolved,
     invalidCurrentChapter,
-    book: selected && selected.book || null,
-    nodes: selected && selected.nodes || [],
-    chapterNode: selectedNode,
+    book: textbookUnknown ? null : (selected && selected.book || null),
+    missingCondition: textbookUnknown ? "missing_textbook_context" : "",
+    nodes: textbookUnknown ? [] : (selected && selected.nodes || []),
+    chapterNode: textbookUnknown ? null : selectedNode,
     directEvidenceChunks: directInNode,
     evidenceChunks,
     candidates: candidates.map((candidate) => ({

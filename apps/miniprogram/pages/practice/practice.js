@@ -1,5 +1,5 @@
 const { closeTransientLayers } = require("../../utils/page-layers");
-const { demoQuestion, demoQuestions } = require("../../data/catalog");
+const { demoQuestion, demoQuestions, subjects: catalogSubjects } = require("../../data/catalog");
 const {
   buildAnswerCard,
   buildQuestionQueue,
@@ -20,10 +20,28 @@ const {
   scoreSubjectiveAnswer,
 } = require("../../utils/subjective-scoring");
 const { formatAnswerMarkdownNodes } = require("../../utils/answer-markdown");
-const { buildCatalogOutline, createProjectedCatalogChapters } = require("../../utils/catalog-outline");
+const { buildCatalogOutline, buildSubjectCatalogOutline, createProjectedCatalogChapters, subjectGroupsFromCatalogs } = require("../../utils/catalog-outline");
 const { noteAutoArchiveEnabled, questionNoteContent, saveQuestionNote, setNoteAutoArchiveEnabled } = require("../../utils/question-note-store");
+const { BEAN_COST_PER_AI_CALL, isBeanAmount } = require("../../utils/bean-pricing");
+const { normalizeQuestionTypeFields } = require("../../utils/question-type");
 
 const RULE_EXAM_STORAGE_KEY = "shukao_rule_exam_session";
+
+// C17（F4）：目录全部命中本地缓存时，版本刷新请求延后这么多毫秒再发——先把首屏画出来。
+const CATALOG_REFRESH_DEFER_MS = 400;
+
+// C17（F5/A 方案，产品负责人 2026-09-24 选定）：综合训练两段式载入。
+//   第一段：只等「优先册」的题（本机实测 193–614ms），先把第一道题画出来；
+//   第二段：首屏画完之后后台逐册补齐其余册，到齐后把队列接长。
+// 优先册＝最近练过的那一册，其次科目顺序里的第一册；科目/册顺序取自 data/catalog.js（与目录面板同一份数据）。
+const COMPREHENSIVE_TAIL_DEFER_MS = 400;
+const COMPREHENSIVE_ADOPT_DEBOUNCE_MS = 300;
+const COMPREHENSIVE_CANONICAL_BOOK_ORDER = catalogSubjects
+  .flatMap((subject) => (Array.isArray(subject.books) ? subject.books : []).map((book) => String(book.id || "")))
+  .filter(Boolean);
+const COMPREHENSIVE_BOOK_SUBJECT = new Map(catalogSubjects
+  .flatMap((subject) => (Array.isArray(subject.books) ? subject.books : []).map((book) => [String(book.id || ""), String(subject.id || "")]))
+  .filter(([bookId]) => bookId));
 
 const questionTypeDefinitions = [
   { type: "single_choice", label: "单选题" },
@@ -36,12 +54,73 @@ const questionTypeDefinitions = [
   { type: "short_answer", label: "简答题" },
   { type: "term_definition", label: "名词解释" },
   { type: "material_analysis", label: "材料分析题" },
-  { type: "appreciation", label: "作品赏析题" },
   { type: "essay", label: "论述题" },
 ];
 
-function createCatalogChapters(queue, activeQuestionId = "", outline = []) {
-  return createProjectedCatalogChapters(outline, queue, activeQuestionId);
+function createCatalogChapters(queue, activeQuestionId = "", outline = [], options = {}) {
+  return createProjectedCatalogChapters(outline, queue, activeQuestionId, options);
+}
+
+// 2026-09-23 性能修复（OPEN_DECISIONS C17）：整条题目队列（1249 道完整题目≈9.7MB）传给视图层
+// 是纯浪费——practice.wxml 只用了 questionQueue.length。这里给视图层一份同长度、只含 id 的轻量
+// 数组（长度、按 id 定位仍然可用），完整题目对象留在页面实例的 this._questionQueue 上给 JS 逻辑用。
+function questionQueueView(questionQueue) {
+  return (Array.isArray(questionQueue) ? questionQueue : []).map((question) => ({
+    id: String(question && question.id || ""),
+  }));
+}
+
+// 目录同理：视图只读展示字段（id / title / 层级 / 题数 / 待归组数 / 展开态 / 子节点）。
+// questionIds（投影锚点）、parentId、教材页码等只有 JS 逻辑用（findCatalogLocation、
+// selectChapterScope、saveQuestionNote 建目录路径），留在实例里的完整目录树上。
+function catalogViewChapters(chapters) {
+  return (Array.isArray(chapters) ? chapters : []).map((chapter) => ({
+    id: chapter.id,
+    title: chapter.title,
+    isSubject: chapter.isSubject === true,
+    level: Number(chapter.level) || 1,
+    expanded: chapter.expanded === true,
+    questionCount: Number(chapter.questionCount) || 0,
+    pendingCount: Number(chapter.pendingCount) || 0,
+    sections: (Array.isArray(chapter.sections) ? chapter.sections : []).map((section) => ({
+      id: section.id,
+      title: section.title,
+      level: Number(section.level) || 2,
+      questionCount: Number(section.questionCount) || 0,
+      questionId: section.questionId || "",
+    })),
+  }));
+}
+
+// 题目列表（目录 → 科目/章 → 题目列表）：视图只用编号与题干，整道题（含解析、参考答案≈26% 体积）
+// 不需要跨桥。JS 侧点进去组队时用实例里的完整题目数组。
+function catalogSummaryView(questions) {
+  return (Array.isArray(questions) ? questions : []).map((question, index) => ({
+    id: question.id,
+    summaryNumber: String(index + 1).padStart(2, "0"),
+    stem: question.stem || "",
+  }));
+}
+
+function buildExamReviewItems(queue, responses) {
+  return (queue || []).flatMap((question, index) => {
+    const response = responses[question.id] || {};
+    if (response.counted === false || response.isCorrect === true) return [];
+    const selected = normalizePracticeSelection(response.selected);
+    const unanswered = !selected.length && !String(response.subjectiveAnswer || "").trim();
+    const pendingScore = question.answerMode === "text" && !unanswered;
+    return [{
+      id: question.id,
+      number: index + 1,
+      stem: String(question.stem || question.typeLabel || "题目").trim(),
+      status: pendingScore ? "未评分" : (unanswered ? "未作答" : (response.answerStatus === "partial" ? "部分得分" : "答错")),
+      statusKey: pendingScore ? "pending" : (unanswered ? "empty" : (response.answerStatus === "partial" ? "partial" : "wrong")),
+      answer: pendingScore ? "已提交主观作答" : `你的答案：${selected.join("、") || "未作答"}`,
+      correctAnswer: question.answerMode === "text" ? "" : `正确答案：${(question.correctAnswer || []).join("、") || "见题目解析"}`,
+      score: Number(response.awardedScore) || 0,
+      maxScore: Number(question.score ?? question.maxScore) || 0,
+    }];
+  });
 }
 
 function isExamPunctuationQuestion(question) {
@@ -323,6 +402,7 @@ function buildMaterialSegments(question) {
 }
 
 function normalizePracticeQuestion(question) {
+  question = normalizeQuestionTypeFields(question);
   const answerSource = question.answerSource || "team_verified";
   const verifiedAnswerLabel = answerSource === "pdf_answer" ? "来源答案" : "平台核验答案";
   const answerVariants = question.answerVariants || {
@@ -361,7 +441,6 @@ function normalizePracticeQuestion(question) {
       community: formatAnswerMarkdownNodes(visibleAnswerVariants.community),
     },
     referenceAnswerNodes: formatAnswerMarkdownNodes(question.referenceAnswer),
-    responseMode: question.responseMode === "annotation" ? "annotation" : "text",
   });
 }
 
@@ -376,26 +455,6 @@ function withDemoCatalogProjection(question) {
       anchorNodeIds: anchorNodeId ? [anchorNodeId] : [],
     },
   };
-}
-
-function createAnnotationTokens(question, response = {}) {
-  if (Array.isArray(response.annotationTokens) && response.annotationTokens.length) return response.annotationTokens;
-  const text = String(question.annotationText || question.stem || "").slice(0, 600);
-  return Array.from(text).map((character, index) => ({
-    id: `${question.id}-mark-${index}`,
-    character: character === " " ? "\u00a0" : character,
-    mark: "",
-    symbol: "",
-  }));
-}
-
-function annotationAnswerText(tokens, note = "") {
-  const labels = { underline: "下划线", wave: "波浪线", dot: "着重号", subscript: "下标点" };
-  const groups = Object.keys(labels).map((mark) => {
-    const text = (tokens || []).filter((token) => token.mark === mark).map((token) => token.character).join("").replace(/\u00a0/g, " ");
-    return text ? `${labels[mark]}：${text}` : "";
-  }).filter(Boolean);
-  return [...groups, String(note || "").trim()].filter(Boolean).join("\n");
 }
 
 function reviewDateKey(timestamp = Date.now()) {
@@ -698,6 +757,10 @@ Page({
     isLastQuestion: false,
     examFinished: false,
     examResult: null,
+    examResultOpen: false,
+    examWrongItems: [],
+    examUnscoredItems: [],
+    examPendingScoreCount: 0,
     examSelectionRules: [],
     examDeclaredTotalScore: 0,
     examRemainingSeconds: 0,
@@ -707,9 +770,6 @@ Page({
     answerStatus: "",
     awardedScore: 0,
     subjectiveAnswer: "",
-    annotationTool: "underline",
-    annotationTokens: [],
-    annotationNote: "",
     subjectiveScoring: false,
     subjectiveScoringStage: "",
     subjectiveScoreResult: null,
@@ -767,6 +827,7 @@ Page({
     catalogVersion: 0,
     catalogSyncState: "loading",
     catalogSyncError: "",
+    catalogSyncDetail: "",
     searchOpen: false,
     shareOpen: false,
     catalogChapters: [],
@@ -790,7 +851,7 @@ Page({
     aiMessages: [],
     aiInput: "",
     aiScrollTarget: "",
-    aiCredits: 0,
+    beans: 0,
     aiDialogHeight: 560,
     aiDialogDragging: false,
     aiHistoryOpen: false,
@@ -805,9 +866,11 @@ Page({
   },
 
   onLoad(options = {}) {
+    this._practicePageActive = true;
     this.measureNavigation();
     const requestedBookId = String(options.bookId || "");
     if (requestedBookId) {
+      this._catalogChapters = [];
       this.setData({ activeBookId: requestedBookId, catalogChapters: [], catalogSyncState: "loading" }, () => {
         this.loadConfirmedCatalog(requestedBookId, []);
       });
@@ -829,6 +892,12 @@ Page({
     }
     const app = getApp();
     if (typeof app.syncOfficialQuestions === "function") {
+      // C17（F5/A）：综合训练首屏不再等整库——先拉优先册（见 loadComprehensiveBankProgressively）。
+      // 其余模式一律保持原来的一次整库同步，行为不变。
+      if (requestedMode === "comprehensive" && !requestedBookId && !Number(options.count)) {
+        this.loadComprehensiveBankProgressively(options);
+        return;
+      }
       app.syncOfficialQuestions((questions, metadata = {}) => {
         // A refreshed bank should be used by the next practice session, not replace one already on screen.
         if (this._practiceInitialized) return;
@@ -840,6 +909,235 @@ Page({
     } else {
       this.initializePractice(options, demoQuestions);
     }
+  },
+
+  // C17（F5/A 方案，产品负责人 2026-09-24 选定「先 A」）：综合训练两段式载入。
+  // 第一段只等「优先册」——本机实测单册 193–614ms / 15KB–2.1MB，整库 1456ms / 4.8MB，首题可见时间差在这一段。
+  // 第二段在首屏画完之后后台逐册补齐（见 syncRemainingQuestionBanks），到齐后把队列接长。
+  loadComprehensiveBankProgressively(options) {
+    const app = getApp();
+    const fallbackToWholeBank = () => {
+      app.syncOfficialQuestions((questions, metadata = {}) => {
+        if (this._practiceInitialized) return;
+        this.initializePractice(options, questions, true);
+      }, { force: true });
+    };
+    const scope = this.resolveComprehensiveScope();
+    const primaryBookId = this.resolvePrimaryBookId(scope);
+    if (!primaryBookId) {
+      fallbackToWholeBank();
+      return;
+    }
+    this._comprehensivePrimaryBookId = primaryBookId;
+    this._comprehensiveRequestedBooks = new Set([primaryBookId]);
+    app.syncOfficialQuestions((questions, metadata = {}) => {
+      if (this._practiceInitialized) return;
+      // 优先册为空（册被删、缓存为空、或当前范围把这一册筛掉）时立刻退回整库，不让用户看到空态。
+      const scoped = (Array.isArray(questions) ? questions : []).map(normalizePracticeQuestion);
+      const pooled = filterTrainingPool(scoped, scope.subjectIds, scope.bookIds, scope.stars);
+      if (!pooled.length) {
+        fallbackToWholeBank();
+        return;
+      }
+      this.initializePractice(options, questions, true);
+      this.scheduleComprehensiveTail();
+    }, { force: true, bookId: primaryBookId });
+  },
+
+  // 优先册＝最近练过的那一册（shukao_book_practice_progress.updatedAt 最大），其次科目顺序里的第一册。
+  // 只在当前综合范围允许的册里挑，避免挑到被范围筛掉的册导致首屏空题池。
+  resolvePrimaryBookId(scope = {}) {
+    const candidates = this.comprehensiveScopeBookIds(scope);
+    const progressByBook = wx.getStorageSync("shukao_book_practice_progress") || {};
+    const ranked = candidates
+      .map((bookId, index) => ({ bookId, index, updatedAt: Number((progressByBook[bookId] || {}).updatedAt) || 0 }))
+      .sort((left, right) => (right.updatedAt - left.updatedAt) || (left.index - right.index));
+    if (!ranked.length) return "";
+    return ranked[0].updatedAt ? ranked[0].bookId : candidates[0];
+  },
+
+  // 科目顺序里、当前综合范围允许的册（范围没限制就是全部 9 册）。
+  // 册/科目顺序取自 data/catalog.js——小程序本来就用它当教材清单（library/exams/analysis 等 15 处），不新增一处口径。
+  comprehensiveScopeBookIds(scope = {}) {
+    const scopeBooks = new Set(scope.bookIds || []);
+    const scopeSubjects = new Set(scope.subjectIds || []);
+    const allowed = COMPREHENSIVE_CANONICAL_BOOK_ORDER.filter((bookId) => (!scopeBooks.size || scopeBooks.has(bookId))
+      && (!scopeSubjects.size || scopeSubjects.has(COMPREHENSIVE_BOOK_SUBJECT.get(bookId) || "")));
+    return allowed.length ? allowed : COMPREHENSIVE_CANONICAL_BOOK_ORDER;
+  },
+
+  // 与 initializePractice 读同一份偏好（shukao_training_preferences）——综合范围的口径只能有一处。
+  resolveComprehensiveScope() {
+    const storedTraining = wx.getStorageSync("shukao_training_preferences") || {};
+    return {
+      subjectIds: Array.isArray(storedTraining.selectedScopeSubjectIds) ? storedTraining.selectedScopeSubjectIds.map(String) : [],
+      bookIds: Array.isArray(storedTraining.selectedScopeBookIds) ? storedTraining.selectedScopeBookIds.map(String) : [],
+      stars: Array.isArray(storedTraining.selectedDifficultyStars) ? storedTraining.selectedDifficultyStars.map(Number).filter((value) => value >= 1 && value <= 5) : [],
+    };
+  },
+
+  // 页面上的范围是实时值（用户在范围面板里勾的），比初始化时那份偏好新——补齐时就按实时范围筛。
+  liveComprehensiveScope() {
+    const fallback = this._comprehensiveScope || { subjectIds: [], bookIds: [], stars: [] };
+    return {
+      subjectIds: Array.isArray(this.data.selectedScopeSubjectIds) ? this.data.selectedScopeSubjectIds : fallback.subjectIds,
+      bookIds: Array.isArray(this.data.selectedScopeBookIds) ? this.data.selectedScopeBookIds : fallback.bookIds,
+      stars: Array.isArray(this.data.selectedDifficultyStars) ? this.data.selectedDifficultyStars : fallback.stars,
+    };
+  },
+
+  // 第二段：首屏画完（延后 400ms，避开目录那 9 个请求）之后后台逐册补齐。
+  scheduleComprehensiveTail() {
+    if (this._comprehensiveTailTimer) clearTimeout(this._comprehensiveTailTimer);
+    this._comprehensiveTailTimer = setTimeout(() => {
+      this._comprehensiveTailTimer = null;
+      this.syncRemainingQuestionBanks();
+    }, COMPREHENSIVE_TAIL_DEFER_MS);
+  },
+
+  // 逐册补齐，而不是"再拉一次整库"。原因（2026-09-24 实测 app.js:367）：
+  //   · 整库同步在 force=false 时会命中"内存缓存还新"直接返回，而第一段刚刷新过 globalData → 整库补齐会空转；
+  //   · 即使 force=true，服务端 304 时它把 globalData（此刻只有一册）当整库回给调用方 → 补齐仍然到不了位。
+  // 按册请求没有这个问题：每一册的缓存、304、并入 globalData 都是按册正确的（这正是 app.js 的按册设计）。
+  // 流量与整库相当（单册之和 ≈ 4909KB），但每册各自缓存，下次进入可分别命中。
+  syncRemainingQuestionBanks() {
+    if (!this._practicePageActive || !this._practiceInitialized) return;
+    // 只有走了两段式载入（首屏只带一册）的综合训练才需要补齐；其余模式照旧一次整库。
+    if (!this._comprehensivePrimaryBookId) return;
+    const app = getApp();
+    if (typeof app.syncOfficialQuestions !== "function") return;
+    const requested = this._comprehensiveRequestedBooks = this._comprehensiveRequestedBooks || new Set();
+    const pending = this.comprehensiveScopeBookIds(this.liveComprehensiveScope()).filter((bookId) => !requested.has(bookId));
+    if (!pending.length) return;
+    let cursor = 0;
+    // 并发 2：一册约 200–600ms，串行 8 册要 2s 上下；并发太高会和刚发出的 9 个目录请求抢额度（微信单页并发上限 10）。
+    this._comprehensiveInflight = this._comprehensiveInflight || 0;
+    const next = () => {
+      if (!this._practicePageActive) return;
+      if (this._comprehensiveInflight >= 2 || cursor >= pending.length) return;
+      const bookId = pending[cursor];
+      cursor += 1;
+      requested.add(bookId);
+      this._comprehensiveInflight += 1;
+      app.syncOfficialQuestions((questions, metadata = {}) => {
+        this._comprehensiveInflight = Math.max(0, this._comprehensiveInflight - 1);
+        if (Array.isArray(questions) && questions.length) {
+          this._comprehensiveBankBuffer = (this._comprehensiveBankBuffer || []).concat(questions);
+          this.scheduleQuestionBankAdopt();
+        }
+        next();
+      }, { force: true, bookId });
+      next();
+    };
+    next();
+  },
+
+  // 多册陆续回来时合并成一次重建 + 一次 setData（否则 8 册各重建一次、各重发一遍视图队列）。
+  scheduleQuestionBankAdopt() {
+    if (this._comprehensiveAdoptTimer || !this._practicePageActive) return;
+    this._comprehensiveAdoptTimer = setTimeout(() => {
+      this._comprehensiveAdoptTimer = null;
+      this.adoptFullQuestionBank();
+    }, COMPREHENSIVE_ADOPT_DEBOUNCE_MS);
+  },
+
+  // 补齐的册落地：把新题接到队列尾部——已经在队列里的题不会消失、不会重复，当前那道题按 id 重新定位。
+  // （材料题成员可能跨册，补齐后被并成一组，整体位置会前移，所以不能沿用旧序号。）
+  // 作答状态全部来自 data.responses，这里不清空、不重算，用户填了一半的选项不受影响。
+  adoptFullQuestionBank() {
+    this._comprehensiveAdoptTimer = null;
+    if (!this._practicePageActive || !this._practiceInitialized) return;
+    const incoming = (this._comprehensiveBankBuffer || []).map(normalizePracticeQuestion);
+    this._comprehensiveBankBuffer = [];
+    if (!incoming.length) return;
+    const knownIds = new Set((this._trainingPoolQuestions || []).map((question) => question.id));
+    const fresh = incoming.filter((question) => !knownIds.has(question.id));
+    if (!fresh.length) return;
+    const bank = (this._trainingPoolQuestions || []).concat(fresh);
+    const options = this._practiceOptions || {};
+    const scope = this.liveComprehensiveScope();
+    const scopedQuestions = bank.filter((question) => {
+      if (options.subjectId && question.subjectId !== String(options.subjectId)) return false;
+      if (options.bookId && question.bookId !== String(options.bookId)) return false;
+      return true;
+    });
+    const sessionQuestions = filterTrainingPool(scopedQuestions, scope.subjectIds, scope.bookIds, scope.stars);
+    // 题池先留一份：范围面板可能正等着这几册（见 applyComprehensiveScope 的"正在载入"分支）。
+    this._trainingPoolQuestions = bank;
+    // 范围面板选项要先把新册列出来，即使这一册的题暂时被范围筛光。
+    const scopeOptions = createScopeOptions(bank, scope.subjectIds, scope.bookIds);
+    if (!sessionQuestions.length) {
+      this.setData({ scopeSubjectOptions: scopeOptions.subjects, scopeBookOptions: scopeOptions.books });
+      this.resumePendingComprehensiveScope();
+      return;
+    }
+    const queuedIds = new Set((this._questionQueue || []).map((question) => question.id));
+    const remainder = sessionQuestions.filter((question) => !queuedIds.has(question.id));
+    const questionBank = buildQuestionQueue(sessionQuestions, "sequential");
+    this._questionBank = questionBank;
+    this._practiceScopeQuestionIds = questionBank.map((item) => item.id);
+    if (remainder.length) {
+      // 随机模式只把「新增的那部分」洗牌，已在队列里的顺序不动。
+      const tail = this.data.questionOrder === "random" ? buildQuestionQueue(remainder, "random") : remainder;
+      const questionQueue = buildQuestionQueue([...(this._questionQueue || []), ...tail], "sequential");
+      const currentQuestionId = String(this.data.question && this.data.question.id || "");
+      const locatedIndex = questionQueue.findIndex((question) => String(question.id) === currentQuestionId);
+      const index = locatedIndex >= 0
+        ? locatedIndex
+        : Math.min(Math.max(0, Number(this.data.currentQuestionIndex) || 0), questionQueue.length - 1);
+      const responses = this.data.responses || {};
+      const answerCardItems = buildAnswerCard(questionQueue, responses, index, this.data.examFinished);
+      this._questionQueue = questionQueue;
+      this.setData({
+        // 同一道题（按 id 定位），只是题号/总数/进度百分比要跟着变长后的队列重算。
+        question: questionQueue[index],
+        currentQuestionIndex: index,
+        questionQueue: questionQueueView(questionQueue),
+        answerCardItems,
+        answeredCount: answerCardItems.filter((item) => item.status !== "empty").length,
+        isFirstQuestion: index === 0,
+        isLastQuestion: index === questionQueue.length - 1,
+        questionTypeOptions: createQuestionTypeOptions(questionBank),
+        scopeSubjectOptions: scopeOptions.subjects,
+        scopeBookOptions: scopeOptions.books,
+      });
+    } else {
+      // 这一册的题都已在队列里：只补面板选项与题型分布，不动队列、不动作答。
+      this.setData({
+        questionTypeOptions: createQuestionTypeOptions(questionBank),
+        scopeSubjectOptions: scopeOptions.subjects,
+        scopeBookOptions: scopeOptions.books,
+      });
+    }
+    this.refreshComprehensiveCatalogBank(questionBank);
+    this.resumePendingComprehensiveScope();
+  },
+
+  // 用户选了一个"还没补齐"的范围：当时只能提示"正在载入"；这几册到了就把范围真正应用上。
+  resumePendingComprehensiveScope() {
+    if (!this._pendingComprehensiveScope) return;
+    const scope = this.liveComprehensiveScope();
+    const pooled = filterTrainingPool(this._trainingPoolQuestions || [], scope.subjectIds, scope.bookIds, scope.stars);
+    if (!pooled.length) return;
+    this._pendingComprehensiveScope = false;
+    this.applyComprehensiveScope();
+  },
+
+  // 题池变大后目录要跟着重算（每节多少题、待归组多少题）；目录本身没变，所以只重算不重拉。
+  refreshComprehensiveCatalogBank(questionBank) {
+    if (this._catalogScopeMode !== "subjects") return;
+    this._pendingCatalogQuestionBank = questionBank;
+    const textbooks = Object.values(this._comprehensiveCatalogTextbooks || {});
+    if (!textbooks.length) return;
+    const loadedBookIds = new Set(textbooks.map((textbook) => String(textbook.bookId || textbook.id || "")));
+    const missing = [...new Set((questionBank || []).map((question) => String(question.bookId || "")))]
+      .filter((bookId) => bookId && !loadedBookIds.has(bookId));
+    // 整库里出现了还没拉过目录的册（新增教材）：补拉那一册的目录，别让它的题落进「待归组」。
+    if (missing.length) {
+      this.loadComprehensiveCatalogs(questionBank, { extraBookIds: COMPREHENSIVE_CANONICAL_BOOK_ORDER });
+      return;
+    }
+    this.applyComprehensiveCatalogs(textbooks, questionBank);
   },
 
   loadRuleExam(options = {}) {
@@ -923,6 +1221,14 @@ Page({
     const selectedScopeSubjectIds = Array.isArray(storedTraining.selectedScopeSubjectIds) ? storedTraining.selectedScopeSubjectIds.map(String) : [];
     const selectedScopeBookIds = Array.isArray(storedTraining.selectedScopeBookIds) ? storedTraining.selectedScopeBookIds.map(String) : [];
     const selectedDifficultyStars = Array.isArray(storedTraining.selectedDifficultyStars) ? storedTraining.selectedDifficultyStars.map(Number).filter((value) => value >= 1 && value <= 5) : [];
+    // C17（F5/A）：后台补齐整库时要按同一套入参重算题池，这里把会话口径留在实例上。
+    this._practiceOptions = options;
+    this._requestedMode = requestedMode;
+    this._comprehensiveScope = {
+      subjectIds: selectedScopeSubjectIds,
+      bookIds: selectedScopeBookIds,
+      stars: selectedDifficultyStars,
+    };
     const aiHistory = normalizeAiHistory(wx.getStorageSync("shukao_ai_history"));
     const questionOrder = practiceMode === "exam" || practiceMode === "review"
       ? "sequential"
@@ -959,10 +1265,17 @@ Page({
     const questionBank = buildQuestionQueue(sessionQuestions, "sequential");
     const questionQueue = buildQuestionQueue(sessionQuestions, questionOrder);
     this._questionBank = questionBank;
+    // C17：完整题目队列留在实例上，视图层只拿 id 序列（见 questionQueueView）。
+    this._questionQueue = questionQueue;
     this._trainingPoolQuestions = availableQuestions;
     this._practiceScopeQuestionIds = questionBank.map((item) => item.id);
     this._activePackId = activePackId;
     const activeBookId = String(options.bookId || questionQueue[0].bookId || "");
+    // 综合训练是跨册题池，目录要按科目合并各册；单册章节刷题仍用本册目录。
+    this._catalogScopeMode = requestedMode === "comprehensive" ? "subjects" : "book";
+    this._comprehensiveCatalogTextbooks = {};
+    this._comprehensiveCatalogSettled = new Set();
+    this._comprehensiveCatalogFresh = new Set();
     // 目录一律来自已确认教材目录（下方 applyConfirmedCatalog 会在同步成功后重算）；
     // 同步完成前先留空，不再使用任何硬编码的旧章节目录。
     const initialCatalogOutline = [];
@@ -989,10 +1302,11 @@ Page({
     const catalogChapters = practiceMode === "exam"
       ? createExamCatalogChapters(questionBank, question.id)
       : createCatalogChapters(questionBank, question.id, initialCatalogOutline);
+    this._catalogChapters = catalogChapters;
     const catalogLocation = findCatalogLocation(catalogChapters, question.id);
     this.setData(
       {
-        aiCredits: getApp().globalData.aiCredits,
+        beans: getApp().globalData.beans,
         practiceMode,
         submitted: practiceMode === "memorize",
         bookmarked,
@@ -1000,12 +1314,12 @@ Page({
         // DEC-056：刷题笔记自动建档开关（单独存一份，便于知识卡那边也读同一个值）。
         noteAutoArchive: noteAutoArchiveEnabled(),
         question,
-        questionQueue,
+        questionQueue: questionQueueView(questionQueue),
         practiceScopeTitle: practiceMode === "pack"
           ? activePackName
           : (practiceMode === "review" ? "本次复习" : (practiceMode === "exam" && (options.examTitle || options.scopeTitle) ? (options.examTitle || options.scopeTitle) : "全部题目")),
         responses,
-        catalogChapters,
+        catalogChapters: catalogViewChapters(catalogChapters),
         activeBookId,
         activeCatalogId: catalogLocation.sectionId || catalogLocation.chapterId || "",
         catalogSyncState: practiceMode === "exam" ? "exam" : this.data.catalogSyncState,
@@ -1047,7 +1361,10 @@ Page({
             wx.showToast({ title: "题目已删除，已定位可用题", icon: "none" });
           }
         }
-        if (!["pack", "exam"].includes(practiceMode)) this.loadConfirmedCatalog(activeBookId, this._questionBank);
+        if (!["pack", "exam"].includes(practiceMode)) {
+          if (this._catalogScopeMode === "subjects") this.loadComprehensiveCatalogs(this._questionBank, { extraBookIds: COMPREHENSIVE_CANONICAL_BOOK_ORDER });
+          else this.loadConfirmedCatalog(activeBookId, this._questionBank);
+        }
         if (this.data.settings.keepScreenOn && typeof wx.setKeepScreenOn === "function") {
           wx.setKeepScreenOn({ keepScreenOn: true });
         }
@@ -1056,37 +1373,46 @@ Page({
     );
   },
 
-  loadConfirmedCatalog(bookId, questionBank) {
-    const cacheKey = `shukao_confirmed_catalog_${bookId}`;
-    const cached = wx.getStorageSync(cacheKey);
-    this._pendingCatalogQuestionBank = Array.isArray(questionBank) ? questionBank : [];
-    if (cached && Array.isArray(cached.nodes)) {
-      this.applyConfirmedCatalog(cached, questionBank);
-      this.setData({ catalogSyncState: "cached", catalogSyncError: "" });
-    }
-    if (typeof wx.request !== "function") {
-      this.setData({ catalogSyncState: "offline", catalogSyncError: "当前环境无法请求目录" });
+  // 单册目录与综合训练的多册目录共用同一条请求链路：先回缓存、再请求、失败时保留缓存；
+  // 同一册正在请求时后来者只订阅结果，不重复发请求。meta.source：
+  //   cache＝立即可用的缓存；server＝服务端新数据；failed/unavailable＝本次同步定案（可能带缓存）。
+  requestBookCatalog(bookId, callback, options = {}) {
+    const bookKey = String(bookId || "");
+    if (!bookKey) {
+      callback(null, { source: "failed", error: "缺少教材信息" });
       return;
     }
-    if (this._catalogRequestBookId === bookId) return;
-    this._catalogRequestBookId = bookId;
-    if (!cached || !Array.isArray(cached.nodes)) this.setData({ catalogSyncState: "loading", catalogSyncError: "" });
+    const cacheKey = `shukao_confirmed_catalog_${bookKey}`;
+    const cached = wx.getStorageSync(cacheKey);
+    const hasCache = !!(cached && Array.isArray(cached.nodes));
+    if (hasCache) callback(cached, { source: "cache" });
+    if (typeof wx.request !== "function") {
+      callback(hasCache ? cached : null, { source: "unavailable", error: "当前环境无法请求目录" });
+      return;
+    }
+    this._catalogRequests = this._catalogRequests || {};
+    if (this._catalogRequests[bookKey]) {
+      this._catalogRequests[bookKey].push(callback);
+      return;
+    }
+    const subscribers = [callback];
+    this._catalogRequests[bookKey] = subscribers;
     const app = getApp();
     const apiBaseUrls = typeof app.apiBaseUrlCandidates === "function"
       ? app.apiBaseUrlCandidates()
-      : [String(app.globalData.apiBaseUrl || "http://192.168.2.178:3212").replace(/\/$/, "")];
+      : [String(app.globalData.apiBaseUrl || "").replace(/\/$/, "")].filter(Boolean);
     const requestAt = (index, previousError = "") => {
       const apiBaseUrl = apiBaseUrls[index];
       if (!apiBaseUrl) {
-        this._catalogRequestBookId = "";
-        this.setData({
-          catalogSyncState: cached && Array.isArray(cached.nodes) ? "cached" : "offline",
-          catalogSyncError: cached && Array.isArray(cached.nodes) ? "" : (previousError || "目录服务器连接失败"),
-        });
+        delete this._catalogRequests[bookKey];
+        subscribers.forEach((subscriber) => subscriber(
+          hasCache ? cached : null,
+          { source: "failed", error: previousError || "目录服务器连接失败" },
+        ));
         return;
       }
       wx.request({
-        url: `${apiBaseUrl}/api/catalog/textbooks/${encodeURIComponent(bookId)}`,
+        url: `${apiBaseUrl}/api/catalog/textbooks/${encodeURIComponent(bookKey)}`,
         method: "GET",
         timeout: 6000,
         success: (response) => {
@@ -1096,20 +1422,165 @@ Page({
             return;
           }
           app.globalData.apiBaseUrl = apiBaseUrl;
-          this._catalogRequestBookId = "";
-          if (!cached || Number(cached.version) !== Number(textbook.version)) {
+          if (!hasCache || Number(cached.version) !== Number(textbook.version)) {
             wx.setStorageSync(cacheKey, textbook);
           }
-          this.applyConfirmedCatalog(textbook, this._pendingCatalogQuestionBank || questionBank);
-          this.setData({ catalogSyncState: "synced", catalogSyncError: "" });
+          delete this._catalogRequests[bookKey];
+          subscribers.forEach((subscriber) => subscriber(textbook, { source: "server" }));
         },
         fail: (error) => requestAt(index + 1, error && error.errMsg || "目录服务器连接失败"),
       });
     };
+    // C17（F4）：已经有缓存时，版本刷新不必和首屏抢并发额度（微信单页并发请求上限 10，
+    // 而进综合训练时题库那条大请求 + 9 册目录刚好顶满）。缓存先显示，刷新延后一帧再发。
+    const deferMs = hasCache ? Math.max(0, Number(options.deferMs) || 0) : 0;
+    if (deferMs && typeof setTimeout === "function") {
+      this._catalogRefreshTimers = this._catalogRefreshTimers || [];
+      this._catalogRefreshTimers.push(setTimeout(() => requestAt(0), deferMs));
+      return;
+    }
     requestAt(0);
   },
 
+  loadConfirmedCatalog(bookId, questionBank) {
+    const normalizedBookId = String(bookId || "");
+    this._pendingCatalogQuestionBank = Array.isArray(questionBank) ? questionBank : [];
+    const cached = wx.getStorageSync(`shukao_confirmed_catalog_${normalizedBookId}`);
+    if (!(cached && Array.isArray(cached.nodes))) {
+      this.setData({ catalogSyncState: "loading", catalogSyncError: "", catalogSyncDetail: "" });
+    }
+    this.requestBookCatalog(normalizedBookId, (textbook, meta) => {
+      if (textbook && Array.isArray(textbook.nodes)) {
+        this.applyConfirmedCatalog(textbook, this._pendingCatalogQuestionBank);
+        this.setData(meta.source === "server"
+          ? { catalogSyncState: "synced", catalogSyncError: "", catalogSyncDetail: "" }
+          : { catalogSyncState: "cached", catalogSyncError: "", catalogSyncDetail: "" });
+        return;
+      }
+      this.setData({
+        catalogSyncState: "offline",
+        catalogSyncError: meta.error || "目录服务器连接失败",
+        catalogSyncDetail: "",
+      });
+    });
+  },
+
+  // 综合训练：把题池涉及的每一册已确认目录都取回，按科目合并成「科目 → 跨册章 → 节 → 小点」。
+  // 缓存先到先显示；某一册同步失败只影响该册（题目落到「待归组」），不阻断其余册。
+  loadComprehensiveCatalogs(questionBank, options = {}) {
+    const bank = Array.isArray(questionBank) ? questionBank : [];
+    this._pendingCatalogQuestionBank = bank;
+    const bankBookIds = [...new Set(bank.map((question) => String(question && question.bookId || "")).filter(Boolean))];
+    // C17（F5/A）：首屏只有优先册时，题池里只有 1 册，但目录仍要按全部科目/册展开
+    // （C16 的「五个科目行常驻」不能因为首屏题少就掉成一行）。extraBookIds 由调用方给。
+    const extraBookIds = (Array.isArray(options.extraBookIds) ? options.extraBookIds : []).map(String).filter(Boolean);
+    const bookIds = [...new Set([...bankBookIds, ...extraBookIds])];
+    this._comprehensiveCatalogTextbooks = {};
+    this._comprehensiveCatalogSettled = new Set();
+    this._comprehensiveCatalogFresh = new Set();
+    this._comprehensiveCatalogSignature = "";
+    if (!bookIds.length) {
+      this._catalogChapters = [];
+      this.setData({
+        catalogChapters: [],
+        catalogSyncState: "offline",
+        catalogSyncError: "当前题池没有可用的教材目录",
+        catalogSyncDetail: "",
+      });
+      return;
+    }
+    const cachedCount = bookIds.filter((bookId) => {
+      const cached = wx.getStorageSync(`shukao_confirmed_catalog_${bookId}`);
+      return !!(cached && Array.isArray(cached.nodes));
+    }).length;
+    // C17（F4）：全部册都有缓存时，刷新请求延后，先让首屏（缓存目录 + 第一道题）画出来。
+    const refreshDeferMs = cachedCount === bookIds.length ? CATALOG_REFRESH_DEFER_MS : 0;
+    this.setData({ catalogSyncState: "loading", catalogSyncError: "", catalogSyncDetail: "" });
+    bookIds.forEach((bookId) => {
+      this.requestBookCatalog(bookId, (textbook, meta) => {
+        if (textbook && Array.isArray(textbook.nodes)) {
+          this._comprehensiveCatalogTextbooks[bookId] = textbook;
+          // C17（F3）：缓存回调是在这个同步循环里发出的（见 requestBookCatalog），逐册重建＝白干；
+          // 缓存那一轮由循环结束后的 rebuildComprehensiveCatalogs() 合并成一次重建。
+          if (meta.source !== "cache") this.rebuildComprehensiveCatalogs();
+        }
+        // 缓存回调之后还要等网络结果（server / failed / unavailable）才算这一册定案。
+        if (meta.source === "cache") return;
+        this._comprehensiveCatalogSettled.add(bookId);
+        if (meta.source === "server") this._comprehensiveCatalogFresh.add(bookId);
+        if (this._comprehensiveCatalogSettled.size < bookIds.length) return;
+        const textbooks = Object.values(this._comprehensiveCatalogTextbooks);
+        const failed = bookIds.length - textbooks.length;
+        const fresh = this._comprehensiveCatalogFresh.size;
+        const subjectCount = subjectGroupsFromCatalogs(textbooks, catalogSubjects).length;
+        if (!textbooks.length) {
+          this.setData({ catalogSyncState: "offline", catalogSyncError: "教材目录同步失败", catalogSyncDetail: "" });
+          return;
+        }
+        if (fresh === bookIds.length) {
+          this.setData({
+            catalogSyncState: "synced",
+            catalogSyncError: "",
+            catalogSyncDetail: `已同步 ${subjectCount} 科 ${textbooks.length} 册`,
+          });
+          return;
+        }
+        this.setData({
+          catalogSyncState: "cached",
+          catalogSyncError: failed ? `${failed} 册目录未同步` : "",
+          catalogSyncDetail: failed
+            ? `缓存 ${subjectCount} 科 ${textbooks.length} 册 · ${failed} 册离线`
+            : `缓存 ${subjectCount} 科 ${textbooks.length} 册`,
+        });
+      }, { deferMs: refreshDeferMs });
+    });
+    // 缓存那一轮（同步到达）以及无网络环境下的 unavailable 结果，在这里统一重建一次。
+    this.rebuildComprehensiveCatalogs();
+  },
+
+  // C17（F3）：同一册目录会先给缓存、再给网络两份结果；版本一致时重建出来的树逐节点相同。
+  // 用「册 + 版本 + 节点数」指纹去重：内容没变就不重建、不 setData（实测原来一次载入重建 18 次）。
+  rebuildComprehensiveCatalogs() {
+    const textbooks = Object.values(this._comprehensiveCatalogTextbooks || {});
+    if (!textbooks.length) return;
+    const signature = textbooks
+      .map((textbook) => [
+        String(textbook.bookId || textbook.id || ""),
+        Number(textbook.version) || 0,
+        Array.isArray(textbook.nodes) ? textbook.nodes.length : 0,
+      ].join("#"))
+      .sort()
+      .join(",");
+    if (signature === this._comprehensiveCatalogSignature) return;
+    this._comprehensiveCatalogSignature = signature;
+    this.applyComprehensiveCatalogs(
+      textbooks,
+      this._pendingCatalogQuestionBank || this._questionBank || [],
+    );
+  },
+
+  applyComprehensiveCatalogs(textbooks, questionBank) {
+    const loaded = (Array.isArray(textbooks) ? textbooks : [])
+      .filter((textbook) => textbook && Array.isArray(textbook.nodes));
+    if (!loaded.length) return;
+    const outline = buildSubjectCatalogOutline(subjectGroupsFromCatalogs(loaded, catalogSubjects));
+    if (!outline.length) return;
+    const activeQuestionId = this.data.question && this.data.question.id;
+    // 综合训练的一级是科目＝题池骨架：即使某科还没形成目录投影也要留住这一行，
+    // 否则用户看到的是"目录里只有两科"，分不清"没有这一科"和"这一科的题还没归组"。
+    const catalogChapters = createCatalogChapters(questionBank || [], activeQuestionId, outline, { keepEmptyChapters: true });
+    this._catalogChapters = catalogChapters;
+    this.setData({
+      catalogChapters: catalogViewChapters(catalogChapters),
+      catalogVersion: loaded.reduce((max, textbook) => Math.max(max, Number(textbook.version) || 0), 0),
+    });
+  },
+
   retryCatalogSync() {
+    if (this._catalogScopeMode === "subjects") {
+      this.loadComprehensiveCatalogs(this._questionBank || [], { extraBookIds: COMPREHENSIVE_CANONICAL_BOOK_ORDER });
+      return;
+    }
     if (!this.data.activeBookId) return;
     this.loadConfirmedCatalog(this.data.activeBookId, this._questionBank || []);
   },
@@ -1119,10 +1590,22 @@ Page({
     const outline = buildCatalogOutline(textbook.nodes);
     if (!outline.length) return;
     const activeQuestionId = this.data.question && this.data.question.id;
+    const catalogChapters = createCatalogChapters(questionBank, activeQuestionId, outline);
+    this._catalogChapters = catalogChapters;
     this.setData({
-      catalogChapters: createCatalogChapters(questionBank, activeQuestionId, outline),
+      catalogChapters: catalogViewChapters(catalogChapters),
       catalogVersion: Number(textbook.version) || 0,
     });
+  },
+
+  // 综合训练里「章节刷题」仍按本册：从已同步的多册目录里取当前题所在册，单独搭一份单册目录。
+  confirmedCatalogChaptersForBook(bookId, questionBank) {
+    const textbook = (this._comprehensiveCatalogTextbooks || {})[String(bookId || "")];
+    if (!textbook || !Array.isArray(textbook.nodes)) return [];
+    const outline = buildCatalogOutline(textbook.nodes);
+    if (!outline.length) return [];
+    const activeQuestionId = this.data.question && this.data.question.id;
+    return createCatalogChapters(questionBank || [], activeQuestionId, outline);
   },
 
   onShow() {
@@ -1169,6 +1652,9 @@ Page({
   },
 
   onUnload() {
+    this._practicePageActive = false;
+    if (this._comprehensiveTailTimer) clearTimeout(this._comprehensiveTailTimer);
+    if (this._comprehensiveAdoptTimer) clearTimeout(this._comprehensiveAdoptTimer);
     if (this.masteryAdvanceTimer) clearTimeout(this.masteryAdvanceTimer);
     if (this.examTimer) clearInterval(this.examTimer);
     if (this._potatoMoveTimer) clearTimeout(this._potatoMoveTimer);
@@ -1484,18 +1970,21 @@ Page({
   },
 
   openCatalog() {
-    const catalogLocation = findCatalogLocation(this.data.catalogChapters, this.data.question.id);
-    const catalogChapters = this.data.catalogChapters.map((chapter) => ({
-      ...chapter,
-      expanded: chapter.id === catalogLocation.chapterId ? true : chapter.expanded,
-    }));
-    this.setData({
+    // C17（F2）：展开态只改「那一个科目行」，不再把整棵树（实测 131.5KB）重传一遍。
+    const chapters = this._catalogChapters || [];
+    const catalogLocation = findCatalogLocation(chapters, this.data.question.id);
+    const chapterIndex = chapters.findIndex((chapter) => chapter.id === catalogLocation.chapterId);
+    const patch = {
       catalogOpen: true,
       catalogView: "directory",
       searchOpen: false,
       searchFocus: false,
-      catalogChapters,
-    });
+    };
+    if (chapterIndex >= 0 && chapters[chapterIndex].expanded !== true) {
+      chapters[chapterIndex].expanded = true;
+      patch[`catalogChapters[${chapterIndex}].expanded`] = true;
+    }
+    this.setData(patch);
   },
 
   openSearch() {
@@ -1505,10 +1994,10 @@ Page({
   selectCatalogItem(event) {
     const sectionId = event.currentTarget.dataset.id;
     const title = event.currentTarget.dataset.title;
-    const section = this.data.catalogChapters
+    const section = (this._catalogChapters || [])
       .flatMap((chapter) => chapter.sections || [])
       .find((item) => item.id === sectionId);
-    const source = this.data.practiceMode === "exam" ? this.data.questionQueue : (this._questionBank || []);
+    const source = this.data.practiceMode === "exam" ? (this._questionQueue || []) : (this._questionBank || []);
     const questionIds = new Set(section && section.questionIds || []);
     const questions = source.filter((question) => questionIds.has(question.id));
     if (!questions.length) {
@@ -1520,27 +2009,31 @@ Page({
 
   selectCatalogChapter(event) {
     const chapterId = event.currentTarget.dataset.id;
-    const chapter = this.data.catalogChapters.find((item) => item.id === chapterId);
+    const chapter = (this._catalogChapters || []).find((item) => item.id === chapterId);
     if (!chapter) return;
-    const source = this.data.practiceMode === "exam" ? this.data.questionQueue : (this._questionBank || []);
+    const source = this.data.practiceMode === "exam" ? (this._questionQueue || []) : (this._questionBank || []);
     const questionIds = new Set(chapter.questionIds || []);
     const questions = source.filter((question) => questionIds.has(question.id));
     if (!questions.length) {
-      wx.showToast({ title: `${chapter.title}暂无题目`, icon: "none" });
+      // 空科目（综合训练里这一科还没形成目录投影）要说清题去哪了：它们在"待归组"里，
+      // 不能只说"暂无题目"，否则看起来像题库缺内容。
+      const pending = Number(event.currentTarget.dataset.pending || 0);
+      wx.showToast({
+        title: pending ? `${chapter.title}暂无已归组题目，${pending} 题待归组` : `${chapter.title}暂无题目`,
+        icon: "none",
+      });
       return;
     }
     this.openCatalogSummary(chapter.title, questions);
   },
 
   openCatalogSummary(title, questions) {
-    const catalogSummaryQuestions = questions.map((question, index) => ({
-      ...question,
-      summaryNumber: String(index + 1).padStart(2, "0"),
-    }));
+    // C17（F2）：题目列表视图只要「编号 + 题干」，完整题目（含解析/参考答案）留在实例上。
+    this._catalogSummaryQuestions = Array.isArray(questions) ? questions : [];
     this.setData({
       catalogView: "summary",
       catalogSummaryTitle: title,
-      catalogSummaryQuestions,
+      catalogSummaryQuestions: catalogSummaryView(this._catalogSummaryQuestions),
     });
   },
 
@@ -1551,15 +2044,12 @@ Page({
   selectCatalogQuestion(event) {
     const questionId = event.currentTarget.dataset.questionId;
     if (this.data.practiceMode === "exam") {
-      const examIndex = this.data.questionQueue.findIndex((question) => question.id === questionId);
+      const examIndex = (this._questionQueue || []).findIndex((question) => question.id === questionId);
       if (examIndex >= 0) this.setData({ catalogOpen: false }, () => this.loadQuestion(examIndex));
       return;
     }
 
-    const sourceQuestions = this.data.catalogSummaryQuestions.map((question) => {
-      const { summaryNumber, ...sourceQuestion } = question;
-      return sourceQuestion;
-    });
+    const sourceQuestions = (this._catalogSummaryQuestions || []).map((question) => ({ ...question }));
     let questionQueue = buildQuestionQueue(sourceQuestions, this.data.questionOrder);
     let selectedIndex = questionQueue.findIndex((question) => question.id === questionId);
     if (this.data.questionOrder === "random" && selectedIndex > 0) {
@@ -1570,10 +2060,11 @@ Page({
     }
     if (selectedIndex < 0) return;
     this._practiceScopeQuestionIds = sourceQuestions.map((question) => question.id);
+    this._questionQueue = questionQueue;
     this.setData(
       {
         catalogOpen: false,
-        questionQueue,
+        questionQueue: questionQueueView(questionQueue),
         practiceScopeTitle: this.data.catalogSummaryTitle,
       },
       () => this.loadQuestion(selectedIndex),
@@ -1581,19 +2072,26 @@ Page({
   },
 
   toggleCatalogChapter(event) {
+    // C17（F2）：只把被点的那一行的展开态发回视图层（原来是整棵树 131.5KB）。
     const chapterId = event.currentTarget.dataset.id;
-    const catalogChapters = this.data.catalogChapters.map((chapter) =>
-      chapter.id === chapterId ? { ...chapter, expanded: !chapter.expanded } : chapter,
-    );
-    this.setData({ catalogChapters });
+    const chapters = this._catalogChapters || [];
+    const chapterIndex = chapters.findIndex((chapter) => chapter.id === chapterId);
+    if (chapterIndex < 0) return;
+    const expanded = chapters[chapterIndex].expanded !== true;
+    chapters[chapterIndex].expanded = expanded;
+    this.setData({ [`catalogChapters[${chapterIndex}].expanded`]: expanded });
   },
 
   collapseAllCatalog() {
-    const catalogChapters = this.data.catalogChapters.map((chapter) => ({
-      ...chapter,
-      expanded: false,
-    }));
-    this.setData({ catalogChapters });
+    const chapters = this._catalogChapters || [];
+    const patch = {};
+    chapters.forEach((chapter, index) => {
+      if (chapter.expanded) {
+        chapter.expanded = false;
+        patch[`catalogChapters[${index}].expanded`] = false;
+      }
+    });
+    if (Object.keys(patch).length) this.setData(patch);
   },
 
   updateSearchQuery(event) {
@@ -1610,7 +2108,7 @@ Page({
       wx.showToast({ title: "请输入搜索内容", icon: "none" });
       return;
     }
-    const source = this.data.practiceMode === "exam" ? this.data.questionQueue : (this._questionBank || []);
+    const source = this.data.practiceMode === "exam" ? (this._questionQueue || []) : (this._questionBank || []);
     const normalizedQuery = searchQuery.toLowerCase();
     const stringifySearchValue = (value) => {
       if (Array.isArray(value)) return value.map(stringifySearchValue).join(" ");
@@ -1644,7 +2142,7 @@ Page({
 
   selectSearchResult(event) {
     const questionId = event.currentTarget.dataset.questionId;
-    const currentIndex = this.data.questionQueue.findIndex((question) => question.id === questionId);
+    const currentIndex = (this._questionQueue || []).findIndex((question) => question.id === questionId);
     if (currentIndex >= 0) {
       this.setData({ searchOpen: false, searchFocus: false }, () => this.loadQuestion(currentIndex));
       return;
@@ -1660,10 +2158,11 @@ Page({
     }
     if (selectedIndex < 0) return;
     this._practiceScopeQuestionIds = (this._questionBank || []).map((question) => question.id);
+    this._questionQueue = questionQueue;
     this.setData({
       searchOpen: false,
       searchFocus: false,
-      questionQueue,
+      questionQueue: questionQueueView(questionQueue),
       practiceScopeTitle: "全部题目",
     }, () => this.loadQuestion(selectedIndex));
   },
@@ -1704,11 +2203,11 @@ Page({
       exam: {
         title: this.data.practiceScopeTitle || "汉语言文学学科基础试卷",
         durationMinutes: this.data.examDurationMinutes || 120,
-        totalScore: this.data.examDeclaredTotalScore || this.data.questionQueue.reduce((sum, question) => sum + (Number(question.maxScore || question.score) || 0), 0),
+        totalScore: this.data.examDeclaredTotalScore || (this._questionQueue || []).reduce((sum, question) => sum + (Number(question.maxScore || question.score) || 0), 0),
         declaredTotalScore: this.data.examDeclaredTotalScore || 0,
         selectionRules: this.data.examSelectionRules || [],
       },
-      questions: this.data.questionQueue,
+      questions: this._questionQueue || [],
     };
   },
 
@@ -1823,6 +2322,14 @@ Page({
     if (utilityPanel === "mode") {
       nextData.modePanelView = "main";
     }
+    if (utilityPanel === "feedback") {
+      // 默认选中「问题反馈」：输入框是 wx:if="{{feedbackType}}"，不选类型进来就没有输入框
+      // （产品负责人 2026-10-01）。已经选过类型时不覆盖用户的显式选择。
+      nextData.feedbackType = this.data.feedbackType || "issue";
+    }
+    if (utilityPanel === "feedback") {
+      this.syncPendingFeedback();
+    }
     if (utilityPanel === "note") {
       // DEC-056：题目笔记与知识卡共用同一份数据，从卡片里按 questionId 回填。
       const savedNote = questionNoteContent(this.data.question.id);
@@ -1850,11 +2357,20 @@ Page({
       return;
     }
     if (mode === "chapter") {
+      // 综合训练下目录已是"科目树"，但「章节刷题」仍是本册概念：下拉按当前题所在册的章→节，
+      // 且"全部"也只含本册题目，避免把别的册的题混进章节范围。
+      const currentBookId = String(this.data.question && this.data.question.bookId || "");
+      const bookQuestions = this._catalogScopeMode === "subjects"
+        ? (this._questionBank || []).filter((question) => String(question.bookId || "") === currentBookId)
+        : (this._questionBank || []);
+      const pickerSource = this._catalogScopeMode === "subjects"
+        ? this.confirmedCatalogChaptersForBook(currentBookId, bookQuestions)
+        : (this._catalogChapters || []);
       const chapterPickerOptions = [{
         id: "all",
         title: "全部",
-        questionIds: (this._questionBank || []).map((question) => question.id),
-      }].concat(this.data.catalogChapters.filter((chapter) => chapter.questionCount > 0));
+        questionIds: bookQuestions.map((question) => question.id),
+      }].concat(pickerSource.filter((chapter) => chapter.questionCount > 0));
       this.setData({
         modePanelView: "chapters",
         chapterPickerOptions,
@@ -1900,8 +2416,10 @@ Page({
     if (mode === "sequential" || mode === "random") {
       const scopeIds = new Set(this._practiceScopeQuestionIds || []);
       const scopeQuestions = (this._questionBank || []).filter((question) => scopeIds.has(question.id));
+      const questionQueue = buildQuestionQueue(scopeQuestions, mode);
+      this._questionQueue = questionQueue;
       nextData.questionOrder = mode;
-      nextData.questionQueue = buildQuestionQueue(scopeQuestions, mode);
+      nextData.questionQueue = questionQueueView(questionQueue);
       targetIndex = 0;
     } else if (mode === "memorize") {
       nextData.practiceMode = "memorize";
@@ -1961,11 +2479,27 @@ Page({
       this.data.selectedDifficultyStars,
     );
     if (!questions.length) {
+      // A 方案下首屏只带进来一册：用户可能选了一个"还没补齐"的范围。
+      // 这种情况不能报"暂无题目"（口径错），而是提示在载入、并在这几册到齐后自动把范围应用上。
+      const loadedBookIds = new Set((this._trainingPoolQuestions || []).map((question) => String(question.bookId || "")));
+      const missingBooks = this.comprehensiveScopeBookIds(this.liveComprehensiveScope())
+        .filter((bookId) => !loadedBookIds.has(bookId));
+      if (this._comprehensivePrimaryBookId && missingBooks.length) {
+        this._pendingComprehensiveScope = true;
+        wx.showToast({ title: "正在载入该范围，请稍候", icon: "none" });
+        this.syncRemainingQuestionBanks();
+        return;
+      }
       wx.showToast({ title: "当前组合暂无题目", icon: "none" });
       return;
     }
     const questionQueue = buildQuestionQueue(questions, this.data.questionOrder);
-    this._practiceScopeQuestionIds = questions.map((question) => question.id);
+    const questionBank = buildQuestionQueue(questions, "sequential");
+    this._questionBank = questionBank;
+    this._questionQueue = questionQueue;
+    this._practiceScopeQuestionIds = questionBank.map((question) => question.id);
+    // 综合训练的题池变了：目录（科目树）要按新题池重新同步，章节刷题的本册目录也换成本册。
+    this._catalogScopeMode = "subjects";
     wx.setStorageSync("shukao_training_preferences", {
       questionOrder: this.data.questionOrder,
       trainingScope: "comprehensive",
@@ -1975,13 +2509,17 @@ Page({
     });
     this.setData({
       trainingScope: "comprehensive",
-      questionQueue,
+      activeBookId: String(questions[0] && questions[0].bookId || this.data.activeBookId || ""),
+      questionQueue: questionQueueView(questionQueue),
       practiceScopeTitle: "综合题池",
       practiceMode: "normal",
       utilityPanel: "",
       modePanelView: "main",
       questionTypeOptions: createQuestionTypeOptions(questions),
-    }, () => this.loadQuestion(0));
+    }, () => {
+      this.loadQuestion(0);
+      this.loadComprehensiveCatalogs(questionBank);
+    });
     wx.showToast({ title: `综合训练：${questions.length} 题`, icon: "none" });
   },
 
@@ -2040,9 +2578,9 @@ Page({
     const scopeKind = event.currentTarget.dataset.kind;
     let scope = null;
     if (scopeKind === "chapter") {
-      scope = this.data.catalogChapters.find((chapter) => chapter.id === scopeId);
+      scope = (this._catalogChapters || []).find((chapter) => chapter.id === scopeId);
     } else {
-      scope = this.data.catalogChapters
+      scope = (this._catalogChapters || [])
         .flatMap((chapter) => chapter.sections || [])
         .find((section) => section.id === scopeId);
     }
@@ -2062,6 +2600,7 @@ Page({
     }
     const questionQueue = buildQuestionQueue(questions, this.data.questionOrder);
     this._practiceScopeQuestionIds = questions.map((question) => question.id);
+    this._questionQueue = questionQueue;
     const preferences = {
       questionOrder: this.data.questionOrder,
       trainingScope: "chapter",
@@ -2075,7 +2614,7 @@ Page({
       selectedQuestionType: "",
       selectedQuestionTypeLabel: "",
       practiceMode: "normal",
-      questionQueue,
+      questionQueue: questionQueueView(questionQueue),
       practiceScopeTitle: scope.title,
       utilityPanel: "",
       modePanelView: "main",
@@ -2096,6 +2635,7 @@ Page({
 
     const questionQueue = buildQuestionQueue(questions, this.data.questionOrder);
     this._practiceScopeQuestionIds = questions.map((question) => question.id);
+    this._questionQueue = questionQueue;
     const preferences = {
       questionOrder: this.data.questionOrder,
       trainingScope: "type",
@@ -2108,7 +2648,7 @@ Page({
       selectedQuestionTypeLabel: option.label,
       selectedChapterScopeId: "",
       selectedChapterScopeLabel: "",
-      questionQueue,
+      questionQueue: questionQueueView(questionQueue),
       practiceScopeTitle: `${option.label}训练`,
       practiceMode: "normal",
       utilityPanel: "",
@@ -2120,7 +2660,9 @@ Page({
   },
 
   loadQuestion(index) {
-    const queue = this.data.questionQueue;
+    // C17（F1/F2）：队列与目录的完整数据都在实例上；翻页只把「这一道题 + 变化的那点视图状态」
+    // 发回视图层（原来每次翻页都要把整条 1249 题队列 9.95MB + 整棵目录树 131.5KB 重传一遍）。
+    const queue = this._questionQueue || [];
     if (index < 0 || index >= queue.length) return;
     const queueQuestion = queue[index];
     const response = this.data.responses[queueQuestion.id] || {};
@@ -2137,15 +2679,13 @@ Page({
     const question = optionOrder.length
       ? applyOptionOrder(queueQuestion, optionOrder)
       : restoreOriginalOptions(queueQuestion);
-    const questionQueue = queue.map((item, itemIndex) => itemIndex === index ? question : item);
+    queue[index] = question;
     const storedVote = wx.getStorageSync(`shukao_question_vote_${question.id}`) || {};
     const bookmarked = wx.getStorageSync(`shukao_bookmark_${question.id}`) === true;
     const submitted = this.data.practiceMode === "memorize" || this.data.examFinished || response.submitted === true;
     const selected = response.selected || "";
     const selectedMap = normalizePracticeSelection(selected).reduce((map, key) => ({ ...map, [key]: true }), {});
     const subjectiveAnswer = response.subjectiveAnswer || "";
-    const annotationTokens = createAnnotationTokens(question, response);
-    const annotationNote = response.annotationNote || "";
     const subjectiveScoreResult = response.subjectiveScoreResult || null;
     const isCorrect = isSubjectiveQuestion(question)
       ? (!!subjectiveScoreResult && response.isCorrect === true)
@@ -2157,17 +2697,19 @@ Page({
     const aiSession = this.data.aiHistory.find((session) => session.questionId === question.id);
     const aiMessages = aiSession && Array.isArray(aiSession.messages) ? aiSession.messages : [];
     const aiScrollTarget = aiMessages.length ? aiMessages[aiMessages.length - 1].id : "";
-    const answerCardItems = buildAnswerCard(questionQueue, this.data.responses, index, this.data.examFinished);
+    const answerCardItems = buildAnswerCard(queue, this.data.responses, index, this.data.examFinished);
     const answeredCount = answerCardItems.filter((item) => item.status !== "empty").length;
-    const catalogLocation = findCatalogLocation(this.data.catalogChapters, question.id);
-    const catalogChapters = this.data.catalogChapters.map((chapter) => ({
-      ...chapter,
-      expanded: chapter.id === catalogLocation.chapterId ? true : chapter.expanded,
-    }));
+    const catalogLocation = findCatalogLocation(this._catalogChapters || [], question.id);
+    const catalogChapterIndex = (this._catalogChapters || []).findIndex((chapter) => chapter.id === catalogLocation.chapterId);
+    const catalogPatch = {};
+    if (catalogChapterIndex >= 0 && this._catalogChapters[catalogChapterIndex].expanded !== true) {
+      this._catalogChapters[catalogChapterIndex].expanded = true;
+      catalogPatch[`catalogChapters[${catalogChapterIndex}].expanded`] = true;
+    }
     this.stopSubjectiveScoringProgress();
     this.setData({
       question,
-      questionQueue,
+      ...catalogPatch,
       currentQuestionIndex: index,
       selected,
       selectedMap,
@@ -2176,9 +2718,6 @@ Page({
         : "",
       awardedScore: Number(response.awardedScore) || 0,
       subjectiveAnswer,
-      annotationTokens,
-      annotationNote,
-      annotationTool: "underline",
       subjectiveScoring: false,
       subjectiveScoringStage: "",
       subjectiveScoreResult,
@@ -2195,7 +2734,6 @@ Page({
       isLastQuestion: index === queue.length - 1,
       answerCardItems,
       answeredCount,
-      catalogChapters,
       activeCatalogId: catalogLocation.sectionId || catalogLocation.chapterId || "",
       activeAiSessionId: aiSession ? aiSession.id : "",
       aiContent: aiSession ? aiSession.aiContent : "",
@@ -2218,7 +2756,7 @@ Page({
       progressByPack[this._activePackId] = {
         questionId: question.id,
         questionIndex: this.data.currentQuestionIndex,
-        questionOrder: this.data.questionQueue.map((item) => item.id),
+        questionOrder: (this._questionQueue || []).map((item) => item.id),
         updatedAt: Date.now(),
       };
       wx.setStorageSync("shukao_pack_practice_progress", progressByPack);
@@ -2269,7 +2807,7 @@ Page({
     const result = saveQuestionNote({
       question: this.data.question,
       content,
-      chapters: this.data.catalogChapters || [],
+      chapters: this._catalogChapters || [],
       enabled: noteAutoArchiveEnabled(),
     });
     this.setData({ utilityPanel: "" });
@@ -2303,18 +2841,128 @@ Page({
       wx.showToast({ title: "请填写反馈内容", icon: "none" });
       return;
     }
-    const feedbackRecords = wx.getStorageSync("shukao_content_feedback") || [];
-    feedbackRecords.unshift({
-      id: `feedback-${Date.now()}`,
-      questionId: this.data.question.id,
-      type: this.data.feedbackType,
+    if (content.length < 5) {
+      // 产品负责人 2026-10-02 指定口径：字数不够时直接说清门槛（与输入框占位文案一致）
+      wx.showToast({ title: "不少于五个字才能提交", icon: "none" });
+      return;
+    }
+    const question = this.data.question || {};
+    const record = {
+      // 客户端反馈 id：**同一条反馈重试时保持不变**，服务端按 userId + clientFeedbackId 幂等去重。
+      clientFeedbackId: `fb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      // 内部类型 → 服务端公共分类（correction 内容问题 / issue 功能异常），不把内部值直接当公共分类。
+      category: this.data.feedbackType === "correction" ? "content_issue" : "feature_issue",
       content,
+      questionId: question.id || "",
+      questionType: question.type || "",
+      feedbackType: this.data.feedbackType,
       scoreRequestId: this.data.subjectiveScoreResult ? this.data.subjectiveScoreResult.requestId : "",
+      questionStemPreview: String(question.stem || "").slice(0, 120),
       createdAt: Date.now(),
-    });
-    wx.setStorageSync("shukao_content_feedback", feedbackRecords.slice(0, 100));
+      attempts: 0,
+      lastError: "",
+      nextRetryAt: 0,
+    };
     this.setData({ utilityPanel: "", feedbackText: "" });
-    wx.showToast({ title: "反馈已提交", icon: "success" });
+    const app = getApp();
+    if (!app || !app.globalData || !app.globalData.authToken) {
+      // 未登录：**保留草稿进待同步队列**（登录后自动补报），不再"只写本地、存满 100 条静默丢弃"。
+      this.enqueueFeedback(Object.assign({}, record, { lastError: "not_signed_in", nextRetryAt: Date.now() + 60000 }));
+      wx.showToast({ title: "登录后才能提交反馈，已为你暂存", icon: "none" });
+      return;
+    }
+    this.sendContentFeedback(record);
+  },
+
+  // 待同步队列（本地）：条目带 attempts / lastError / nextRetryAt / clientFeedbackId
+  readFeedbackQueue() {
+    return wx.getStorageSync("shukao_content_feedback_queue") || [];
+  },
+
+  writeFeedbackQueue(list) {
+    wx.setStorageSync("shukao_content_feedback_queue", (list || []).slice(0, 100));
+  },
+
+  enqueueFeedback(record) {
+    const list = this.readFeedbackQueue().filter((item) => item.clientFeedbackId !== record.clientFeedbackId);
+    list.unshift(record);
+    this.writeFeedbackQueue(list);
+  },
+
+  dequeueFeedback(clientFeedbackId) {
+    this.writeFeedbackQueue(this.readFeedbackQueue().filter((item) => item.clientFeedbackId !== clientFeedbackId));
+  },
+
+  sendContentFeedback(record) {
+    const app = getApp();
+    const apiBaseUrl = String(app && app.globalData && app.globalData.apiBaseUrl || "").trim().replace(/\/+$/, "");
+    if (!apiBaseUrl) {
+      this.enqueueFeedback(Object.assign({}, record, {
+        lastError: "api_base_url_not_configured",
+        nextRetryAt: Date.now() + 60000,
+      }));
+      wx.showToast({ title: "当前版本未配置服务地址", icon: "none" });
+      return;
+    }
+    wx.request({
+      url: `${apiBaseUrl}/api/feedback`,
+      method: "POST",
+      timeout: 12000,
+      header: { Authorization: `Bearer ${app.globalData.authToken}` },
+      data: {
+        category: record.category,
+        content: record.content,
+        questionId: record.questionId,
+        questionType: record.questionType,
+        feedbackType: record.feedbackType,
+        scoreRequestId: record.scoreRequestId,
+        questionStemPreview: record.questionStemPreview,
+        clientFeedbackId: record.clientFeedbackId,
+      },
+      success: (response) => {
+        if (response.statusCode === 200 || response.statusCode === 201) {
+          this.dequeueFeedback(record.clientFeedbackId);
+          wx.showToast({ title: "反馈已提交", icon: "success" });
+          return;
+        }
+        // 失败要**可诊断**：把 HTTP 码与服务端的 error/message 都记进队列，并直接显示在 toast 里，
+        // 否则只看到"提交失败"没法定位（2026-10-01 产品负责人反馈：真机上就是这句）。
+        const code = response.statusCode;
+        const serverMessage = String((response.data && (response.data.message || response.data.error)) || "").slice(0, 80);
+        const authFailed = code === 401 || code === 403;
+        this.enqueueFeedback(Object.assign({}, record, {
+          attempts: (record.attempts || 0) + 1,
+          lastError: `http_${code}${serverMessage ? ":" + serverMessage : ""}`.slice(0, 160),
+          nextRetryAt: authFailed ? 0 : Date.now() + 60000 * Math.min(10, (record.attempts || 0) + 1),
+        }));
+        wx.showToast({
+          title: authFailed
+            ? `登录已失效(${code})，请重新登录`
+            : `提交失败(${code})${serverMessage ? "：" + serverMessage : ""}，已暂存`,
+          icon: "none",
+          duration: 3000,
+        });
+      },
+      fail: (error) => {
+        this.enqueueFeedback(Object.assign({}, record, {
+          attempts: (record.attempts || 0) + 1,
+          lastError: String((error && error.errMsg) || "request_fail").slice(0, 120),
+          nextRetryAt: Date.now() + 60000 * Math.min(10, (record.attempts || 0) + 1),
+        }));
+        wx.showToast({ title: "网络异常，已暂存待重试", icon: "none" });
+      },
+    });
+  },
+
+  // 后台静默重试：**不阻塞当前操作**，失败也只是把 nextRetryAt 往后推。
+  syncPendingFeedback() {
+    const app = getApp();
+    if (!app || !app.globalData || !app.globalData.authToken) return;
+    const now = Date.now();
+    this.readFeedbackQueue()
+      .filter((item) => (item.nextRetryAt || 0) <= now)
+      .slice(0, 3)
+      .forEach((item) => this.sendContentFeedback(item));
   },
 
   // DEC-056：刷题笔记自动建档开关。关闭后笔记照旧保存，只是不按教材建卡集和目录。
@@ -2410,7 +3058,7 @@ Page({
       },
     };
     const answerCardItems = buildAnswerCard(
-      this.data.questionQueue,
+      (this._questionQueue || []),
       responses,
       this.data.currentQuestionIndex,
       this.data.examFinished,
@@ -2441,62 +3089,12 @@ Page({
       },
     };
     const answerCardItems = buildAnswerCard(
-      this.data.questionQueue,
+      (this._questionQueue || []),
       responses,
       this.data.currentQuestionIndex,
       this.data.examFinished,
     );
     this.setData({
-      subjectiveAnswer,
-      responses,
-      answerCardItems,
-      answeredCount: answerCardItems.filter((item) => item.status !== "empty").length,
-    });
-  },
-
-  selectAnnotationTool(event) {
-    if (this.data.submitted || this.data.subjectiveScoring) return;
-    this.setData({ annotationTool: event.currentTarget.dataset.tool });
-  },
-
-  markAnnotationCharacter(event) {
-    if (this.data.submitted || this.data.subjectiveScoring) return;
-    const index = Number(event.currentTarget.dataset.index);
-    const tokens = this.data.annotationTokens.map((token, tokenIndex) => {
-      if (tokenIndex !== index) return token;
-      const mark = token.mark === this.data.annotationTool ? "" : this.data.annotationTool;
-      return { ...token, mark, symbol: mark === "dot" ? "•" : (mark === "subscript" ? "·" : "") };
-    });
-    this.updateAnnotationResponse(tokens, this.data.annotationNote);
-  },
-
-  clearAnnotationMarks() {
-    if (this.data.submitted || this.data.subjectiveScoring) return;
-    this.updateAnnotationResponse(this.data.annotationTokens.map((token) => ({ ...token, mark: "", symbol: "" })), this.data.annotationNote);
-  },
-
-  updateAnnotationNote(event) {
-    this.updateAnnotationResponse(this.data.annotationTokens, event.detail.value);
-  },
-
-  updateAnnotationResponse(annotationTokens, annotationNote) {
-    const subjectiveAnswer = annotationAnswerText(annotationTokens, annotationNote);
-    const responses = {
-      ...this.data.responses,
-      [this.data.question.id]: {
-        ...(this.data.responses[this.data.question.id] || {}),
-        annotationTokens,
-        annotationNote,
-        subjectiveAnswer,
-        answeredAt: String(subjectiveAnswer || "").trim()
-          ? (this.data.responses[this.data.question.id]?.answeredAt || Date.now())
-          : 0,
-      },
-    };
-    const answerCardItems = buildAnswerCard(this.data.questionQueue, responses, this.data.currentQuestionIndex, this.data.examFinished);
-    this.setData({
-      annotationTokens,
-      annotationNote,
       subjectiveAnswer,
       responses,
       answerCardItems,
@@ -2531,7 +3129,7 @@ Page({
       },
     };
     const answerCardItems = buildAnswerCard(
-      this.data.questionQueue,
+      (this._questionQueue || []),
       responses,
       this.data.currentQuestionIndex,
     );
@@ -2547,9 +3145,9 @@ Page({
 
   submitSubjectiveAnswer() {
     const answer = String(this.data.subjectiveAnswer || "").trim();
-    const minimumLength = this.data.question.responseMode === "annotation" ? 4 : 10;
+    const minimumLength = 10;
     if (answer.length < minimumLength) {
-      wx.showToast({ title: this.data.question.responseMode === "annotation" ? "请先完成句子标记" : "请至少填写 10 个字后提交", icon: "none" });
+      wx.showToast({ title: "请至少填写 10 个字后提交", icon: "none" });
       return;
     }
     const previousResponse = this.data.responses[this.data.question.id] || {};
@@ -2564,7 +3162,7 @@ Page({
     };
     delete responses[this.data.question.id].isCorrect;
     delete responses[this.data.question.id].subjectiveScoreResult;
-    const answerCardItems = buildAnswerCard(this.data.questionQueue, responses, this.data.currentQuestionIndex);
+    const answerCardItems = buildAnswerCard((this._questionQueue || []), responses, this.data.currentQuestionIndex);
     this.setData({
       submitted: true,
       isCorrect: false,
@@ -2602,10 +3200,6 @@ Page({
       response.optionOrder = [...this.data.question.optionOrder];
     }
     if (details.subjectiveScoreResult) response.subjectiveScoreResult = details.subjectiveScoreResult;
-    if (subjective && this.data.question.responseMode === "annotation") {
-      response.annotationTokens = this.data.annotationTokens;
-      response.annotationNote = this.data.annotationNote;
-    }
     if (details.replaceLatest) {
       const previousIndex = attempts.findIndex((attempt) => attempt.questionId === this.data.question.id);
       if (previousIndex >= 0) attempts.splice(previousIndex, 1);
@@ -2742,14 +3336,14 @@ Page({
       return;
     }
     const answer = String(this.data.subjectiveAnswer || "").trim();
-    const minimumLength = this.data.question.responseMode === "annotation" ? 4 : 10;
+    const minimumLength = 10;
     if (answer.length < minimumLength) {
-      wx.showToast({ title: this.data.question.responseMode === "annotation" ? "请先完成句子标记" : "请至少填写 10 个字后再评分", icon: "none" });
+      wx.showToast({ title: "请至少填写 10 个字后再评分", icon: "none" });
       return;
     }
     const app = getApp();
-    if (app.globalData.aiCredits < 1) {
-      wx.showToast({ title: "AI 额度不足", icon: "none" });
+    if (!isBeanAmount(app.globalData.beans)) {
+      wx.showToast({ title: "豆币不足", icon: "none" });
       return;
     }
 
@@ -2757,19 +3351,19 @@ Page({
     const requestId = `subjective-score-${Date.now()}`;
     this.invokeSubjectiveScorer(answer, requestId, isRescore, (scoreResult, failureReason = "", chargeable = true) => {
       const validResult = isValidScoreResult(scoreResult);
-      const creditSettled = validResult && (chargeable !== true || app.spendAiCredit(1, {
+      const creditSettled = validResult && (chargeable !== true || app.spendBeans(BEAN_COST_PER_AI_CALL, {
         referenceId: scoreResult.requestId || requestId,
         source: "subjective_scoring",
         description: isRescore ? "主观题重新评分" : "主观题评分",
       }));
       if (!validResult || !creditSettled) {
         this.stopSubjectiveScoringProgress();
-        this.setData({ subjectiveScoring: false, subjectiveScoringStage: "", aiCredits: app.globalData.aiCredits });
+        this.setData({ subjectiveScoring: false, subjectiveScoringStage: "", beans: app.globalData.beans });
         const failureTitle = failureReason === "question_scoring_not_ready"
           ? "得分点待完善，暂不能评分"
           : /timeout/i.test(failureReason)
-          ? "评分超时，未扣额度"
-          : (/fetch failed|network|request:fail/i.test(failureReason) ? "网络异常，未扣额度" : "评分失败，未扣额度");
+          ? "评分超时，未扣豆币"
+          : (/fetch failed|network|request:fail/i.test(failureReason) ? "网络异常，未扣豆币" : "评分失败，未扣豆币");
         wx.showToast({ title: failureTitle, icon: "none" });
         return;
       }
@@ -2789,7 +3383,7 @@ Page({
         },
       };
       const answerCardItems = buildAnswerCard(
-        this.data.questionQueue,
+        (this._questionQueue || []),
         responses,
         this.data.currentQuestionIndex,
       );
@@ -2827,7 +3421,7 @@ Page({
         responses,
         answerCardItems,
         answeredCount: answerCardItems.filter((item) => item.status !== "empty").length,
-        aiCredits: app.globalData.aiCredits,
+        beans: app.globalData.beans,
         aiSessionResult: `AI 评分 ${scoreResult.totalScore}/${scoreResult.maxScore}`,
       });
     });
@@ -3068,7 +3662,28 @@ Page({
   },
 
   openAiHistory() {
-    this.setData({ aiHistoryOpen: true });
+    this.setData({ aiHistoryOpen: true, aiHistory: normalizeAiHistory(wx.getStorageSync("shukao_ai_history")) });
+  },
+
+  onPersonalAssetsSynced() {
+    this.setData({ aiHistory: normalizeAiHistory(wx.getStorageSync("shukao_ai_history")) });
+  },
+
+  deleteAiSession(event) {
+    if (this.data.aiGenerating) { wx.showToast({ title: "请等待本次回复完成", icon: "none" }); return; }
+    const { personalCloudSync, notifyPersonalAssetChanged } = require("../../utils/personal-cloud-sync");
+    const owner = personalCloudSync().owner();
+    const id = event.currentTarget.dataset.sessionId;
+    wx.showModal({ title: "删除会话", content: "删除此会话；已登录时会同步删除云端副本和该会话的冲突历史。",
+      success: ({ confirm }) => {
+        if (!confirm || owner !== personalCloudSync().owner()) return;
+        const aiHistory = (wx.getStorageSync("shukao_ai_history") || []).filter((item) => item.id !== id);
+        wx.setStorageSync("shukao_ai_history", aiHistory);
+        notifyPersonalAssetChanged({ kind: "aiSessions", id, deleted: true });
+        if (this.data.activeAiSessionId === id) this.startNewAiSession();
+        this.setData({ aiHistory: normalizeAiHistory(aiHistory) });
+      },
+    });
   },
 
   closeAiHistory() {
@@ -3111,9 +3726,12 @@ Page({
   },
 
   persistAiSession(messages, aiContent) {
+    const { personalCloudSync, notifyPersonalAssetChanged } = require("../../utils/personal-cloud-sync");
+    if (this._aiRequestOwner && this._aiRequestOwner !== personalCloudSync().owner()) return;
     const now = Date.now();
     const sessionId = this.data.activeAiSessionId || `ai-session-${now}`;
-    const existingSession = this.data.aiHistory.find((item) => item.id === sessionId);
+    const storedHistory = wx.getStorageSync("shukao_ai_history") || [];
+    const existingSession = storedHistory.find((item) => item.id === sessionId);
     const session = {
       id: sessionId,
       questionId: existingSession ? existingSession.questionId : this.data.question.id,
@@ -3130,8 +3748,7 @@ Page({
       messages,
     };
     const aiHistory = [session]
-      .concat(this.data.aiHistory.filter((item) => item.id !== sessionId))
-      .slice(0, 30);
+      .concat(storedHistory.filter((item) => item.id !== sessionId));
     this.setData({
       activeAiSessionId: sessionId,
       aiHistory,
@@ -3139,9 +3756,11 @@ Page({
       aiSessionResult: session.resultLabel,
     });
     wx.setStorageSync("shukao_ai_history", aiHistory);
+    notifyPersonalAssetChanged({ kind: "aiSessions", record: session });
   },
 
   invokeAiExplanation(userMessage, conversationHistory, handlers) {
+    this._aiRequestOwner = require("../../utils/personal-cloud-sync").personalCloudSync().owner();
     const apiBaseUrl = String(getApp().globalData.apiBaseUrl || "").replace(/\/$/, "");
     const question = this.data.question;
     const requestId = `explain-${Date.now()}`;
@@ -3285,7 +3904,7 @@ Page({
   showAiExplanationError(error) {
     const title = error === "explanation_route_unavailable"
       ? "请先在后台启用解析模型"
-      : (error === "network_error" ? "无法连接解析服务，未扣额度" : "解析生成失败，未扣额度");
+      : (error === "network_error" ? "无法连接解析服务，未扣豆币" : "解析生成失败，未扣豆币");
     wx.showToast({ title, icon: "none" });
   },
 
@@ -3323,8 +3942,8 @@ Page({
   requestAiExplanation() {
     if (this.data.aiGenerating || this.data.aiContent) return;
     const app = getApp();
-    if (app.globalData.aiCredits < 1) {
-      wx.showToast({ title: "AI 额度不足", icon: "none" });
+    if (!isBeanAmount(app.globalData.beans)) {
+      wx.showToast({ title: "豆币不足", icon: "none" });
       return;
     }
 
@@ -3341,12 +3960,12 @@ Page({
       onDone: (result) => {
         this.cancelAiStreamRender();
         const initialAiReply = String(result.text || "").trim();
-        if (!initialAiReply || !result.chargeable || !app.spendAiCredit(1, {
+        if (!initialAiReply || !result.chargeable || !app.spendBeans(BEAN_COST_PER_AI_CALL, {
           referenceId: result.requestId,
           source: "explanation_chat",
           description: "生成题目解析",
         })) {
-          this.setData({ aiGenerating: false, aiContent: "", aiMessages: [], aiCredits: app.globalData.aiCredits });
+          this.setData({ aiGenerating: false, aiContent: "", aiMessages: [], beans: app.globalData.beans });
           this.showAiExplanationError("explanation_request_failed");
           return;
         }
@@ -3355,13 +3974,13 @@ Page({
           aiGenerating: false,
           aiContent: initialAiReply,
           aiMessages: [message],
-          aiCredits: app.globalData.aiCredits,
+          beans: app.globalData.beans,
           aiScrollTarget: messageId,
         }, () => this.persistAiSession([message], initialAiReply));
       },
       onError: (error) => {
         this.cancelAiStreamRender();
-        this.setData({ aiGenerating: false, aiContent: "", aiMessages: [], aiCredits: app.globalData.aiCredits });
+        this.setData({ aiGenerating: false, aiContent: "", aiMessages: [], beans: app.globalData.beans });
         this.showAiExplanationError(error);
       },
     });
@@ -3375,8 +3994,8 @@ Page({
     const question = this.data.aiInput.trim();
     if (!question || !this.data.aiContent || this.data.aiGenerating) return;
     const app = getApp();
-    if (app.globalData.aiCredits < 1) {
-      wx.showToast({ title: "AI 额度不足", icon: "none" });
+    if (!isBeanAmount(app.globalData.beans)) {
+      wx.showToast({ title: "豆币不足", icon: "none" });
       return;
     }
 
@@ -3399,12 +4018,12 @@ Page({
       onDone: (result) => {
         this.cancelAiStreamRender();
         const reply = String(result.text || "").trim();
-        if (!reply || !result.chargeable || !app.spendAiCredit(1, {
+        if (!reply || !result.chargeable || !app.spendBeans(BEAN_COST_PER_AI_CALL, {
           referenceId: result.requestId,
           source: "explanation_chat",
           description: "AI 解析追问",
         })) {
-          this.setData({ aiGenerating: false, aiMessages: previousMessages, aiCredits: app.globalData.aiCredits });
+          this.setData({ aiGenerating: false, aiMessages: previousMessages, beans: app.globalData.beans });
           this.showAiExplanationError("explanation_request_failed");
           return;
         }
@@ -3413,13 +4032,13 @@ Page({
         this.setData({
           aiGenerating: false,
           aiMessages: messages,
-          aiCredits: app.globalData.aiCredits,
+          beans: app.globalData.beans,
           aiScrollTarget: assistantId,
         }, () => this.persistAiSession(messages, this.data.aiContent));
       },
       onError: (error) => {
         this.cancelAiStreamRender();
-        this.setData({ aiGenerating: false, aiMessages: previousMessages, aiCredits: app.globalData.aiCredits });
+        this.setData({ aiGenerating: false, aiMessages: previousMessages, beans: app.globalData.beans });
         this.showAiExplanationError(error);
       },
     });
@@ -3454,6 +4073,10 @@ Page({
       return;
     }
     if (this.data.isLastQuestion) {
+      if (this.data.practiceMode === "exam" && this.data.examFinished) {
+        this.openExamResult();
+        return;
+      }
       this.setData({ advancing: false });
       wx.showToast({ title: "本组题目已完成", icon: "none" });
       return;
@@ -3468,7 +4091,7 @@ Page({
       return;
     }
     const answeredCount = Object.values(this.data.responses).filter((response) => normalizePracticeSelection(response.selected).length || response.subjectiveAnswer).length;
-    const unansweredCount = this.data.questionQueue.length - answeredCount;
+    const unansweredCount = (this._questionQueue || []).length - answeredCount;
     wx.showModal({
       title: "确认交卷",
       content: unansweredCount
@@ -3487,18 +4110,21 @@ Page({
     if (this.examTimer) clearInterval(this.examTimer);
     this.examEndsAt = null;
     const examResult = calculateExamResult(
-      this.data.questionQueue,
+      (this._questionQueue || []),
       this.data.responses,
       this.data.examSelectionRules,
       this.data.examDeclaredTotalScore,
     );
+    const examReviewItems = buildExamReviewItems(this._questionQueue || [], examResult.responses);
+    const examWrongItems = examReviewItems.filter((item) => item.statusKey !== "pending");
+    const examUnscoredItems = examReviewItems.filter((item) => item.statusKey === "pending");
     const examHistory = wx.getStorageSync("shukao_exam_results") || [];
     examHistory.unshift({
       id: `exam-${Date.now()}`,
       score: examResult.score,
       totalScore: examResult.totalScore,
       correctCount: examResult.correctCount,
-      totalCount: this.data.questionQueue.length,
+      totalCount: (this._questionQueue || []).length,
       autoSubmitted,
       createdAt: Date.now(),
     });
@@ -3508,6 +4134,10 @@ Page({
         responses: examResult.responses,
         examFinished: true,
         examResult,
+        examResultOpen: true,
+        examWrongItems,
+        examUnscoredItems,
+        examPendingScoreCount: examUnscoredItems.length,
         answeredCount: examResult.answeredCount,
         examTimeText: "已交卷",
         utilityPanel: "",
@@ -3518,10 +4148,27 @@ Page({
       },
     );
   },
+
+  openExamResult() {
+    if (this.data.practiceMode === "exam" && this.data.examFinished) {
+      this.setData({ examResultOpen: true, utilityPanel: "" });
+    }
+  },
+
+  closeExamResult() {
+    this.setData({ examResultOpen: false });
+  },
+
+  reviewExamQuestion(event) {
+    const index = (this._questionQueue || []).findIndex((question) => question.id === event.currentTarget.dataset.id);
+    if (index < 0) return;
+    this.setData({ examResultOpen: false }, () => this.loadQuestion(index));
+  },
 });
 
 module.exports = {
   applyOptionOrder,
+  buildExamReviewItems,
   buildMaterialSegments,
   createCatalogChapters,
   createExamCatalogChapters,
