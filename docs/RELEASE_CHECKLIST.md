@@ -1,5 +1,7 @@
 # 上线阻断项清单（RELEASE_CHECKLIST）
 
+> **2026-10-17 生产域名与 CORS 代码收敛**：负责人确认生产域名为 `https://hhtodo.cn`。小程序体验版/正式版 API 基址已改指向该 HTTPS 域名；服务端生产态浏览器 CORS 改为默认同源拒绝，仅允许 `CORS_ALLOWED_ORIGINS` 显式列出的来源，两份 1Panel 编排已列出 `https://hhtodo.cn`。线上实测 `/health` 正常、`/api/catalog` 返回 200，但 `/api/auth/wechat/login` 仍返回 503 `wechat_credentials_not_configured`，微信合法域名、隐私保护指引与真机登录仍未验收。**本轮不关闭 A3/A4**：A3 仍缺服务端微信密钥与小程序平台配置，A4 待新镜像部署后复验响应头。
+
 > **2026-10-16 考法标准试行（DEC-112）**：编辑器、标准管理和独立 AI 建议已接通，验证与未验范围见 [模块 03 §6](modules/03-knowledge-fingerprint-agent-classification.md)。本次不改变上线门槛，不关闭自动归族或金标验收条目；试行标签不构成 95% 分类准确率证明。部署需正式后端重启。
 
 > **2026-10-09 读取模型报 HTTP 451 的修复（服务端出站走本机代理）**：`api.typesafe.ai` 经 Cloudflare 按出口地区拒绝，直连返回 451；**Node 的内置 fetch 不读 Windows 系统代理**（浏览器/Codex++ 读），所以出现「Codex++ 能用、后台不能用」。已新增 [`apps/api/src/outbound-proxy.js`](apps/api/src/outbound-proxy.js) 统一解析并在 `/health` 报事实（`outboundProxy.mode`），`start-server.cmd`/`start-server-hidden.vbs` 启动时自动注入代理环境变量，后台 AI 配置页在「检测到代理但服务端没走」时给提示，451 单独报 `provider_region_blocked` 并归入可重跑的 `network` 类。证据：真实上游直连/走代理对照（`tmp/verify-ai-proxy-fix.js`）、专项 **5/5**、提示条两态逐项可见性 **7/7**、后台配置 UI（批量测试弹窗 + 单条供应商测试）**45/45**、全量 **1859/1859**；详见变更日志 2026-10-09 条目。**部署到其他环境时的口径**：代理是「按环境配置」的运行事实（本机靠系统代理设置，容器/服务器靠环境变量），不改变任何产品规则，也不关闭任何上线阻断项。

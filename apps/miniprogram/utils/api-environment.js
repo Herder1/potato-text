@@ -6,12 +6,14 @@ const DEVELOPMENT_API_BASE_URLS = [
   "http://192.168.2.179:3212",
 ];
 
-// Trial and release URLs are intentionally empty until the real HTTPS domains are supplied.
-// An empty value fails closed instead of silently sending a shipped build to a developer machine.
+const PRODUCTION_API_BASE_URL = "https://hhtodo.cn";
+
+// Trial and release both use the production HTTPS API. An empty value still fails closed
+// instead of silently sending a shipped build to a developer machine.
 const API_BASE_URLS = Object.freeze({
   develop: DEVELOPMENT_API_BASE_URLS[0],
-  trial: "",
-  release: "",
+  trial: PRODUCTION_API_BASE_URL,
+  release: PRODUCTION_API_BASE_URL,
 });
 
 function normalizeApiBaseUrl(value) {
@@ -56,6 +58,7 @@ module.exports = {
   API_BASE_URLS,
   API_OVERRIDE_STORAGE_KEY,
   DEVELOPMENT_API_BASE_URLS,
+  PRODUCTION_API_BASE_URL,
   apiBaseUrlCandidates,
   detectEnvVersion,
   isLocalApiBaseUrl,

@@ -33,6 +33,8 @@ services:
       # 文件模式：数据落在 /app/.runtime（JSON 库 + 上传件 + 导出件），已挂命名卷。
       PERSISTENCE_DRIVER: "file"
       FILE_STORAGE_DRIVER: "local"
+      # 浏览器跨域白名单；后台与 API 同域部署时只需保留本站。留空则生产态默认拒绝跨域。
+      CORS_ALLOWED_ORIGINS: "https://hhtodo.cn"
       # 微信小程序登录凭据；不填则小程序登录不可用，后台与其余接口不受影响。
       WECHAT_APP_ID: ""
       WECHAT_APP_SECRET: ""

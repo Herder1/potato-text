@@ -49,6 +49,8 @@ services:
       TZ: "Asia/Shanghai"
       PERSISTENCE_DRIVER: "postgres"
       FILE_STORAGE_DRIVER: "local"
+      # 浏览器跨域白名单；后台与 API 同域部署时只需保留本站。留空则生产态默认拒绝跨域。
+      CORS_ALLOWED_ORIGINS: "https://hhtodo.cn"
       DATABASE_URL: "postgresql://shukao:shukao@postgres:5432/shukao"
       DATABASE_SSL: "false"
       DATABASE_POOL_MIN: "0"

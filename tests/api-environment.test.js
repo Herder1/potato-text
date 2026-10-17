@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   API_BASE_URLS,
   DEVELOPMENT_API_BASE_URLS,
+  PRODUCTION_API_BASE_URL,
   apiBaseUrlCandidates,
   detectEnvVersion,
   isLocalApiBaseUrl,
@@ -49,9 +50,26 @@ test("trial and release ignore local overrides and development fallbacks", () =>
   }
 });
 
-test("unconfigured trial and release fail closed", () => {
+test("trial and release use the production HTTPS API", () => {
+  assert.equal(PRODUCTION_API_BASE_URL, "https://hhtodo.cn");
   for (const envVersion of ["trial", "release"]) {
-    assert.equal(resolveApiBaseUrl({ envVersion, storedOverride: "http://127.0.0.1:3212", apiBaseUrls: API_BASE_URLS }), "");
+    assert.equal(resolveApiBaseUrl({
+      envVersion,
+      storedOverride: "http://127.0.0.1:3212",
+      apiBaseUrls: API_BASE_URLS,
+    }), PRODUCTION_API_BASE_URL);
+    assert.deepEqual(apiBaseUrlCandidates({
+      envVersion,
+      baseUrl: PRODUCTION_API_BASE_URL,
+      developmentApiBaseUrls: DEVELOPMENT_API_BASE_URLS,
+    }), [PRODUCTION_API_BASE_URL]);
+  }
+});
+
+test("explicitly unconfigured trial and release still fail closed", () => {
+  for (const envVersion of ["trial", "release"]) {
+    const apiBaseUrls = { develop: "http://127.0.0.1:3212", trial: "", release: "" };
+    assert.equal(resolveApiBaseUrl({ envVersion, storedOverride: "http://127.0.0.1:3212", apiBaseUrls }), "");
     assert.deepEqual(apiBaseUrlCandidates({ envVersion, baseUrl: "", developmentApiBaseUrls: DEVELOPMENT_API_BASE_URLS }), []);
   }
 });

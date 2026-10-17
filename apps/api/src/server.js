@@ -422,18 +422,59 @@ function isKnowledgeThemeRangeAnchorNode(node) {
   return Boolean(node && ["chapter", "section", "knowledge"].includes(node.kind));
 }
 
+function appendVary(headers, value) {
+  const current = String(headers.Vary || "").split(",").map((item) => item.trim()).filter(Boolean);
+  if (!current.some((item) => item.toLowerCase() === value.toLowerCase())) current.push(value);
+  headers.Vary = current.join(", ");
+}
+
+function corsAllowedOrigins() {
+  return String(process.env.CORS_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((item) => item.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
+function corsHeadersForRequest(request) {
+  const origin = String(request && request.headers && request.headers.origin || "").trim().replace(/\/+$/, "");
+  const allowedOrigins = corsAllowedOrigins();
+  if (allowedOrigins.includes("*")) {
+    return { "Access-Control-Allow-Origin": "*", Vary: "Origin" };
+  }
+  if (origin && allowedOrigins.includes(origin)) {
+    return { "Access-Control-Allow-Origin": origin, Vary: "Origin" };
+  }
+  // Tests and local development keep the permissive baseline. Production is same-origin
+  // unless an explicit allowlist is configured.
+  if (process.env.NODE_ENV !== "production") {
+    return { "Access-Control-Allow-Origin": "*", Vary: "Origin" };
+  }
+  return {};
+}
+
+function corsPreflightHeaders(request) {
+  const headers = corsHeadersForRequest(request);
+  if (!headers["Access-Control-Allow-Origin"]) return {};
+  return {
+    ...headers,
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "600",
+  };
+}
+
 function sendJson(response, status, body, extraHeaders = {}) {
   const serialized = JSON.stringify(body);
   const headers = {
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
+    ...corsHeadersForRequest(response.req),
     "Cache-Control": "no-store",
     ...extraHeaders,
   };
   const acceptsGzip = /(?:^|,)\s*gzip\s*(?:,|$)/i.test(String(response.req && response.req.headers["accept-encoding"] || ""));
   if (acceptsGzip && Buffer.byteLength(serialized, "utf8") >= 32 * 1024) {
     headers["Content-Encoding"] = "gzip";
-    headers.Vary = "Accept-Encoding";
+    appendVary(headers, "Accept-Encoding");
     response.writeHead(status, headers);
     response.end(zlib.gzipSync(serialized, { level: zlib.constants.Z_BEST_SPEED }));
     return;
@@ -7556,11 +7597,7 @@ function createServer(options = {}) {
     const url = new URL(request.url, "http://127.0.0.1");
 
     if (request.method === "OPTIONS") {
-      response.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      });
+      response.writeHead(204, corsPreflightHeaders(request));
       response.end();
       return;
     }
@@ -8682,7 +8719,7 @@ function createServer(options = {}) {
       const etag = result.etag.replace(/"$/, `-${publicKnowledgeRevision(questions)}-${catalogProjection.revision}"`);
       if (String(request.headers["if-none-match"] || "") === etag) {
         response.writeHead(304, {
-          "Access-Control-Allow-Origin": "*",
+          ...corsHeadersForRequest(request),
           "Cache-Control": "no-store",
           ETag: etag,
         });
@@ -8849,7 +8886,7 @@ function createServer(options = {}) {
           "Content-Type": "application/pdf",
           "Content-Length": content.length,
           "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
-          "Access-Control-Allow-Origin": "*",
+          ...corsHeadersForRequest(request),
           "Cache-Control": "private, max-age=3600",
         });
         response.end(content);
@@ -17152,7 +17189,7 @@ function createServer(options = {}) {
               streamStarted = true;
               response.writeHead(200, {
                 "Content-Type": "application/x-ndjson; charset=utf-8",
-                "Access-Control-Allow-Origin": "*",
+                ...corsHeadersForRequest(request),
                 "Cache-Control": "no-store, no-transform",
                 "X-Accel-Buffering": "no",
               });
@@ -17616,4 +17653,4 @@ if (require.main === module && process.env.PERSISTENCE_DRIVER === "postgres") {
   });
 }
 
-module.exports = { createServer, catalogPayload, discoveryPayload, adminOverview, catalogNodePageLabel, catalogTitleIsCorrupted, normalizeCatalogHierarchy, normalizeCatalogPageRanges, refreshCatalogBackedQuestionPages, isRetryableProviderFailure, knowledgeClassificationQuestionBaseline, adminPermissionForPath, isInternalServiceRequest, OPERATOR_ADMIN_PATHS, SUPER_ADMIN_ONLY_ADMIN_PATHS };
+module.exports = { createServer, catalogPayload, discoveryPayload, adminOverview, catalogNodePageLabel, catalogTitleIsCorrupted, normalizeCatalogHierarchy, normalizeCatalogPageRanges, refreshCatalogBackedQuestionPages, isRetryableProviderFailure, knowledgeClassificationQuestionBaseline, adminPermissionForPath, isInternalServiceRequest, corsHeadersForRequest, OPERATOR_ADMIN_PATHS, SUPER_ADMIN_ONLY_ADMIN_PATHS };

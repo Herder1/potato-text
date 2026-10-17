@@ -4,6 +4,15 @@
 核心定位：记录“谁、在什么时候、因为什么、改了代码的哪里”，避免相互覆盖代码，
 核心规则：“改代码前，先看日志最新一条；改完代码，立刻追加一条新日志。”
 
+## 2026-10-17｜Codex｜生产 API 域名落到 hhtodo.cn，生产态 CORS 收敛
+
+- **依据**：负责人确认生产域名为 `https://hhtodo.cn`，并要求继续指导完成 1Panel、微信小程序与上线前配置。
+- **实现**：`apps/miniprogram/utils/api-environment.js` 新增 `PRODUCTION_API_BASE_URL = "https://hhtodo.cn"`，体验版与正式版均指向该地址，开发版仍只使用本机/局域网候选且保留开发覆盖；服务端新增生产态 CORS 白名单 `CORS_ALLOWED_ORIGINS`，生产环境未显式配置时不再下发通配 `Access-Control-Allow-Origin`，同域后台不受影响；JSON、304、PDF 下载与 AI 流式响应统一复用同一套 CORS 判定。两份 1Panel 编排与 `.env.example` 增加该变量，1Panel 编排显式允许 `https://hhtodo.cn`；`docs/DOCKER.md` 补充变量说明。
+- **线上现状（2026-10-17 只读核查）**：`https://hhtodo.cn/admin/` 可打开登录页；`/health` 返回 `status: ok`、`fileStorage: local`，启动时间 10:12:08 HKT，源码陈旧判据为 `false`；`/api/catalog` 返回 200。`POST /api/auth/wechat/login` 使用无效探针 code 仍返回 503 `wechat_credentials_not_configured`，证明线上容器尚未配置微信 AppID/Secret；管理接口匿名请求返回 401，但旧镜像仍返回通配 CORS 头，待新镜像部署后复验。
+- **验证（2026-10-17 本机）**：专项 `api-environment`、`api-cors`、`api` 合计 **34/34**；`NODE_ENV=development npm test` 全量 **1925/1925，0 失败**。改动文件均为无 BOM、纯 LF。
+- **未验证 / 遗留**：新镜像尚未提交、发布或在 1Panel 重新部署；微信公众平台的 request/downloadFile 合法域名、服务端 AppID/Secret、隐私保护指引、真机登录与上传/下载链路均待负责人配置后复验。对象存储本轮仍未启用，当前单机本地卷方案不阻断受邀内测，但正式放量前需补可靠备份或 K-Vault。
+- **边界**：未改变产品规则、正式数据、冻结金标或密钥；`RELEASE_CHECKLIST` 的 A3/A4 未关闭，仅登记代码侧进展与线上事实。
+
 ## 2026-10-16/17｜Codex｜提交即构建 GHCR 镜像：工作流复核 + 首次真实发布 + CI 时区修复
 
 - **依据**：负责人要求把仓库提交到 `Herder1/potato-text`，并配置"提交时自动打包成 Docker 镜像"。仓库已有 `.github/workflows/docker-publish.yml`，本轮在原流程上补齐，不另建重复流水线。

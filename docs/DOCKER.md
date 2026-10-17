@@ -73,6 +73,7 @@ docker compose down
 | `NODE_ENV` | `production` | 生产态；注意开发态鉴权用例在该值下会返回 401（见 `AGENTS.md` §8） |
 | `PERSISTENCE_DRIVER` | `file` | 值必须**精确等于** `postgres` 才走数据库模式（`server.js` 就是这么判的），其他值都是文件模式 |
 | `FILE_STORAGE_DRIVER` | `local` | `kvault` 仅在 `PERSISTENCE_DRIVER=postgres` 下可用，否则启动即抛错 |
+| `CORS_ALLOWED_ORIGINS` | 空 | 仅生产态生效的浏览器跨域白名单，多个来源用逗号分隔；同域后台无需额外配置，留空即拒绝所有跨域 |
 | `DATABASE_URL` / `DATABASE_SSL` / `DATABASE_POOL_*` | 空 / `false` | 仅 PostgreSQL 模式使用 |
 | `ADMIN_INIT_USERNAME` / `ADMIN_INIT_PASSWORD` / `ADMIN_INIT_DISPLAY_NAME` | `admin` / 空 / 空 | **仅当账号表为空时**用它创建首个超级管理员（只在这一次读环境变量）；密码留空则生成随机密码，并只在容器日志里打印一次 |
 | `WECHAT_APP_ID` / `WECHAT_APP_SECRET` | 空 | 不配则微信登录不可用，其余功能不受影响 |
