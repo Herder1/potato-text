@@ -1,11 +1,28 @@
 <view class="page-shell settings-page">
+  <!-- 2026-10-17（第二次修按钮重叠）：这两个动作原本用原生 <button>，在三星等机型上
+       button 的内置盒模型（padding/margin/宽度/line-height）不受作者样式完全控制，
+       出现过「文字出框」和「按钮整体超出屏幕、压住下一行状态文字」两种形态。
+       改用 view + role/aria 自绘按钮，尺寸完全由本页 wxss 决定；禁用态用 class 表达，
+       loading 用文案「同步中…」表达（不再依赖 button 的 loading 属性）。 -->
   <view class="sync-actions">
-    <button class="sync-button" bindtap="retryPersonalAssets" disabled="{{cloudBusy || !loggedIn}}" loading="{{cloudBusy}}">
-      <text class="sync-icon">⟳</text><text>重试同步</text>
-    </button>
-    <button class="sync-button" bindtap="exportPersonalAssets" disabled="{{cloudBusy || !loggedIn}}">
-      <text class="sync-icon">⤓</text><text>导出我的数据</text>
-    </button>
+    <view
+      class="sync-button {{cloudBusy || !loggedIn ? 'sync-button-off' : ''}}"
+      bindtap="retryPersonalAssets"
+      role="button"
+      aria-label="重试同步"
+      aria-disabled="{{cloudBusy || !loggedIn}}"
+    >
+      <text class="sync-icon">⟳</text><text class="sync-label">{{cloudBusy ? '同步中…' : '重试同步'}}</text>
+    </view>
+    <view
+      class="sync-button {{cloudBusy || !loggedIn ? 'sync-button-off' : ''}}"
+      bindtap="exportPersonalAssets"
+      role="button"
+      aria-label="导出我的数据"
+      aria-disabled="{{cloudBusy || !loggedIn}}"
+    >
+      <text class="sync-icon">⤓</text><text class="sync-label">导出我的数据</text>
+    </view>
   </view>
   <view class="sync-status">{{personalSyncLabel}}</view>
   <view class="cloud-warning" wx:if="{{blockedCount}}">{{blockedCount}} 条内容含本机附件或超过同步大小限制，尚未上传。附件云存储未接通，请勿清除本机缓存。</view>

@@ -197,6 +197,10 @@ const state = {
   billingOrders: [],
   billingOrdersPage: 1,
   billingOrdersTotal: 0,
+  userManagementSummary: null,
+  userManagementUsers: [],
+  userManagementPage: 1,
+  userManagementTotal: 0,
   questionPool: [],
   examSelectedIds: [],
   examSelectionRules: [],
@@ -21470,6 +21474,7 @@ async function openView(name) {  // 兼容旧入口：「题目完善」已从�
   const isBilling = name === "订阅与豆币";
   const isOperationLogs = name === "操作日志";
   const isAdminAccounts = name === "后台账号";
+  const isUserManagement = name === "用户管理";
   const isUserRestrictions = isCommunityAdmin && communityAdminTab === "restrictions";
   document.querySelector("#dashboard").hidden = !isDashboard;
   document.querySelector("#ai-config").hidden = !isAiConfig;
@@ -21485,14 +21490,16 @@ async function openView(name) {  // 兼容旧入口：「题目完善」已从�
   document.querySelector("#billing-admin").hidden = !isBilling;
   document.querySelector("#operation-logs").hidden = !isOperationLogs;
   document.querySelector("#admin-accounts").hidden = !isAdminAccounts;
+  document.querySelector("#user-management").hidden = !isUserManagement;
   document.querySelector("#user-restrictions").hidden = !isUserRestrictions;
-  document.querySelector("#placeholder").hidden = isDashboard || isAiConfig || isAiTasks || isQuestionLibrary || isTextbookCatalog || isExamAdmin || isPackAdmin || isAnnouncementAdmin || isCommunityAdmin || isBilling || isOperationLogs || isAdminAccounts || isPlatformContent;
+  document.querySelector("#placeholder").hidden = isDashboard || isAiConfig || isAiTasks || isQuestionLibrary || isTextbookCatalog || isExamAdmin || isPackAdmin || isAnnouncementAdmin || isCommunityAdmin || isBilling || isOperationLogs || isAdminAccounts || isUserManagement || isPlatformContent;
   document.querySelector("#placeholder-title").textContent = name;
   const placeholderCopy = document.querySelector("#placeholder-copy");
   if (placeholderCopy) {
     placeholderCopy.textContent = "后续开发将在此接入真实数据库、权限校验和具体操作流程。";
   }
   if (isUserRestrictions) await loadUserRestrictions();
+  if (isUserManagement) await loadUserManagement();
   if (isAdminAccounts) await loadAdminAccounts();
   if (isAiConfig) await loadAiConfig();
   if (isAiTasks) {
@@ -23812,7 +23819,10 @@ function renderAdminAccountBadge() {
   }
   const accountsNav = document.querySelector("#nav-admin-accounts");
   if (accountsNav) accountsNav.hidden = !(account && account.role === "super_admin");
+  const userManagementNav = document.querySelector("#nav-user-management");
+  if (userManagementNav) userManagementNav.hidden = !(account && account.role === "super_admin");
   if (account && account.role !== "super_admin" && state.currentView === "后台账号") openView("工作台");
+  if (account && account.role !== "super_admin" && state.currentView === "用户管理") openView("工作台");
 }
 
 function setAdminShellLocked(locked) {
@@ -24091,6 +24101,70 @@ document.querySelector("#admin-account-table-body").addEventListener("click", (e
   if (button) handleAdminAccountAction(button);
 });
 
+/* ---------- 用户管理（注册、注销、登录与当前限制总览） ---------- */
+
+function renderUserManagementSummary() {
+  const summary = state.userManagementSummary || {};
+  const items = [
+    ["累计注册", summary.registeredTotal || 0, `当前 ${summary.currentUsers || 0} 人 · 已注销 ${summary.deletedTotal || 0} 人`],
+    ["当前用户", summary.currentUsers || 0, `有效会话 ${summary.activeSessions || 0} 人`],
+    ["近 7 天新增", summary.newLast7Days || 0, `今日新增 ${summary.newToday || 0} 人`],
+    ["已注销", summary.deletedTotal || 0, `今日 ${summary.deletedToday || 0} 人 · 近 7 天 ${summary.deletedLast7Days || 0} 人`],
+  ];
+  document.querySelector("#user-management-summary").innerHTML = items
+    .map(([label, value, detail]) => `<div class="operation-summary-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></div>`)
+    .join("");
+  const trackingSince = Number(summary.deletionTrackingSince) || 0;
+  document.querySelector("#user-management-tracking-note").textContent = summary.deletedTotal
+    ? `注销记录自 ${formatTaskTime(trackingSince)} 起可统计；更早的注销当时未留痕，无法补算。`
+    : "注销记录从本版本上线后才开始累计；此前已注销的账号当时未留痕，因此无法补算。";
+}
+
+function renderUserManagement() {
+  renderUserManagementSummary();
+  const users = state.userManagementUsers || [];
+  const body = document.querySelector("#user-management-table-body");
+  body.innerHTML = users.map((user) => {
+    const restriction = user.restriction || {};
+    const restrictionText = restriction.restricted
+      ? `<div class="user-management-restriction"><strong>${escapeHtml((restriction.typeLabels || []).join("、") || "受限")}</strong><span>${escapeHtml(restriction.untilLabel ? `至 ${restriction.untilLabel}` : "")}</span></div>`
+      : '<span class="table-muted">无</span>';
+    return `<tr>
+      <td><div class="admin-account-identity"><strong>${escapeHtml(user.publicId || "待分配")}</strong><span>${escapeHtml(user.nickname || "薯考同学")}</span></div></td>
+      <td>${escapeHtml(formatTaskTime(user.createdAt))}</td>
+      <td>${escapeHtml(formatTaskTime(user.lastLoginAt))}</td>
+      <td><span class="admin-account-status ${user.onboardingCompleted ? "is-active" : "is-disabled"}">${user.onboardingCompleted ? "已完成" : "未完成"}</span></td>
+      <td>${restrictionText}</td>
+      <td><div class="question-row-actions">
+        <button class="icon-text-action" type="button" data-user-management-restrict="${escapeHtml(user.userId)}" data-user-management-name="${escapeHtml(user.nickname || "")}">限制</button>
+        <button class="icon-text-action" type="button" data-user-management-billing="${escapeHtml(user.publicId || user.userId)}">权益</button>
+      </div></td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="6" class="question-table-empty">没有匹配的用户</td></tr>';
+  document.querySelector("#user-management-page-label").textContent = `第 ${state.userManagementPage} 页 · 共 ${state.userManagementTotal} 位用户`;
+  document.querySelector("#user-management-prev").disabled = state.userManagementPage <= 1;
+  document.querySelector("#user-management-next").disabled = state.userManagementPage * 20 >= state.userManagementTotal;
+}
+
+async function loadUserManagement(page = 1) {
+  const query = document.querySelector("#user-management-search").value.trim();
+  const body = document.querySelector("#user-management-table-body");
+  body.innerHTML = '<tr><td colspan="6" class="question-table-empty">正在加载…</td></tr>';
+  try {
+    const result = await requestJson(`/api/admin/users?query=${encodeURIComponent(query)}&page=${page}&pageSize=20`);
+    state.userManagementSummary = result.summary;
+    state.userManagementUsers = result.users || [];
+    state.userManagementPage = result.page;
+    state.userManagementTotal = result.total;
+    renderUserManagement();
+  } catch (error) {
+    state.userManagementSummary = null;
+    state.userManagementUsers = [];
+    renderUserManagementSummary();
+    body.innerHTML = `<tr><td colspan="6" class="question-table-empty">读取失败：${escapeHtml(friendlyError(error))}</td></tr>`;
+  }
+}
+
 /* ---------- 用户限制（禁言 / 禁止投稿 / 公开功能限制 / 账号封禁） ---------- */
 
 let userRestrictionDialogContext = null;
@@ -24166,6 +24240,7 @@ async function submitUserRestriction(event) {
     }
     document.querySelector("#user-restriction-dialog").close();
     if (state.currentView === "社区管理" && state.communityAdminTab === "restrictions") await loadUserRestrictions();
+    if (state.currentView === "用户管理") await loadUserManagement(state.userManagementPage);
   } catch (error) {
     setAdminLoginStatus("#user-restriction-status", friendlyError(error));
   }
@@ -24246,7 +24321,51 @@ document.querySelector("#user-restriction-table-body").addEventListener("click",
   if (button) liftUserRestriction(button.dataset.userRestrictionLift);
 });
 
+document.querySelector("#user-management-search-button").addEventListener("click", () => loadUserManagement());
+document.querySelector("#user-management-refresh").addEventListener("click", () => loadUserManagement(state.userManagementPage));
+document.querySelector("#user-management-search").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  loadUserManagement();
+});
+document.querySelector("#user-management-prev").addEventListener("click", () => {
+  if (state.userManagementPage > 1) loadUserManagement(state.userManagementPage - 1);
+});
+document.querySelector("#user-management-next").addEventListener("click", () => {
+  if (state.userManagementPage * 20 < state.userManagementTotal) loadUserManagement(state.userManagementPage + 1);
+});
+document.querySelector("#user-management-table-body").addEventListener("click", (event) => {
+  const restrictButton = event.target.closest("[data-user-management-restrict]");
+  if (restrictButton) {
+    const userId = restrictButton.dataset.userManagementRestrict;
+    const nickname = restrictButton.dataset.userManagementName || userId;
+    openUserRestrictionDialog({
+      mode: "direct",
+      userId,
+      title: `限制用户 ${nickname}`,
+      copy: "限制会立即生效，到期自动失效；理由会写入操作日志。",
+    });
+    return;
+  }
+  const billingButton = event.target.closest("[data-user-management-billing]");
+  if (billingButton) openBillingAccountDialog(billingButton.dataset.userManagementBilling);
+});
+
 /* ---------- 「后端没重启，改动未生效」自检（2026-09-25 产品负责人确认要做） ---------- */
+
+function renderAdminEnvironment() {
+  const label = document.querySelector("#admin-env-label");
+  if (!label) return;
+  const host = String(window.location.hostname || "").toLowerCase();
+  const local = host === "localhost"
+    || host === "127.0.0.1"
+    || host === "::1"
+    || host.endsWith(".local")
+    || /^10\./.test(host)
+    || /^192\.168\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  label.textContent = local ? "本地开发环境" : "生产环境";
+}
 
 // 本页脚本自己的版本号（`index.html` 里 `app.js?v=YYYYMMDD.NN`），只取日期段用于与后端启动日期比较。
 const ADMIN_ASSET_VERSION = (() => {
@@ -24350,6 +24469,7 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) checkAdminBackendFreshness();
 });
 
+renderAdminEnvironment();
 resetProviderForm();
 checkAdminBackendFreshness();
 bootstrapAdminSession();

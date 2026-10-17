@@ -4,7 +4,9 @@
 const GENDER_OPTIONS = [
   { id: "male", label: "男" },
   { id: "female", label: "女" },
-  // 必填但不想说的人不能被卡死在门外，因此留一个显式档位（口径 2026-10-03）。
+  // 2026-10-17 产品负责人要求「去掉这个不愿透露」：引导页只展示男/女两档。
+  // 这一档**不删**，只因为服务端 GENDER_CHOICES 同款、且历史上已选该档的账号要能正常读回；
+  // 页面上不再渲染它（onboarding.wxml 按 id 过滤）。服务端要收窄请先改 GENDER_CHOICES 再同步这里。
   { id: "undisclosed", label: "不愿透露" },
 ];
 
@@ -16,17 +18,23 @@ const AGE_BAND_OPTIONS = [
   { id: "31_plus", label: "31 岁以上" },
 ];
 
-// 报考年份只给"当年 ~ 当年+5"：与服务端 EXAM_YEAR_SPAN 同口径。
-const EXAM_YEAR_SPAN = 5;
+// 报考年份只给**当年与之后 3 年、共 4 档**（2026-10-17 产品负责人口径：
+// "今年是 25 年那就是 2025、2026、2027、2028；今年是 26 年则显示 2026、2027、2028、2029"）。
+// 与服务端 user-auth-store 的 EXAM_YEAR_SPAN 同口径，两端由 tests/onboarding-page.test.js 钉住。
+// 2026-10-17 第十五次调整（产品负责人：「去掉这个今年」）：当年那一档不再带「（今年）」后缀，
+// 四档一律只显示「YYYY 年」。
+const EXAM_YEAR_SPAN = 3;
 function examYearOptions(now = Date.now()) {
   const current = new Date(now).getFullYear();
   return Array.from({ length: EXAM_YEAR_SPAN + 1 }, (unused, offset) => {
     const year = current + offset;
-    return { id: String(year), label: offset === 0 ? `${year} 年（今年）` : `${year} 年` };
+    return { id: String(year), label: `${year} 年` };
   });
 }
 
 // 目标考试项目来自 /api/catalog：优先读多项目形态 projects，读不到再退回单个 project（DEC-098 的预留形态）。
+// 2026-10-17 产品负责人："去掉汉语言文学学科基础下方的「广东 · 普通专升本」"——项目 chip 只显示项目名本身，
+// 不再产出 region/examType 拼出来的 sublabel（该副标题既占行高、又把胶囊撑成整行宽）。
 function projectOptionsFromCatalog(catalog) {
   const projects = Array.isArray(catalog && catalog.projects) && catalog.projects.length
     ? catalog.projects
@@ -36,14 +44,15 @@ function projectOptionsFromCatalog(catalog) {
     .map((project) => ({
       id: String(project.id),
       label: String(project.name || project.id),
-      sublabel: [project.region, project.examType].map((part) => String(part || "").trim()).filter(Boolean).join(" · "),
     }));
 }
 
 // 四项的提交顺序与中文名（提示"还差哪一项"时按这个顺序取第一个）。
+// 2026-10-17 第九次调整：第 2 项就是「生日」——服务端已改为保存具体生日（birthday 字段），
+// 不再由客户端换算年龄段（产品负责人："既然能保存具体生日，那就不再需要换算年龄段"）。
 const ONBOARDING_FIELDS = [
   { key: "gender", label: "性别" },
-  { key: "ageBand", label: "年龄段" },
+  { key: "birthday", label: "生日" },
   { key: "examProjectId", label: "目标考试项目" },
   { key: "examYear", label: "报考年份" },
 ];
@@ -53,8 +62,8 @@ const ONBOARDING_SKIP_KEY = "shukao_onboarding_skipped_v1";
 
 /**
  * 隐私授权同意标记（2026-10-03）：引导页勾选「我已阅读并同意《用户隐私保护指引》」后写本机。
- * 只代表"用户在本机同意过"，不代表任何账号归属；app.js 的 wx.onNeedPrivacyAuthorization
- * 与引导页的提交前检查都读它，避免同一次同意问两遍。
+ * 只代表"用户在本机同意过"，不代表任何账号归属；这个标记只用于本机登录闸门。
+ * 微信侧隐私授权由微信原生弹窗完成，不拿它替代或自动回答原生授权。
  */
 const PRIVACY_AGREED_KEY = "shukao_privacy_agreed_v1";
 
@@ -72,7 +81,8 @@ function firstMissingField(draft = {}) {
 function onboardingPatch(draft = {}) {
   return {
     gender: String(draft.gender || ""),
-    ageBand: String(draft.ageBand || ""),
+    // 2026-10-17 第九次调整：直接提交生日（YYYY-MM-DD），服务端负责校验与存储。
+    birthday: String(draft.birthday || ""),
     examProjectId: String(draft.examProjectId || ""),
     examYear: Number(draft.examYear) || 0,
   };

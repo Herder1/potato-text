@@ -10,16 +10,18 @@
 
   <view class="edit-body">
     <view class="avatar-block">
-      <image wx:if="{{draftAvatarUrl}}" class="avatar-large" src="{{draftAvatarUrl}}" mode="aspectFill" binderror="handleAvatarError" />
-      <view wx:else class="avatar-large avatar-large-fallback">薯</view>
-      <!-- 头像由用户自己提供：open-type=chooseAvatar 是微信现行的合规采集方式。
-           胶囊的视觉全由 .avatar-change（view）控制，采集入口是一枚覆盖其上的透明 button——
-           直接用 button 做视觉会被它自带的内边距/字重影响，真机上胶囊会被撑得过宽（2026-09-22 真机反馈"太长了"）。 -->
-      <view class="avatar-change">
+      <!-- 微信头像入口必须是真正的 button；不要再用透明按钮盖在 view 上。 -->
+      <view class="avatar-picker-wrap">
+        <button class="avatar-picker" open-type="chooseAvatar" bindchooseavatar="chooseAvatar" aria-label="更换头像">
+          <image wx:if="{{draftAvatarUrl}}" class="avatar-large" src="{{draftAvatarUrl}}" mode="aspectFill" binderror="handleAvatarError" />
+          <view wx:else class="avatar-large avatar-large-fallback">薯</view>
+        </button>
+      </view>
+      <!-- 胶囊本身直接用微信 button，避免透明覆盖层在部分机型上收不到点击。 -->
+      <button class="avatar-change" open-type="chooseAvatar" bindchooseavatar="chooseAvatar" aria-label="更换头像">
         <image class="avatar-change-icon" src="/assets/icons/camera-brand.svg" mode="aspectFit" />
         <text class="avatar-change-label">更换头像</text>
-        <button class="avatar-change-button" open-type="chooseAvatar" bindchooseavatar="chooseAvatar" aria-label="更换头像"></button>
-      </view>
+      </button>
     </view>
 
     <view class="group-title">基础资料</view>

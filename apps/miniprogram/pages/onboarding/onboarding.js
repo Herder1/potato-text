@@ -1,17 +1,42 @@
 const {
   GENDER_OPTIONS,
-  AGE_BAND_OPTIONS,
   examYearOptions,
   projectOptionsFromCatalog,
   ONBOARDING_SKIP_KEY,
   PRIVACY_AGREED_KEY,
   firstMissingField,
+  isFilled,
   onboardingPatch,
 } = require("../../utils/onboarding-options");
-const { closeTransientLayers } = require("../../utils/page-layers");
 
 // 登录完成后的落点与 app.json 的 entryPagePath 一致；tabBar 页必须用 switchTab。
 const ENTRY_URL = "/pages/review/review";
+
+/**
+ * 三步各自负责的必填项（2026-10-17 产品负责人：表单拆成三步，每屏只问一件事）。
+ * 第 1 步另有"头像/昵称"两项，但都是选填，不进校验表。
+ */
+const STEP_FIELDS = {
+  1: [{ key: "gender", label: "性别" }],
+  // 2026-10-17 第九次调整：第 2 步问生日、也提交生日（服务端新增 birthday 字段，不再换算年龄段）。
+  2: [{ key: "birthday", label: "生日" }],
+  3: [{ key: "examProjectId", label: "目标考试项目" }, { key: "examYear", label: "报考年份" }],
+};
+
+/** 生日滚轮的年份范围：1940 年到今年（考研/专升本人群足够覆盖，也避免出现荒唐的年份）。 */
+const BIRTH_YEAR_START = 1940;
+/** 默认停在哪一天（只是滚轮的初始位置，用户不动滚轮就不算填过）。 */
+const DEFAULT_BIRTH_YEAR = 2000;
+/** 月/日两列的循环缓冲份数：数据重复这么多份、初始停在中段，上下各能连滚 2 份。
+ *  微信 picker-view 没有 circular 属性，这是"能一直滚下去"最稳的近似做法（详见 initBirthdayWheels 注释）。 */
+const WHEEL_LOOP_COPIES = 5;
+const WHEEL_LOOP_MIDDLE = 2;
+const MONTHS_PER_YEAR = 12;
+
+/** 某年某月有多少天（含闰年）。 */
+function daysInMonth(year, month) {
+  return new Date(year, month, 0).getDate();
+}
 
 /** 服务端/网络错误的用户可见文案：只覆盖引导层真会遇到的几种，其余给通用兜底。 */
 const ERROR_TEXT = {
@@ -24,6 +49,8 @@ const ERROR_TEXT = {
   login_required: "登录状态已失效，请重新登录",
   profile_patch_required: "请至少填写一项",
   gender_invalid: "性别取值不支持",
+  // 2026-10-17 第九次调整：第 2 项改为具体生日，服务端会做日期合法性校验。
+  birthday_invalid: "生日不在可选范围内，请重新选择",
   age_band_invalid: "年龄段取值不支持",
   exam_project_invalid: "考试项目不在可选范围内",
   exam_year_invalid: "报考年份不在可选范围内",
@@ -43,39 +70,148 @@ Page({
     loggingIn: false,
     submitting: false,
     genderOptions: GENDER_OPTIONS,
-    ageBandOptions: AGE_BAND_OPTIONS,
     yearOptions: examYearOptions(),
     projectOptions: [],
     projectError: "",
     gender: "",
-    ageBand: "",
+    // 2026-10-17 第九次调整：第 2 步就是选生日（三列滚轮），birthday 为空串表示还没选过，
+    // 直接提交 `YYYY-MM-DD` 给服务端保存——不再换算年龄段（产品负责人明确要求）。
+    birthday: "",
+    birthdayLabel: "",
+    birthYears: [],
+    birthMonths: [],
+    birthDays: [],
+    birthDaySpan: 0,
+    birthdayIndexes: [0, 0, 0],
     examProjectId: "",
     examYear: 0,
     nickname: "",
     avatarUrl: "",
     avatarDataUrl: "",
-    optionalOpen: false,
+    // 2026-10-17 产品负责人：表单从"一屏四问 + 折叠头像昵称"改成三步（每屏只问一件事）——
+    // 第 1 步头像/昵称/性别，第 2 步年龄段，第 3 步考试信息（项目 + 报考年份）。
+    // 四项仍然全部必填、仍然在同一个 page 内采集：不改 DEC-109 的"就地必填四项"，只改采集节奏。
+    step: 1,
+    stepTotal: 3,
     // 隐私授权：勾选后才允许登录（登录即收集 openid，后面还要收四项属性与头像昵称）。
     agreed: false,
     hint: "",
     statusBarHeight: 44,
+    // 2026-10-17 第十八次调整：顶部那行的高度与右侧让位，按微信胶囊的实测矩形算（见 measureNavigation）。
+    navBarHeight: 44,
+    menuRightGap: 100,
   },
 
   onLoad() {
     this.measureNavigation();
+    this.initBirthdayWheels();
     this.loadProjects();
   },
 
-  // 离开本页时收掉展开出来的「头像与昵称（选填）」块：仓库既有约定是所有带 Open 标记的
-  // 瞬态层都必须随页面离开收拢，避免跨页残留（tests/page-transient-layers.test.js 静态守住）。
+  /**
+   * 生日滚轮的三列数据（2026-10-17 第八次调整；第十七次给月/日加循环缓冲）。
+   * 年：1940 → 今年（不循环，范围本身就够长）；月：1–12 循环；日：按当前年月算天数（闰年 2 月正确）。
+   *
+   * 为什么是"数据重复 5 份"而不是真无限循环：微信 `picker-view` 没有 `circular` 属性，
+   * 原生不支持首尾相接。这里让月/日两列数据各自重复 `WHEEL_LOOP_COPIES` 份并初始停在中段，
+   * 于是上下各能连续滚 2 份（月 = 24 个月、日 = 2 个整月），实际使用中不会触到端点。
+   * 代价：滚到最外一份到底就停住，不是数学意义上的无限循环。
+   *
+   * 初始位置停在 2000-01-01 的中段，但 `birthday` 仍是空串——用户不动滚轮就当作"还没选"，
+   * 避免把默认值当真实生日写进账号。
+   */
+  initBirthdayWheels() {
+    const currentYear = new Date().getFullYear();
+    const years = [];
+    for (let year = BIRTH_YEAR_START; year <= currentYear; year += 1) years.push(year);
+    const months = [];
+    for (let copy = 0; copy < WHEEL_LOOP_COPIES; copy += 1) {
+      for (let month = 1; month <= 12; month += 1) months.push(month);
+    }
+    const baseDays = daysInMonth(DEFAULT_BIRTH_YEAR, 1);
+    const days = [];
+    for (let copy = 0; copy < WHEEL_LOOP_COPIES; copy += 1) {
+      for (let day = 1; day <= baseDays; day += 1) days.push(day);
+    }
+    this.setData({
+      birthYears: years,
+      birthMonths: months,
+      birthDays: days,
+      birthDaySpan: baseDays,
+      birthdayIndexes: [
+        Math.max(0, years.indexOf(DEFAULT_BIRTH_YEAR)),
+        MONTHS_PER_YEAR * WHEEL_LOOP_MIDDLE,
+        baseDays * WHEEL_LOOP_MIDDLE,
+      ],
+    });
+  },
+
+  /**
+   * 滚轮停止后收值：月/日取模还原成真实值；只有"当月天数变了"才重建日列并重新定位到中段，
+   * 否则保留用户当前所在的索引（避免把用户滚到第 4 份又硬拉回第 3 份造成跳动）。
+   */
+  onBirthdayChange(event) {
+    const values = (event && event.detail && event.detail.value) || [];
+    const years = this.data.birthYears;
+    const months = this.data.birthMonths;
+    const yearIndex = Math.min(Math.max(Number(values[0]) || 0, 0), years.length - 1);
+    const monthIndex = Math.min(Math.max(Number(values[1]) || 0, 0), months.length - 1);
+    const dayIndex = Math.min(Math.max(Number(values[2]) || 0, 0), this.data.birthDays.length - 1);
+    const year = years[yearIndex];
+    const month = (monthIndex % MONTHS_PER_YEAR) + 1;
+    const total = daysInMonth(year, month);
+    // 日号按"变化前那一列的天数"还原（重复数组里同一日号出现多次），换月后若超出当月天数就夹住——
+    // 这样 1 月 20 日切到 2 月仍是 20 日，而不是被取模算成别的日子。
+    const oldSpan = this.data.birthDaySpan || total;
+    let day = (dayIndex % oldSpan) + 1;
+    if (day > total) day = total;
+    let nextDayIndex = dayIndex;
+    let birthDays = this.data.birthDays;
+    if (total !== this.data.birthDaySpan) {
+      // 换月/换年导致天数变化：重建日列（同样重复 WHEEL_LOOP_COPIES 份），把选中的日停到中段。
+      birthDays = [];
+      for (let copy = 0; copy < WHEEL_LOOP_COPIES; copy += 1) {
+        for (let d = 1; d <= total; d += 1) birthDays.push(d);
+      }
+      nextDayIndex = total * WHEEL_LOOP_MIDDLE + day - 1;
+    }
+    const padded = (value) => String(value).padStart(2, "0");
+    const birthday = `${year}-${padded(month)}-${padded(day)}`;
+    this.setData({
+      birthDays,
+      birthDaySpan: total,
+      birthdayIndexes: [yearIndex, monthIndex, nextDayIndex],
+      birthday,
+      birthdayLabel: `${year}年${padded(month)}月${padded(day)}日`,
+      hint: "",
+    });
+  },
+
+  // 引导层的瞬时层只有「步骤切换」这一种，且 step 不跨页保留；这里显式回到第一步，
+  // 避免二次进入时停在上次的第 3 步（仓库既有约定：瞬态层必须随页面离开收拢）。
   onHide() {
-    closeTransientLayers(this, ["optionalOpen"]);
+    if (this.data.stage === "form") this.setData({ step: 1 });
   },
 
   measureNavigation() {
     if (typeof wx.getWindowInfo !== "function" && typeof wx.getSystemInfoSync !== "function") return;
     const windowInfo = typeof wx.getWindowInfo === "function" ? wx.getWindowInfo() : wx.getSystemInfoSync();
-    this.setData({ statusBarHeight: Number(windowInfo && windowInfo.statusBarHeight) || 24 });
+    const statusBarHeight = Number(windowInfo && windowInfo.statusBarHeight) || 24;
+    // 2026-10-17 第十八次调整（产品负责人：「实际效果没有对齐」）：顶部那一行要跟微信胶囊对齐，
+    // 不能写死 88rpx——不同机型的状态栏高度、胶囊高度与上下留白都不一样。
+    // 拿胶囊的实测矩形，把 header 高度算成"胶囊上下留白对称、等高"，于是 header 的垂直中线 = 胶囊中线；
+    // 进度条右端再按胶囊左边缘让开，避免伸到胶囊底下。
+    let navBarHeight = 44;
+    let menuRightGap = 100;
+    if (typeof wx.getMenuButtonBoundingClientRect === "function") {
+      const menu = wx.getMenuButtonBoundingClientRect();
+      const windowWidth = Number(windowInfo && windowInfo.windowWidth) || 375;
+      if (menu && Number(menu.height) > 0 && Number(menu.top) >= statusBarHeight) {
+        navBarHeight = Number(menu.height) + (Number(menu.top) - statusBarHeight) * 2;
+        menuRightGap = Math.max(0, windowWidth - Number(menu.left) + 8);
+      }
+    }
+    this.setData({ statusBarHeight, navBarHeight, menuRightGap });
   },
 
   /**
@@ -152,7 +288,9 @@ Page({
         this.finish();
         return;
       }
-      this.setData({ stage: "form" });
+      this.setData({ stage: "form", step: 1 });
+      // 第 1 步就有头像选择（微信隐私接口），进表单时先把微信侧授权跑一遍。
+      this.ensurePrivacyAuthorization();
     });
   },
 
@@ -171,20 +309,27 @@ Page({
   },
 
   /**
-   * 展开「头像与昵称（选填）」时补一次微信侧隐私授权（2026-10-04）。
-   * 引导页的勾选只是我们自己的入口；`open-type=chooseAvatar` 与 `type="nickname"`
-   * 是微信隐私接口，微信侧授权没真正跑完时，点头像会**静默无反应**、昵称也拿不到填充。
-   * 这里显式触发一次 requirePrivacyAuthorize；不需要授权或低版本没有该接口时直接跳过。
+   * 进入表单第 1 步时补一次微信侧隐私授权（2026-10-17 三步化后头像选择就在第 1 步，不再靠"展开"触发）。
+   * 引导页的勾选只是**我们自己的**入口；`open-type=chooseAvatar` 与 `type="nickname"`
+   * 是微信隐私接口，微信侧授权没跑完时点头像会静默无反应、昵称也拿不到填充。
+   *
+   * 2026-10-17 二次修：不再在 `app.js` 注册 `onNeedPrivacyAuthorization` 替用户点同意。
+   * 那样会吞掉微信原生隐私弹窗，部分真机上反而让头像选择与昵称填充静默失败。
+   * 现在只探测 `getPrivacySetting`，需要时调用 `requirePrivacyAuthorize`，
+   * 让微信展示原生授权框；不需要授权或低版本没有接口时安静跳过。
    */
-  toggleOptional() {
-    if (!this.data.optionalOpen) this.ensurePrivacyAuthorization();
-    this.setData({ optionalOpen: !this.data.optionalOpen });
-  },
-
   ensurePrivacyAuthorization() {
-    if (typeof wx.requirePrivacyAuthorize !== "function") return;
-    wx.requirePrivacyAuthorize({
-      fail: () => this.setData({ hint: "微信侧隐私授权未通过，头像和昵称可能用不了；可回登录页重新同意《用户隐私保护指引》" }),
+    if (typeof wx.getPrivacySetting !== "function") return;
+    wx.getPrivacySetting({
+      success: (setting) => {
+        if (!setting || setting.needAuthorization !== true) return;
+        if (typeof wx.requirePrivacyAuthorize !== "function") return;
+        wx.requirePrivacyAuthorize({
+          success: () => this.setData({ hint: "" }),
+          // 只有"确实需要授权、而申请又被拒"才提示；文案不再引导用户回登录页重勾（那一步管不到微信侧）。
+          fail: () => this.setData({ hint: "微信没有允许本次隐私授权，头像和昵称可能设置不了" }),
+        });
+      },
     });
   },
 
@@ -215,6 +360,33 @@ Page({
     const value = event && event.detail ? event.detail.value : undefined;
     if (typeof value !== "string") return;
     this.setData({ nickname: value });
+  },
+
+  /**
+   * 三步向导的"下一步"：只校验**当前这一步**的必填项，缺了就停在本步提示、不发请求。
+   * 第 3 步的按钮就是「开始使用」，直接走 submit（submit 里仍用 firstMissingField 做一次全量兜底，
+   * 防止用返回手势跳步后带着空值提交）。
+   */
+  nextStep() {
+    if (this.data.submitting) return;
+    const fields = STEP_FIELDS[this.data.step] || [];
+    const missing = fields.find((field) => !isFilled(field.key, this.data[field.key]));
+    if (missing) {
+      this.setData({ hint: `请先选择${missing.label}` });
+      wx.showToast({ title: `请先选择${missing.label}`, icon: "none" });
+      return;
+    }
+    if (this.data.step >= this.data.stepTotal) {
+      this.submit();
+      return;
+    }
+    this.setData({ step: this.data.step + 1, hint: "" });
+  },
+
+  /** 上一步：只回退步骤，已选的值全部保留（不重问已回答的问题）。 */
+  prevStep() {
+    if (this.data.submitting || this.data.step <= 1) return;
+    this.setData({ step: this.data.step - 1, hint: "" });
   },
 
   /** 四项必填：缺哪一项就提示哪一项，不发请求。 */

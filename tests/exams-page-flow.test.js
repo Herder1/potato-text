@@ -167,3 +167,116 @@ test("published exam detail keeps subjective questions in the exam queue", () =>
   delete global.getApp;
   delete global.wx;
 });
+
+test("reopening a published exam restores its downloaded PDF files without regenerating", () => {
+  let definition;
+  const store = new Map();
+  const openedPaths = [];
+  const questions = [
+    {
+      id: "choice-1",
+      type: "single_choice",
+      typeLabel: "单选题",
+      answerMode: "choice",
+      stem: "选择正确选项。",
+      options: [{ key: "A", text: "正确" }, { key: "B", text: "错误" }],
+      correctAnswer: ["A"],
+      referenceAnswer: "A",
+      score: 2,
+      maxScore: 2,
+      bookId: "modern-chinese-7-1",
+      chapterId: "第一章",
+      sectionId: "第一节",
+      knowledgePoint: "测试知识点",
+    },
+  ];
+  const exam = {
+    id: "exam-cached",
+    title: "可复用导出试卷",
+    durationMinutes: 120,
+    totalScore: 100,
+    updatedAt: 123456,
+  };
+  global.wx = {
+    getStorageSync: (key) => store.get(key) || "",
+    setStorageSync: (key, value) => store.set(key, value),
+    removeStorageSync: (key) => store.delete(key),
+    getFileSystemManager: () => ({ accessSync() {} }),
+    getWindowInfo: () => ({ windowWidth: 390, windowHeight: 844, statusBarHeight: 44, safeArea: { bottom: 810 } }),
+    getMenuButtonBoundingClientRect: () => ({ width: 87, height: 32, top: 48, left: 290 }),
+    setKeepScreenOn() {},
+    showToast() {},
+    navigateBack() {},
+    openDocument({ filePath }) {
+      openedPaths.push(filePath);
+    },
+    downloadFile({ url, success }) {
+      const kind = url.includes("paper") ? "paper" : "answer";
+      success({ statusCode: 200, tempFilePath: `tmp://${kind}.pdf` });
+    },
+    saveFile({ tempFilePath, success }) {
+      success({ savedFilePath: tempFilePath.replace("tmp://", "wxfile://") });
+    },
+    request(options) {
+      if (options.url.includes("/api/exams/exam-cached")) {
+        options.success({ statusCode: 200, data: { exam, questions } });
+      } else {
+        options.success({ statusCode: 404, data: {} });
+      }
+    },
+  };
+
+  global.Page = (value) => { definition = value; };
+  global.getApp = () => ({ globalData: { apiBaseUrl: "http://exam.test", beans: 2, userId: "test-user" } });
+  const pagePath = require.resolve("../apps/miniprogram/pages/practice/practice.js");
+  delete require.cache[pagePath];
+  require(pagePath);
+  const page = {
+    ...definition,
+    data: structuredClone(definition.data),
+    setData(patch, callback) {
+      Object.assign(this.data, patch);
+      if (callback) callback();
+    },
+  };
+  page.onLoad({ mode: "exam", examId: exam.id });
+
+  page.downloadExamExportFiles({
+    id: "export-cached",
+    status: "ready",
+    reviewQuestionNumbers: [],
+    files: [
+      { kind: "paper", label: "试卷", url: "/api/exam-exports/export-cached/paper.pdf" },
+      { kind: "answer", label: "答案", url: "/api/exam-exports/export-cached/answer.pdf" },
+    ],
+  });
+  assert.equal(page.data.examExportSavedLocally, true);
+  assert.deepEqual(page.data.examExportFiles.map((file) => file.localPath), [
+    "wxfile://paper.pdf",
+    "wxfile://answer.pdf",
+  ]);
+  if (page.examTimer) clearInterval(page.examTimer);
+
+  const reopenedPage = {
+    ...definition,
+    data: structuredClone(definition.data),
+    setData(patch, callback) {
+      Object.assign(this.data, patch);
+      if (callback) callback();
+    },
+  };
+  reopenedPage.onLoad({ mode: "exam", examId: exam.id });
+  assert.equal(reopenedPage.data.examExportSavedLocally, true);
+  assert.equal(reopenedPage.data.examExportResult.id, "export-cached");
+  assert.deepEqual(reopenedPage.data.examExportFiles.map((file) => file.localPath), [
+    "wxfile://paper.pdf",
+    "wxfile://answer.pdf",
+  ]);
+  reopenedPage.openExamExportFile({ currentTarget: { dataset: { kind: "paper" } } });
+  assert.deepEqual(openedPaths, ["wxfile://paper.pdf"]);
+  if (reopenedPage.examTimer) clearInterval(reopenedPage.examTimer);
+
+  delete global.Page;
+  delete global.getApp;
+  delete global.wx;
+});

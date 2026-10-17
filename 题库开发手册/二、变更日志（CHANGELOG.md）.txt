@@ -4,6 +4,79 @@
 核心定位：记录“谁、在什么时候、因为什么、改了代码的哪里”，避免相互覆盖代码，
 核心规则：“改代码前，先看日志最新一条；改完代码，立刻追加一条新日志。”
 
+## 2026-10-17｜Little Code Sauce｜登录引导页改成得物式干净单屏
+
+- **触发（原话）**：「这个登录页面改一下，改成图 2 干净的风格」「其中手机号换成先跳过看看，已阅读《用户隐私保护指引》《用户协议》《隐私政策》」。
+- **用户结果**：注册引导页的登录态从「深色遮罩 + 底部上滑白卡」变成整页白底的干净单屏——居中的品牌方块（当轮是黑底白字「薯考」，同日追加换成产品商标，见本条末尾）+ 一行副标题、一枚满宽品牌青主按钮「微信一键登录」、按钮下一行纯文字入口「先跳过看看」（对位得物那行「手机号登录」）、页面最底部一行圆形勾选 + 「已阅读并同意《用户隐私保护指引》《用户协议》《隐私政策》」（三个入口都可点、分别进对应文档）。未勾选时主按钮仍半透明置灰，勾选后恢复实心青。
+- **文案口径变化（本轮由产品负责人当场指定，不是 Agent 自定）**：① 副入口由「先随便看看」改为「**先跳过看看**」（`skip` 行为一字未动：只写本机标记 `shukao_onboarding_skipped_v1`，不碰账号数据）；② 勾选行首句由「我已阅读并同意」改为「已阅读并同意」，并删掉原来单独一行的「同时可查看：《用户协议》《隐私政策》」（三份文档合到一行）；③ 登录态删掉底卡标题「登录后开始」与说明句「学习记录、题包和收藏都跟着账号走，换设备也不丢。」（图 2 同位置没有这两句）。要加回其中任何一句，只改 `onboarding.wxml` 对应几行即可，不涉及逻辑。
+- **实现**：只动 `apps/miniprogram/pages/onboarding/{onboarding.wxml,onboarding.wxss,onboarding.json}`。`wxml` 按 `stage` 拆成「登录单屏」与「三步采集」两段（后者结构与文案一字未动，只是从白卡里搬进 `.sheet`）；`wxss` 删掉 `.onboarding-backdrop` / `.sheet-handle` / `.consent-docs` 三条规则，新增 `.onboarding-page-login` / `.login-hero` / `.brand-badge` / `.login-actions`，主按钮改为 311×48px、圆角 6px 的矩形微圆角；`json` 的 `backgroundColor` 由 `#101614` 改为 `#ffffff`。协议行 `.consent-row` 左右各放宽 20rpx、每个 `<text>` 单独 `white-space: nowrap`，保证三个协议名不会被拆成两半。
+- **未改变**：登录门槛（未勾选不得登录）、四项必填、三步采集节奏、`skip` 语义、接口、服务端与 `.runtime` 正式数据全部不动；没有新增或修改任何 DEC。
+- **验证（2026-10-17 本机）**：`tests/onboarding-page` + `onboarding-gate` + `miniprogram-platform-content` + `logout-workspace` **46/46**；`tmp/verify-onboarding-login-clean.js`（无头 Chrome 渲染真实 wxml + wxss，375×812）**30/30 PASS**——白底且不再有遮罩/手柄/sheet、logo 75×75 水平居中、按钮 311×48 圆角 6px 品牌青、未勾选时 opacity 0.55、副入口「先跳过看看」在按钮下方 15–25px 且绑 `skip`、协议行贴页底居中且三个入口同为品牌青互不重叠、勾选框 16px 圆形勾选后转青、无横向溢出、不超一屏（品牌位换成商标后同一脚本升到 **33/33**，见本条末尾追加）；截图 `tmp/verify-out/onboarding-login-clean.png`、`-agreed.png`、`onboarding-form-clean.png` 已逐张目视复核。
+- **未验证（不冒充已验收）**：微信开发者工具 / 真机上的实际观感（安全区高度、`14vh` / `12vh` 在两款机型上的落点、点击手感）只能由产品负责人确认——本机无微信运行环境，按 AGENTS §6 只做到「代码 + 等价渲染」层。
+- **同日追加：品牌位换成产品商标（产品负责人：「我的商标是这个，融入进去，不要这个黑色的跟我的图标不搭」）**：登录页那颗黑底白字「薯考」方块、以及三步采集页顶部那颗青底白「薯」方块，**都换成产品商标本身**（土豆吉祥物：浅青圆底 + 黄果身 + 双叶）。素材沿用仓库既有的 `apps/miniprogram/assets/potato-avatar.svg`（与产品负责人给的商标同一图形），用无头 Chrome 渲染成 `apps/miniprogram/assets/logo-potato.png`（600×600、圆外透明、33.8KB；生成脚本 `tmp/make-logo-mark.js` 可重跑）——**不直接用 SVG** 是因为小程序 `<image>` 对 SVG 的支持在部分机型不稳。尺寸：登录页 200rpx（圆形视觉直径约 166rpx，比原来的黑方块放大一档，因为浅色圆的视觉重量更轻）、采集页 72rpx。**未改任何逻辑**（`brand-badge` / `brand-mark` 只换内容与尺寸，wxml 由 `<view>` 改 `<image mode="aspectFit">`）。验证：渲染脚本升到 **33/33 PASS**，新增/改写 4 条——2a 品牌位是 `IMG` 且 100×100px 无底色、2c 圆心像素采样是暖黄果身（不是黑底、也不是空图）、2d `naturalWidth ≥ 300`（图真的加载了，挡掉"空框假通过"）、7d 采集页顶部同为商标图片；截图 `tmp/verify-out/onboarding-login-clean.png` / `onboarding-form-clean.png` 已目视复核。**待真机验收**：商标在真机上的清晰度（600×600 对 200rpx≈100px 的显示是 6 倍余量，理论上足够）与圆底浅青在白色页面上的观感。
+- **同日再追加：改用产品负责人给的高清原图（1280×1280）**：他发来一张 1280×1280 的商标原图问「你看下这个可以吗」。原图不能直接用，三个问题都在 `tmp/make-logo-mark.js` 里处理掉了：① 背景是米白渐变的方图，直接放进白页会露出方形边界；② 右下角带「豆包AI生成」水印；③ 果身只占整图的约 51%，整张铺满会让土豆在页面上显得很小。做法：在无头 Chrome 的 canvas 里按「是否接近底色」二值化后做**连通分量、只保留最大的一块**（土豆本体：果身 + 梗 + 双叶连成一片）——底色圆盘、光晕、水印都是与主体断开的碎片，一并丢弃；再按前景包围盒留 5% 内边距取正方形、重采样到 **600×600** 输出透明 PNG（160.6KB，替换原来的 600×600 矢量渲染版）。**尺寸上限是被测试顶回来的**：先出 800×800 是 250KB，直接让 `tests/miniprogram-platform-content` 的「图片资源 ≤ 200KB」用例变红；显示只有 120px，600 已是 5 倍余量，压到 600 后 160KB 通过。**踩过的坑**：先前试的"从四边泛洪去底"会漏掉水印——水印四周有一圈比底色更白的描边，泛洪绕着它走、水印本体被留下（已实测复现，故改为最大连通块）。尺寸随之由 200rpx 调到 **240rpx**（叶子高挑，果身在正方形画布里只占约 68%，容器不放大就显得小），采集页顶部仍 72rpx。验证：渲染脚本 **33/33 PASS**（2a 改为 120×120px 无底色、2c 圆心为暖黄果身、2d `naturalWidth ≥ 300`、7d 采集页同为商标图）；`tmp/verify-out/onboarding-login-clean.png` 与 `onboarding-form-clean.png` 目视复核：白页上无方形/圆形底色残留、水印已消失、土豆边缘干净、36px 小图仍可辨认表情。**一处需要产品负责人决定**：AI 生成内容的标识——原图的「豆包AI生成」水印已随去底裁掉，若要合规标识，建议写进小程序「关于」页说明，而不是把水印打在 logo 上。
+- **同日三追加：图标缩小 + 加蓝色水泡罩（产品负责人：「图标有点大了」「我需要给图标加一个蓝色的水泡罩」「水泡罩样式如我最初发给你的图那样」）**：① 品牌位由 240rpx 缩到 **200rpx**（`.brand-badge`，登录页主视觉只此一处）；② 水泡罩**合成进 PNG 里**而不是用 WXSS 画——样式照他最早给的那张商标图的结构：**两层同心圆**（外层淡蓝 `#d9eaf8` 圆 + 内层更淡 `#f2f9fe` 圆，半径比 0.875 同原图 224/256），土豆占内圆直径 78%、中心略上移 2%；圆外留 3% 透明边。第一版曾做成径向渐变 + 高光反光的"立体玻璃泡"，被否了（他要的就是最初那种朴素的淡色双圆罩）。不交给 CSS 的原因：两个圆的半径比要跟图一起缩放，CSS 还得额外补 view，且 `border-radius` 裁切会啃掉边缘。现文件 600×600、**105.6KB**（仍在 ≤ 200KB 内）。验证：渲染脚本 **33/33 PASS**（2a 改为 100×100px；2c 圆心仍采到果身暖黄），`tmp/verify-out/onboarding-login-clean.png` 目视复核：蓝罩边缘干净、土豆居中不贴边、与副标题间距协调。**待真机验收**：蓝色罩在真机上与品牌青按钮是否打架（蓝绿相邻是这次唯一的配色风险，若他觉得冲突，改 `tmp/make-logo-mark.js` 里两个色值重跑即可）。
+- **同日四追加（定稿）：换他最后给的那张图，保留圆底、去掉蓝圈**（产品负责人：「用这个吧」→「不要去掉圆底，直接用，不需要蓝圈了」）。这张原图自带浅灰圆底 + 白描边 + 投影（贴纸质感），做法随之反转：**不再抠图**，只把右下角「豆包AI生成」水印那一块刷成白色（矩形 0.80~1.00 × 0.90~1.00，落在圆盘与投影之外，按圆心半径 550 核算过，碰不到图形）；方图外围与页面同为纯白，所以方形直接放置在白页上没有可见边界。**输出格式改 JPG**（q=0.92、600×600、**37KB**）：这张图带光影渐变 + 大面积浅灰圆底，同等清晰度下 PNG 会到 250KB 以上、顶破「单图 ≤ 200KB」；`assets/logo-potato.png` 已删除，wxml 引用改为 `/assets/logo-potato.jpg`。中间试过"去圆底只留土豆"（阈值放到 16 时整块浅灰圆盘被当白吃掉、只剩土豆）与"蓝圈"两版，均按他的反馈撤掉。验证：渲染脚本 **33/33 PASS**（2e 改判 `logo-potato.jpg`；2a 仍为 100×100px 无背景色），生成脚本自带断言「圆盘左/上内壁采样为浅灰不透明——圆底必须保留」「原水印位置为纯白」「果身为暖黄」；截图目视复核：灰盘 + 白描边 + 投影完整、白页上无方形边、无水印。顺带修正两处已过时的验证断言（表单态顶部品牌行早已按参考图删除、性别胶囊按现行口径只有男/女两颗），不是产品改动。
+- **同日五追加：删掉「可以浏览题库和练习，但这次的数据不会保存」，副入口改成灰绿**（产品负责人看真机截图后：「1.去掉红框的内容 2.把先跳过看看的字体颜色换成红框那种」）。落地两条：① `onboarding.wxml` 删掉整个 `.skip-note` 行、`onboarding.wxss` 删掉 `.skip-note` 规则；② `.skip-entry`（「先跳过看看」）的 `color` 由 `#3f4744` 改成原小字用的 `#a6ada8`（灰绿）。**这是产品负责人明确指定的用户可见文案/配色变更**，不是 Agent 自定；`skip` 行为不变（仍只写本机 `shukao_onboarding_skipped_v1`），登录门槛不变。`tests/` 下没有对该文案或该色的断言（已 grep 确认），所以测试面无需改；渲染脚本里原来「小字仍在」那条断言改为「小字已删除 + 副入口颜色为 rgb(166,173,168)」，总数 **34/34 PASS**。**副作用提示**：副入口现在与助记文字同级灰度、对比度约 2.4:1，作为唯一免登录入口稍偏弱；产品负责人如需更醒目，把 `#a6ada8` 换成 `#7c857f` 即可（仍属灰绿系）。
+
+## 2026-10-17｜Codex｜后台环境标识按真实域名显示
+
+- **触发**：产品负责人指出线上 `https://hhtodo.cn/admin/` 的侧栏仍显示「本地开发环境」，容易把生产后台误认为本机环境。
+- **用户结果**：后台侧栏改为运行时识别域名：`localhost`、回环地址、局域网地址显示「本地开发环境」，正式域名显示「生产环境」；工作台顶部原「第一阶段开发环境」提示改为中性的「教材目录发布提示」，正文仍保留“教材目录必须人工确认”的既有规则。
+- **实现**：只改 `apps/admin/index.html` 与 `apps/admin/app.js`，并把后台静态资源版本统一抬到 `20261017.11`；没有改接口、权限、业务数据或上线阻断状态。
+- **验证（2026-10-17 本机）**：`tests/admin-backend-stale-banner.test.js` 新增域名识别静态契约，专项通过；微信/1Panel 正式部署后的实际显示仍需新镜像上线后复验。
+
+## 2026-10-17｜Codex｜充值弹层去掉可点击的「立即支付」假入口
+
+- **触发**：上线前核查发现，真实微信支付尚未接入，但账户页豆币充值弹层的底栏仍显示可点击的「立即支付」；生产环境点下去只弹「不会扣款」，界面与真实能力不一致。
+- **用户结果**：支付通道未启用时，底栏按钮改为禁用的「暂未开放」，支付方式行继续显示「通道未启用」；点按逻辑即使被测试代码直接调用，也只提示「不会扣款，也不会生成订单」，不再写入待支付商品。协议提示改为「购买前请阅读」。
+- **实现边界**：只改 `apps/miniprogram/pages/store/{store.js,store.wxml}` 与页面契约测试；新增 `paymentChannelEnabled: false` 作为唯一支付可用性开关。未接入支付、未改动商品、订单、权益、退款规则或服务端。
+- **验证（2026-10-17 本机）**：`tests/storefront-page-flow.test.js` **6/6**、`tests/store-order-page-flow.test.js` **3/3**，0 失败；断言覆盖禁用态、按钮文案与直接调用不生成订单。
+- **未验证 / 需要负责人操作**：微信开发者工具与真机上的禁用态、文案换行和视觉观感待验收；本轮只修复上线前确定存在的误导入口，不关闭 B1。
+
+## 2026-10-17｜Codex｜后台新增用户管理：能看当前注册用户、最近登录和注销计数
+
+- **触发（原话）**：「后台现在好像还缺一个用户管理，只有一个用户限制，我并不知道有多少用户注册，注销，是不是」。
+- **用户结果**：后台「社区管理」下新增「用户管理」，仅超级管理员可见。页面顶部显示累计注册、当前用户、近 7 天新增、已注销，并附有效会话与今日/近 7 天注销数；列表可按数字 ID、内部 ID、昵称搜索和分页，逐行显示注册时间、最近登录、注册引导与当前限制，并可进入原有「限制」「权益」操作。运营账号看不到入口，直接请求新接口也会被 403 拒绝。
+- **实现**：新增超管专属 `GET /api/admin/users`；`user-auth-store` 增加账号总览与匿名注销事件，`user-restriction-store` 增加批量限制状态读取；后台 `apps/admin/{index.html,app.js,styles.css}` 接入页面，静态资源版本统一为 `20261017.10`。
+- **隐私与历史边界**：注销事件只保存随机事件 ID 与 `deletedAt`，不保存 userId、数字 ID、昵称、OpenID 或头像。累计注册＝当前账号＋有记录的注销事件；注销计数从本版本上线后开始留痕，**此前已注销的账号没有历史日志，无法补算**，页面已明确写出这一限制。本机只读核对 `.runtime/users.json` 当前为 **7 个用户、5 个会话、0 条注销事件**。
+- **验证（2026-10-17 本机）**：专项 `admin-user-management` + `admin-auth` + `account-deletion-retention` + `user-restrictions` + `admin-billing-management` **39/39**；全量 `NODE_ENV=development npm test` **1943/1943，0 失败**。`tmp/verify-user-management-ui.js` PASS：在桌面与 390px 视口逐项读取 `hidden`、计算后的 `display`、`offsetParent` 与实际尺寸，验证搜索、限制弹窗、权益弹窗、移动端横向滚动，并验证运营账号入口确实隐藏。
+- **未验证 / 需要负责人操作**：按 AGENTS §8，本轮改了 `apps/api/src/**`，必须由产品负责人在自己的终端重启 3212 后新接口才生效；Agent 未重启正式进程，也未验收 3212 上的真实登录与页面。历史注销数无法恢复；PostgreSQL 下匿名注销事件随 users Store 整包持久化，本轮未连接正式 PostgreSQL 实例复核。当前工具目录未提供 `delivery_check`，不宣称该门禁 PASS。
+- **边界**：未改变登录、注销、限制或计费规则；未新增用户删除/封禁能力；未修改 `.runtime` 正式数据、冻结金标或题库。`docs/RELEASE_CHECKLIST.md` 无需改判，因为本功能不关闭或新增上线阻断项。
+
+## 2026-10-17｜DeepSeek｜修上一轮自己引入的误报：勾了同意却弹"微信侧隐私授权未通过"
+
+- **触发（原话）**：「明明勾选同意，但出现了这个」（截图：已勾选隐私指引并登录进到四项表单，展开「头像与昵称（选填）」后出现红字「微信侧隐私授权未通过，头像和昵称可能用不了；可回登录页重新同意《用户隐私保护指引》」）。
+- **根因（上一轮自己的回归）**：为修"点头像静默无反应"新增的 `ensurePrivacyAuthorization()` **无条件**调用 `wx.requirePrivacyAuthorize`。在"本来就不需要授权"的环境里（最常见的是公众平台尚未配置《用户隐私保护指引》，此时没有任何需授权的采集接口）这个调用会直接 `fail`，于是刚勾选过同意的用户反而收到一条红字；而且文案让他"回登录页重新同意"——那一步只管我们自己的勾选，管不到微信侧，是个无效动作。
+- **改法**（`apps/miniprogram/pages/onboarding/onboarding.js` 一个文件）：先 `wx.getPrivacySetting` 问"这次到底需不需要授权"，只有 `needAuthorization === true` 才调 `requirePrivacyAuthorize`；接口不存在（低版本基础库）或不需要授权就安静跳过、**不设置任何提示**。真被拒时提示改为中性的「微信没有允许本次隐私授权，头像和昵称可能设置不了」，不再引导用户回登录页。
+- **为什么不直接删掉这段**：`open-type=chooseAvatar` 与 `input type="nickname"` 确实是微信隐私接口；公众平台**已配置**协议并声明"微信昵称、头像"时 `needAuthorization` 为 true，提前申请可避免"第一次点头像没反应、第二次才弹出来"。删掉会把那个体验缺口还回去，所以保留并加门控。
+- **验证（2026-10-17 本机）**：`tests/onboarding-page.test.js` **18/18**，新增 3 条把这次误报钉死——`needAuthorization: false` 时**既不申请也不出红字**且折叠块照常展开；`needAuthorization: true` 且申请被拒时才出提示，且提示里**不得出现"回登录页"**；没有 `getPrivacySetting` 的低版本基础库**完全不碰** `requirePrivacyAuthorize`。全量 `node --test tests/*.test.js` **1941/1941，0 失败**。
+- **未验证（不冒充已验收）**：真机上这条红字是否确实不再出现、以及公众平台配好协议后"提前申请"是否真的避免了首次点击失效，都要产品负责人在微信开发者工具/真机确认。**若他环境里仍出现该提示，说明平台对该接口的授权是真的被拒（后台配置问题），不是这条代码能绕过的。**
+- **边界**：只改"要不要问、什么时候问"和提示文案；未改隐私勾选规则（勾选后才能登录）、未改四项必填、未动接口与服务端、未动 `.runtime`。
+
+## 2026-10-17｜Codex｜已导出的同一份试卷在本机保留，重新进入可直接打开
+
+- **触发（原话）**：「比如同一份试卷的导出，用户已经下载过一次，重新进入后就需要重新下载，有没有办法保持一下」。
+- **实现**：新增 `apps/miniprogram/utils/exam-export-cache.js`，把导出记录与两份 PDF 的持久本机路径按「账号 + 接口环境 + 试卷 id + 试卷更新时间」缓存；自行组卷按题目内容指纹区分，试卷更新、切换账号或文件丢失时不会误用旧文件。首次下载两份文件都成功持久化后显示「已保留在本机，下次进入这份试卷可直接打开」；重新进入同一试卷时直接恢复「试卷 PDF / 答案 PDF」两个打开入口，不再请求生成接口。「重新生成并下载」仍保留；缓存最多保留 6 份，淘汰或同卷重导时清理不再引用的本机文件。
+- **页面接入**：`pages/practice/practice.js` 在已发布试卷、规则组卷与自定义组卷初始化时恢复对应缓存；`practice.wxml` / `practice.wxss` 只增加本机保留提示，不改导出入口与按钮语义。下载失败时保留上一份可用记录，打开失效文件时清掉该条缓存并提示重新生成。
+- **验证（2026-10-17 本机）**：新增 `tests/exam-export-cache.test.js` **5/5**（账号/版本/内容隔离、保存恢复、临时文件拒绝、同卷替换清理、最多 6 份淘汰）；`tests/exams-page-flow.test.js` 新增真实页面往返契约「首次下载 → 重新进入 → 直接打开本机 PDF」；`exam-export-cache` + `exams-page-flow` + `exam-export` **13/13**；全量 `NODE_ENV=development npm test` **1936/1936，0 失败**。
+- **未验证（不冒充已验收）**：本机无微信运行环境，`wx.saveFile` 持久路径、杀死小程序后重新进入、真机 `wx.openDocument` 打开与淘汰清理均待产品负责人在开发者工具/真机确认；当前复用范围是同一账号同一设备本机，不承诺跨设备复用。
+- **边界**：未改变产品规则、导出内容、接口字段、鉴权或计费；未动 `.runtime` 正式数据、冻结金标与题库。若真机 `wx.saveFile` 因本机文件额度不足失败，本次下载仍可在当前页面打开，但不会显示「已保留」，避免把临时路径伪装成持久文件。
+
+## 2026-10-17｜DeepSeek｜引导页口径微调：报考年份收到 4 档、项目胶囊去掉地区副标题
+
+- **依据（原话）**：「1.这个地方只保留 4 年，比如今年是 25 年那就是 2025、2026、2027、2028，如果今年是 26 年则显示 2026、2027、2028、2029；2.去掉汉语言文学学科基础下方的广东·普通专升本，这个按钮的靠左，文案要居中，宽度要正常」（附引导页截图，红框圈住 6 颗年份胶囊）。
+- **口径变化（属于产品规则，先改手册再改代码）**：① 报考年份由「当年 ~ 当年+5（6 档）」收窄为「**当年与之后 3 年，共 4 档**」，跨年按新当年重算、不改历史已存值；② 目标考试项目胶囊只显示项目名，**不再显示「广东 · 普通专升本」副标题**，且与其它档位同一套样式（宽度随内容、文字居中，不整行拉满、不文字靠左）。产品手册 §9.2 第 3 条与第 6 条已同步改写。
+- **实现**：
+  - `apps/miniprogram/utils/onboarding-options.js`：`EXAM_YEAR_SPAN` 5 → **3**；`projectOptionsFromCatalog()` 不再产出 `sublabel`（只留 `id`/`label`）。
+  - `apps/api/src/user-auth-store.js`：`EXAM_YEAR_SPAN` 5 → **3**（服务端复核范围同步收窄；两端由契约用例钉住，防"客户端能选、服务端拒绝"）。
+  - `pages/onboarding/onboarding.wxml`：项目 chip 去掉 `chip-wide` 类与 `<text class="chip-sub">` 副标题，改走通用 `.chip`。
+  - `pages/onboarding/onboarding.wxss`：删除 `.chip-wide`（`min-width:100%` + `text-align:left`）与 `.chip-sub` 两条规则，胶囊统一 `text-align:center`、宽度随内容、多项目自动换行。
+- **验证（2026-10-17 本机）**：`tests/onboarding-page.test.js` 年份断言改为"恰好 4 档"并补 2025 年基线的跨年用例，`projectOptionsFromCatalog` 断言改为不带 `sublabel`，新增"项目胶囊走通用 `.chip`、不含 `chip-wide`/`chip-sub`、CSS 两条规则已删除、胶囊居中"一条；`onboarding-page` + `onboarding-profile` **20/20**（`onboarding-profile` 的边界年断言改为按 `EXAM_YEAR_SPAN` 动态计算，并新增"+1 年必须被拒"）；全量 `node --test tests/*.test.js` **1930/1930，0 失败**。
+- **未验证（不冒充已验收）**：真机/开发者工具上的实际观感——4 颗年份胶囊是否换行正常、长项目名胶囊宽度是否合适、文字是否居中，均待产品负责人确认（本机无微信运行环境，AGENTS §6 只到代码 + 契约层）。
+- **需要负责人做的事**：本轮改了 `apps/api/src/user-auth-store.js`，按 AGENTS §8 **必须由你在自己的终端重启 3212 进程**后服务端年份范围才收窄；未重启时是"新前端 4 档 + 旧后端 6 档"，只会更宽松、不会误拒。
+- **边界**：只改档位范围与胶囊样式，未改四项必填、隐私勾选、跳过浏览、提交字段集合与接口语义；未动 `.runtime` 正式数据、冻结金标与题库。
+
 ## 2026-10-17｜Codex｜试卷重复导出排障埋点与回归
 
 - **触发**：产品负责人真机反馈「试卷生成第一次正常，第二次报错」，界面只显示通用文案「试卷生成失败，请稍后重试」；同步反馈做题同步正常。
@@ -7376,6 +7449,362 @@
   - 测试：`tests/server-request-guard.test.js`（新增：注入一个必抛异常的 billingStore，断言该请求返回 500、随后 `/health` 与 `/api/admin/ai-config` 仍 200）；`tests/ai-provider-typesafe-systemone.test.js` 补一条「只有密钥 + 统一 Base URL/协议」的批量接入用例（产品负责人手上的清单形状）。
 - 验证：专项 `tests/ai-provider-typesafe-systemone.test.js` **3/3**、`tests/server-request-guard.test.js` **1/1**；后台 UI 逐项核验 `tmp/verify-provider-batch-ui.cjs` **45/45**（含按真实渲染核对批量弹窗的统一协议选项：5 项且含 `typesafe_systemone`）；静态后台测试 **298/298**；全量 **1859/1859**（`tmp/full-suite-batch-protocol-20261009.log`）。
 - 遗留：批量清单若是从文档复制、被换行截断（一把 key 拆成两行），预览会把两半各当一条条目——预览逐条显示掩码，需按行目视核对条数（本轮不做自动合并，避免把两把真 key 拼错）；批量导入仍没有「整批回滚」入口。
+
+
+## 2026-10-17｜Agent｜商品页退款入口接到《退款政策》文档；关于页图标统一；修窄屏机型设置页按钮重叠
+
+- 现场（产品负责人三连要求 + 截图）：①商品页「购买须知 · 退款说明」点开是硬编码弹窗（与后台「平台设置」里的 `refund` 文档双写）；②「关于我们」七份文档的图标风格与颜色不统一（线宽 1.5/1.8/2.2 混用，颜色有 `#343936`/`#474d49`/`#4f5752`/品牌绿/橙色填充，还借用了未登录头像与编辑器工具栏的图标）；③三星等窄屏机型上设置页顶部「重试同步 / 导出我的数据」两个按钮出现重叠（图3：`导出我的数据` 文字贴到边框外、与下一行「个人资产已同步」压在一起）。
+- 修改范围：
+  - `apps/miniprogram/pages/store/store.js`、`pages/store-order/store-order.js`：`openPurchaseNotice` 由 `wx.showModal` 硬编码文案改为 `wx.navigateTo({ url: "/pages/legal/legal?doc=refund" })`；未发布/读不到时由 legal 页如实显示「尚未发布 / 暂时读不到」，本页不再补写任何退款口径。
+  - `pages/store/store.wxml` + `store.wxss`：页脚原本写死的「套餐订单与赠送豆币分账…」改为可点入口「购买须知与退款政策 ›」（`.store-footnote-link`），消除与 `refund` 文档的双写；`pages/store-order/store-order.wxml` 入口文案改为「购买须知 · 退款政策 ›」。
+  - `apps/miniprogram/assets/icons/doc-*.svg`（新增 7 个）+ `utils/platform-content.js`：关于页七份文档改用专用图标组——`doc-terms`（文档）、`doc-privacy`（盾勾）、`doc-ai`（星火花）、`doc-refund`（文档＋回退箭头）、`doc-account-deletion`（人形加叉）、`doc-operator`（楼宇）、`doc-personal-info`（清单打勾）；统一 24 视口 / `stroke-width` 1.8 / `#474d49` / 圆角端点、不用色块填充，与仓库其它线性图标一致。**不改** `user-outline.svg`（未登录头像）、`format-magic.svg`（编辑器）、`sliders.svg` 等被别处复用的原文件。
+  - `pages/settings/settings.wxml` + `settings.wxss`：按钮文字加 `.sync-label`；`.sync-button` 补 `box-sizing: border-box`、`min-width: 0`、`flex-wrap: wrap`、`overflow: hidden`、`padding: 12rpx 16rpx`，`.sync-label` 允许在框内换行；新增 `@media (max-width: 360px)` 让两个按钮改竖排单列。根因是 button 默认不收缩也不允许内容换行，系统字体放大后内容比按钮宽，就画到框外压住下一行（不是"间距不够"）。
+  - 测试：新增 `tests/platform-doc-links-icons.test.js`（两处 `openPurchaseNotice` 都跳 `legal?doc=refund`、脚本里不再有写死退款文案、store 页脚不再写死口径；七份图标全部 `doc-*`、不重复、24 视口、`stroke-width` 1.8、`#474d49`、无填充）；`tests/settings-pages.test.js` 同步按钮结构断言（`sync-label`）并加按钮防溢出样式与窄屏单列断言。
+- 验证：专项 `platform-doc-links-icons` **2/2**、`settings-pages` **7/7**、`miniprogram-platform-content` **5/5**；用户端等价渲染逐项核对 `tmp/verify-about-icons-settings-buttons.js` **34/34 PASS**（真 `about.wxml`/`settings.wxml` 结构 + 真 WXSS + 真 svg 文件 + 真登记表数据；图标逐项读 `naturalWidth>0`、`offsetParent`、`opacity`、渲染尺寸全为 18×18；按钮在 375pt/320pt/×1、以及字号放大 2.2 倍的两种复现场景下，**先注入旧样式重现「导出我的数据」文字出框 + 横向溢出 5–6px，再恢复新样式核对：文字全部在按钮框内、按钮互不重叠、与「个人资产已同步」不相交、无横向溢出**；320pt 下为单列竖排；截图 `tmp/screenshots/about-icons-settings/`）。全量 `node --test tests\*.test.js` **1941 用例 / 1941 通过 / 0 失败**（第一次跑出现 1 条 `practice-page-flow` 的 `questionSwipeAnimating` 失败，该文件单独跑 5/5 通过、随后全量重跑 1941/1941 全绿，判定为并行负载下的定时器偶发，与本轮改动无关——本轮未触碰 `pages/practice/`）。
+- 遗留：**真机未验收**——本机没有微信运行环境，上述渲染是等价渲染（真模板结构 + 真 WXSS + 真图标文件），真机/开发者工具上的观感与点击仍归产品负责人确认；退款政策正文本身仍是草稿（`tmp/platform-content-drafts/refund.txt`），尚未通过后台「平台设置」发布，因此现在点开商品页入口会如实显示「尚未发布」。
+- **同日修正（产品负责人看真机后否掉竖排）**：上一版为防挤压把 `@media (max-width: 360px)` 下的两个按钮改成了单列，真机上变成「重试同步 / 导出我的数据」上下叠放，产品负责人明确不要（原话「变成上下叠放的了」）。改为**两个按钮始终同一行**：去掉单列规则，窄屏只把 `gap` 20→14rpx、`padding` 16→10rpx、字号 25→24rpx、图标 28→26rpx 各收一档，真放不下时由 `.sync-button` 的 `flex-wrap` 在框内换行（`overflow: hidden` 兜住，不再出框）。测试同步改为「窄屏不得出现 `grid-template-columns: 1fr`」＋窄屏压缩档断言（`tests/settings-pages.test.js` 7/7）；逐项可见性脚本扩到 6 个场景（375/360/320pt、360pt×1.4、375pt×2.2、320pt×2.2）**58/58 PASS**，每个场景都核「同一行并排 + 同行等高 + 互不重叠 + 文字在框内 + 无横向溢出」，其中两个 2.2 倍字号场景仍能先重现旧样式的文字出框、再验证修好；截图 `tmp/screenshots/about-icons-settings/settings-*.png`。**该文件上一条记录里的「320pt 下为单列竖排」与「34/34」已被本条取代**（竖排方案已废弃）。
+- **同日第二次修正（真机仍见重叠，改结构）**：产品负责人第三次截图显示，三星真机上右侧按钮整块**超出屏幕右缘**、底边压住下一行「同步未完成，本机内容已保留，请重试」。判定前两次都在跟 button 的内置盒模型较劲：小程序 `<button>` 自带 `padding`／`margin: auto`／行高，在 x5 内核上与作者样式叠加，`1fr` 轨道分不出正确宽度。改为**不再用原生 button**——`pages/settings/settings.wxml` 的两个动作换成 `view` + `role="button"` + `aria-label`/`aria-disabled`，禁用态用 `.sync-button-off`、loading 用文案「同步中…」，尺寸完全由本页 wxss 决定（`.sync-button` 保留 `min-width: 0`／`max-width: 100%`／`flex-wrap: wrap`／`overflow: hidden`）。测试改为断言「不再有 `<button class="sync-button">`」＋ `aria-disabled` 接线（`tests/settings-pages.test.js` **7/7**）；核对脚本改为**旧结构（button + 旧样式）重现缺陷 → 新结构（view）核对修好**，并把「按钮是否在屏幕内」「页面里是否还有原生 button 承担这两个动作」加为判据，6 场景 **70/70 PASS**（375/360/320pt、360pt×1.4、375pt×2.2、320pt×2.2；两个 2.2 倍场景能重现旧的文字出框，新结构下按钮右缘均 ≤ 屏宽）。
+- **同轮新增（第二项要求）**：`tmp/platform-content-drafts/personal-info.txt`——按真实字段拟的《个人信息收集清单》（登录与账号 / 自填资料 / 学习过程 / AI / 付费订单 6 类逐项写收集时机、用途、必需与否 + 不收集的信息 + 共享与委托处理 + 你的权利入口 + 保存期限），已加入 `publish-drafts.js` 的导入清单；正文尚未发布，仍待产品负责人填 `[运营主体全称]`、`[AI 服务商名称]`、`[云服务商名称]`、各类期限后经后台「平台设置」发布。
+
+## 2026-10-17｜Codex｜头像与昵称仍不弹出：停止替用户自动回答微信隐私授权
+
+- 现场：微信公众平台通知显示《用户隐私保护指引》已于 2026-10-17 审核通过，但真机上的头像选择菜单与昵称键盘候选仍未出现。
+- 根因：`apps/miniprogram/app.js` 在启动时注册了 `wx.onNeedPrivacyAuthorization`，并在收到微信原生询问后直接 `resolve({ event: "agree" })`。这条路径把微信自己的隐私授权弹窗吞掉了；在部分真机上，代码替用户“同意”并不等于原生授权已经完成，随后 `open-type="chooseAvatar"` 和 `input type="nickname"` 就会静默失败。
+- 修改：移除 `setupPrivacyAuthorization()` 与 `wx.onNeedPrivacyAuthorization` 接管，保留小程序自己的登录同意勾选；头像/昵称需要授权时由 `wx.requirePrivacyAuthorize` 触发微信原生弹窗，组件继续使用 `open-type="chooseAvatar"` 与 `type="nickname"`。本机 `shukao_privacy_agreed_v1` 标记只用于登录闸门，不再冒充微信侧授权结果。
+- 同日真机截图追加：编辑资料页点大头像和「更换头像」均无反应。根因继续收窄为“空内容的透明 button 覆盖在 view 上”在部分客户端收不到点击；现已把大头像与「更换头像」胶囊都改为**原生 `<button open-type="chooseAvatar">` 本体**，引导页头像圆也改为原生 button，不再使用透明覆盖层。样式显式锁死 width/height、margin/padding 与边框，保留原视觉尺寸。
+- 验证：`tests/onboarding-gate.test.js` 禁止再次注册 `onNeedPrivacyAuthorization`；`tests/profile-privacy-pickers.test.js` 锁定编辑资料页的两处头像入口与昵称输入类型；`tests/miniprogram-auth.test.js` 与 `tests/onboarding-page.test.js` 同步锁住“头像入口必须是原生 button、不得再有透明覆盖层”。本轮头像/隐私相关 11 项用例通过（2026-10-18，Node 测试环境）。**当前全量不报绿**：工作区另有未完成的引导页主按钮渐变改动，导致一条性别配色旧断言失败，与本轮头像修改无关。
+- 未验证：微信开发者工具与真机上的头像选择菜单、键盘上方“使用微信昵称”候选仍需上传最新体验版后验收；本机无法替代微信客户端。
+
+
+## 2026-10-18｜Codex｜编辑资料页大头像居中
+
+- 现场（产品负责人真机截图）：头像上传入口已经能打开，但「编辑资料」页的大头像偏在左侧，和下方居中的「更换头像」胶囊不在同一条中线上。
+- 根因：改成原生 `<button open-type="chooseAvatar">` 后，部分微信 WebView 会保留 button 的默认块级布局；父级 `.avatar-block` 的 `align-items: center` 不足以稳定把它居中。
+- 修改：`pages/profile-edit/profile-edit.wxml` 给头像按钮加 `.avatar-picker-wrap` 满宽容器；`profile-edit.wxss` 用 `display:flex + justify-content:center` 显式居中容器，头像按钮同时补 `display:flex`、`margin:0 auto`、`align-self:center`、`flex:none`、内部 `align-items/justify-content:center`，图片 `flex:none`。视觉尺寸仍为 152rpx，不改变采集方式与页面结构含义。
+- 验证：`tests/profile-privacy-pickers.test.js` **2/2**、`tests/miniprogram-auth.test.js` **4/4**；`tmp/verify-profile-avatar-centering.js` **6/6 PASS**（真实 wxml + wxss 渲染，375px 视口，头像按钮/图片/胶囊中心均为 187.5px，容器与按钮 flex 居中计算值逐项读到；截图 `tmp/verify-out/profile-avatar-centering.png`）。本机全量 `npm test` 为 **1952/1953**，唯一失败是 `tests/admin-user-management.test.js` 的已注销计数断言（期望 1、实际 0），与本轮头像布局无调用关系；该失败所在的工作区改动未由本轮触碰。**真机居中手感与头像选择菜单仍待产品负责人用最新体验版复核**。
+
+
+## 2026-10-17｜Agent｜注册引导表单三步化（一屏四问 → 每屏只问一件事）
+
+- 现场（产品负责人看真机截图后提出）：引导表单现在一屏塞了性别 / 年龄段 / 目标考试项目 / 报考年份，末尾还挂一个「头像与昵称（选填）」折叠块，读起来很挤。他的原话是「能不能拆成三个页面，即昵称、头像、性别一个页面，年龄一个页面、考试信息一个页面，这样是不是干净一点」，并给了一张参考截图（每步一屏、顶部「跳过」、底部大按钮）。
+- 修改范围：
+  - `apps/miniprogram/pages/onboarding/onboarding.js`：新增 `step`（1..3）与 `stepTotal`、`nextStep()`／`prevStep()` 与 `STEP_FIELDS` 映射（第 1 步校验性别、第 2 步校验年龄段、第 3 步校验项目 + 年份）；`submit()` 保持原样（`firstMissingField` 全量兜底）；删除 `optionalOpen` 与 `toggleOptional()`（折叠块消失），微信侧隐私授权改为**进入表单时**调一次 `ensurePrivacyAuthorization()`（原来挂在"展开折叠块"上）；`onHide` 把 `step` 复位到 1。
+  - `pages/onboarding/onboarding.wxml`：表单分支改成三步 `wx:if`/`wx:elif`/`wx:else`，头部为「‹ 上一步 ／ 三个进度圆点 ／ 跳过」，主按钮前两步「下一步」、第三步「开始使用」，底部一行步骤说明；头像选择行与昵称输入框移到第 1 步做主内容。
+  - `pages/onboarding/onboarding.wxss`：新增 `.step-header`/`.step-back`（第 1 步 `visibility: hidden` 占位，保证进度圆点居中不跳动）/`.step-dots`/`.step-dot`/`.step-skip`/`.step-note`/`.avatar-row-lead`；删除 `.optional-row`/`.optional-arrow`/`.optional-body`。
+  - 测试：`tests/onboarding-page.test.js` 新增「三步各只校验自己那几项、缺项不外发、回退保留已选、最后一步才提交」用例；4 条隐私授权用例由 `toggleOptional()` 改为直接驱动 `ensurePrivacyAuthorization()`。
+  - **为什么不是三个独立 page**：拆成三个页面会把"上一步"变成 `navigateBack`（退出引导流程、登录回跳与 `stage` 状态全断），第 2/3 步被冷启动打断还要重新拉 `/api/catalog`；同页内步骤切换既满足"每屏一件事"的观感，也保住 DEC-109 的"就地采集"与 `onboardingCompleted` 单一判定。
+- 验证：专项 `tests/onboarding-page.test.js` **19/19**、相关专项合集（onboarding-page/gate/profile + settings-pages + platform-doc-links-icons）**40/40**（2026-10-17）；逐项可见性脚本 `tmp/verify-onboarding-steps.js` 在 375pt／320pt／375pt×1.3 三档下对三步各核一次 **93/93 PASS**——每步逐项读 `getComputedStyle.display/visibility/opacity`、`offsetParent` 与实际尺寸，核"该显示的可见、不该出现的连 DOM 里都没有"（第 1 步不得有年龄段/项目/年份，第 2、3 步不得有头像/昵称/性别）、进度圆点亮的个数、主按钮与步骤说明文案、无横向溢出、主按钮在首屏内；截图 `tmp/screenshots/onboarding-steps/`。
+- 全量说明（本轮实测）：`node --test tests\*.test.js` **默认并发**这轮挂了（跑到 `mnemonics` 那批之后不再推进、CPU 归零；不是失败，是进程不退出）；为定位改成**逐文件串行**跑完全部 **223 个测试文件**——无一超时、无一失败，累计 **1946 用例 / 1946 通过 / 0 失败**（明细 `tmp/per-file-results.log`，脚本 `tmp/run-per-file.ps1`）。另试过 `--test-force-exit`：它会把 10 个文件判失败（`outbound-proxy`、`admin-backend-stale-banner` 等，单独跑都通过），属强退打断清理造成的假失败，**不要**用它判断绿红。结论：本轮改动相关用例全绿；全量请用串行方式复核。
+- 未验证：**真机未验收**——本机没有微信运行环境，上面是等价渲染（真 wxml 结构 + 真 WXSS + 真档位数据），真机上的面板高度、滑动/点击手感与键盘弹出表现仍归产品负责人确认。
+
+
+## 2026-10-17｜Agent｜注册引导三步的布局照参考图重排（去品牌行/去进度点/整体居中/按钮沉底）
+
+- 现场（产品负责人看真机截图后）：「三个页面的布局与我给你参考图不一样」。对比他给的参考图，差在四处：真机上还留着顶部品牌行（土豆 logo + 「薯考 / 汉语言文学题库」）、中间三个进度圆点、底部「第 N 步 / 共 3 步」小字，而且标题与选项全部左对齐、按钮紧跟内容。参考图是：顶部只有「‹ / 跳过」，标题居中、内容居中、大按钮沉在页面最底部。
+- 修改范围：
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml`：三步采集段删掉 `.sheet-brand` 品牌行、`.step-dots` 进度圆点、`.step-note` 步骤小字；顶部改为 `.step-header` 内只有左「‹」与右「跳过」；内容包进 `.step-body`，按钮包进 `.step-footer`。
+  - `pages/onboarding/onboarding.wxss`：`.onboarding-page-form` 改 flex 列、`.sheet` `flex: 1` + flex 列、`.step-body { flex: 1 }`（把按钮压到底部）、新增 `.step-footer`；标题 34→40rpx 且 `text-align: center`，说明居中；`.step-body .field-label`、`.chip-row { justify-content: center }`、`.avatar-row-lead { justify-content: center }`、`.optional-input` 改 30rpx 居中输入；删除 `.sheet-brand`/`.brand-mark`/`.brand-title`/`.step-dots`/`.step-dot`/`.step-note` 六条样式（`.brand-sub` 仍在登录页用）。
+- 验证：`onboarding-page` + `onboarding-gate` + `onboarding-profile` + `miniprogram-platform-content` + `logout-workspace` **51/51**（2026-10-17）；逐项可见性脚本 `tmp/verify-onboarding-steps.js` 判据重写后 **162/162 PASS**——三档屏宽（375／320／375×1.3）× 三步逐项核：DOM 里没有品牌行/进度圆点/步骤小字；标题与说明 `text-align: center` 且标题中心与页面中线偏差 ≤1.5px；性别/年龄/年份胶囊行 `justify-content: center`；头像行水平居中；昵称框 `text-align: center`；主按钮接近整宽、距视口底 ≤90px；无横向溢出；每步不该出现的控件连 DOM 都没有。截图 `tmp/screenshots/onboarding-steps/`。
+- 未验证：**真机未验收**——仍是等价渲染（真 wxml 结构 + 真 WXSS），真机上标题居中观感、按钮与底部安全区的距离、第 1 步弹出昵称键盘时按钮是否被顶起，都要产品负责人在开发者工具/真机确认。
+
+
+## 2026-10-17｜Agent｜注册引导第 1 步照参考图再改（上传头像圆 / 彩色性别胶囊 / 按钮不再贴底 / 去掉标题说明）
+
+- 现场（产品负责人看完上一版真机截图后）：「你要学习人家的样子，性别按钮是有颜色、带图标的，头像是一个圆，中间写着上头像。下一步的按钮不再最下面，上面的认识一下的说明文案不需要」。
+- 修改范围：
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml`：第 1 步去掉 `.sheet-title`「先认识一下」与那句说明；头像改成 `.avatar-upload` 一颗正圆（无头像时圆内是 `.avatar-camera` 相机图标 + 「上传头像」，有头像时整圆显示图片），原来「头像本体 + 选择头像胶囊」两个 `open-type="chooseAvatar"` 入口合并成覆盖整颗圆的一枚；性别改成 `.gender-row` 两颗等宽胶囊（带 ♂/♀ 图标，文案仍取 `genderOptions`），「不愿透露」移到下面 `.gender-extra` 一行的小胶囊。
+  - `pages/onboarding/onboarding.wxss`：新增 `.avatar-upload-row`/`.avatar-upload`（168rpx 正圆、`position: relative`）/`.avatar-upload-img`/`.avatar-camera`（纯 CSS 相机：边框画的机身 + 镜头圈，`::after` 出镜头）/`.avatar-upload-text`/`.gender-row`/`.gender-chip`（`flex: 1 1 0`、96rpx 高、胶囊圆角）/`.gender-icon`/`.gender-male.gender-chip-on`（`#3d8bfd`）/`.gender-female.gender-chip-on`（`#f0639b`）/`.gender-extra`；`.step-body` 去掉 `flex: 1`（按钮不再被压到底部）、`.step-footer` 改 `padding-top: 40rpx`；删除 `.avatar-row-lead`/`.avatar-row`/`.optional-avatar`/`.optional-avatar-fallback`/`.avatar-shot-wrap`/`.avatar-button-wrap`/`.avatar-button-label`/`.avatar-button*` 八条已无引用的样式。
+- 测试：`tests/onboarding-page.test.js` 头像用例由"两枚 picker"改为"整颗圆一枚 + 父容器必须 relative"，新增第 21 条用例锁定性别三档与配色（男蓝女粉整块上色、`flex: 1 1 0` 等宽、不得在 wxml 里另写「男生」、`undisclosed` 档位不得被删）。
+- 验证：`onboarding-page` **20/20**、相关专项合集（+ gate/profile/miniprogram-platform-content/logout-workspace/settings-pages/platform-doc-links-icons）**61/61**（2026-10-17）；逐项可见性 `tmp/verify-onboarding-steps.js` **210/210 PASS**——三档屏宽（375／320／375×1.3）× 三步逐项核：头像位 1:1 正圆且圆角≥半径、水平居中、圆内有相机图标、圆内写着「上传头像」且文字在图标下方；男/女同一行、等宽、不重叠、不超屏、胶囊圆角、各带 ♂/♀；选中「男」背景 `rgb(61,139,253)` 文字白色，未选「女」背景 `rgb(242,244,243)`；第 1 步 DOM 里根本没有标题与说明；主按钮距视口底 ≥150px（不再贴底）且与最后一项间距 ≤90px；无横向溢出。截图 `tmp/screenshots/onboarding-steps/`。
+- 未验证：**真机未验收**——① ♂/♀ 两个 Unicode 性别符号在个别安卓字体里可能缺字显示成方框；② 纯 CSS 相机图标在小尺寸下的清晰度；③ 整颗圆作为点击区的手感。以上都要真机看，缺字时改用 SVG 图标。
+
+
+## 2026-10-17｜Agent｜引导页性别去掉「不愿透露」（只留男/女两档）
+
+- 现场：产品负责人一句「去掉这个不愿透露」。
+- 修改范围（**只动展示层**）：
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml`：删掉 `.gender-extra` 那一行（原本渲染 `undisclosed` 的小胶囊）；性别行保留 `item.id !== 'undisclosed'` 过滤，页面只剩男/女两颗有色胶囊。
+  - `pages/onboarding/onboarding.wxss`：删掉 `.gender-extra` 样式块。
+  - `apps/miniprogram/utils/onboarding-options.js`：**档位定义里的 `undisclosed` 不删**，只加注释说明「页面不再展示，保留是为了历史账号能读回、且与服务端 `GENDER_CHOICES` 保持一致」。服务端 `apps/api/src/user-auth-store.js` **未改动**（因此本轮不需要重启 3212）。
+- 为什么档位不一起删：`undisclosed` 是历史账号可能已存的合法值，从 `GENDER_CHOICES` 拿掉会让这批用户的性别读回成空、`onboardingCompleted` 变 false，从而被重新拉去填引导；而契约用例断言客户端档位与服务端 `GENDER_CHOICES` 一一对应，两边一起动才算完整变更。本轮只按产品负责人的要求把这个选项从界面上拿掉。
+- 边界：新用户此刻只能在男/女之间选（性别仍必填）；已有 `undisclosed` 的老账号不受影响、不会被要求重填，界面上也不会为它高亮任何一颗胶囊。以后要把服务端也收窄成两档，须先改 `GENDER_CHOICES` 再同步 `GENDER_OPTIONS`，并处理历史值。
+- 验证：`tests/onboarding-page.test.js` **20/20**（性别用例改为"只渲染两档 + 必须按 id 过滤 + `gender-extra` 的标记与样式都不许再出现"）；相关专项合集 **59/59**（+ gate/profile/miniprogram-platform-content/logout-workspace/settings-pages）；逐项可见性 `tmp/verify-onboarding-steps.js` **213/213 PASS**——新增「`.gender-chip` 恰为 2 颗」「`#gender-extra` 在 DOM 里不存在」两条，其余判据（正圆头像 / 相机 + 上传头像 / 男蓝女粉整块上色 / 按钮不再贴底 / 无横向溢出）全部保持通过。
+- 未验证：真机上少掉一行之后的间距观感（截图见 `tmp/screenshots/onboarding-steps/`）。
+
+
+## 2026-10-17｜Agent｜「跳过」挪到主按钮下方 + 上传头像图标文字改主题绿
+
+- 现场（产品负责人在真机截图上圈了两处）：「跳过放到下一步下面」「这个上传头像里面图标和文字换成浅绿色，就我小程序的主题色」。右上角那个「跳过」实际上被微信右上角胶囊压住，既看不清也难点。
+- 修改范围：
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml`：`.step-skip`（跳过）从 `.step-header` 移到 `.step-footer`，跟在本步主按钮后面；`.step-header` 里只剩左边「‹」返回。
+  - `pages/onboarding/onboarding.wxss`：`.step-header` 去掉 `justify-content: space-between`（只剩一个子元素）；`.step-skip` 由"88rpx 宽 + 右对齐"改为 `margin-top: 28rpx` + `text-align: center`；`.avatar-camera` 机身边框与 `::after` 镜头圈由 `#a2aaa5` 改主题绿 `#0b9588`，`.avatar-upload-text` 字色同改 `#0b9588`。
+- 验证：`tests/onboarding-page.test.js` **21/21**——新增一条静态守卫：`.step-skip` 必须出现在 `.step-footer` 里、**不得**再出现在 `.step-header` 里，且必须 `text-align: center`；相机边框与上传文字必须是 `#0b9588`。相关专项合集 **60/60**。逐项可见性 `tmp/verify-onboarding-steps.js` **228/228 PASS**（三档屏宽 × 三步，新增：跳过 `top` ≥ 主按钮 `bottom`、跳过水平居中偏差 ≤1.5px、相机边框色算出 `rgb(11,149,136)`、上传文字色算出 `rgb(11,149,136)`；其余判据全部保持通过）。截图 `tmp/screenshots/onboarding-steps/`。
+- 未验证：**真机未验收**——跳过的间距手感、浅绿相机图标在浅灰圆底上的对比度是否够（不够就把圆底调更浅或图标加深一档）。
+
+
+## 2026-10-17｜Agent｜上传头像的相机图标改成实心剪影
+
+- 现场：产品负责人看着上一版截图说「不太一样，人家是这样的」，并给了一张参考图——**实心相机剪影**（实心机身 + 顶部取景凸起 + 镂空镜头环），我们上一版画的是细线框相机。
+- 修改范围（`apps/miniprogram/pages/onboarding/onboarding.wxss`，仍是纯 CSS、不引图片或字体图标）：
+  - `.avatar-camera`：`border: 3rpx solid #0b9588` → `background: #0b9588`，尺寸 44×34rpx → 48×38rpx，保留 `border-radius: 8rpx`。
+  - 新增 `.avatar-camera::before`：顶部取景凸起（18×8rpx，`top: -7rpx`，上圆角 3rpx，同色）。
+  - `.avatar-camera::after`（镜头）：由绿色描边改为 `border: 3rpx solid #f2f4f3`——**与 `.avatar-upload` 圆底同色**，做出镂空观感；直径 16→18rpx。代码注释已写明"改圆底色必须同步这里"。
+- 验证：`tests/onboarding-page.test.js` **21/21**——断言改为「`.avatar-camera` 必须 `background: #0b9588`」「**不得**再出现 `border: 3rpx solid`（防止退回线框那版）」「`::before` 凸起必须在」；相关专项合集 **53/53**。逐项可见性 `tmp/verify-onboarding-steps.js` **231/231 PASS**——相机改核「实心主题绿（`rgb(11,149,136)`）+ 镜头环与圆底同色（`rgb(242,244,243)`）+ 环宽度 > 0」，并额外出了局部放大图 `tmp/screenshots/onboarding-steps/zoom-avatar.png` 肉眼看形状。
+- 未验证：**真机未验收**——48rpx 宽的实心相机在真机（尤其 320pt 窄屏 + 系统字体放大）上是否因像素对不齐而显糊；必要时改用 SVG 图标并做两档尺寸。
+
+
+## 2026-10-17｜Agent｜头像上方加三行欢迎语 + 头像圆里铺土豆商标
+
+- 现场：产品负责人给了一张 biubiu 的引导页截图，说「头像上面加这样的一段话，类似红框」：`Hey~ / 欢迎来到薯考 / 完善你的资料，让别人更容易找到你`；并说「下面头像圆圈内替换成图 1（土豆商标），头像里有个上传头像的文案」。
+- 修改范围：
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml`：第 1 步 `step-body` 顶部新增 `.intro` 三行（`.intro-hey` / `.intro-title` / `.intro-note`，文案照产品负责人原文）；无头像分支由"纯 CSS 相机图标 + 「上传头像」"改为"土豆商标图 + 底部半透明压条 + 压条上的「上传头像」"。素材是 `/assets/logo-potato.jpg`（**是 jpg 不是 png**，登录页同一个文件；写错后缀真机会白图——本轮第一次就写错成 .png，被渲染校验的 `naturalWidth` 断言抓出来）。
+  - `pages/onboarding/onboarding.wxss`：新增 `.intro` / `.intro-hey` / `.intro-title` / `.intro-note` / `.avatar-upload-mask`；`.avatar-upload` 底色 `#f2f4f3` → `#eef4f3`（贴近素材那层浅青圆底，消掉"圆中圆"接缝）、去掉 `gap`（子元素已全部绝对定位）；`.avatar-upload-text` 改为压条上的白字（`position: absolute` 贴底、46rpx 高、`text-align: center`）；第五、六次调整画的相机图标整体删除（`.avatar-camera` 及其 `::before`/`::after` 三块样式全部移除）。
+  - 顺带修一个真机上同样会犯的溢出：`.optional-input` 撑满整宽却没写 `box-sizing: border-box`，左右各 28rpx 内边距把页面顶出 5–6px 横向滚动条 —— 本轮补上 `box-sizing: border-box; width: 100%`，渲染校验里新增"页面没有横向溢出"断言守住。
+- 验证：`tests/onboarding-page.test.js` **21/21**——性别/跳过/头像相关用例改写为：商标路径必须是 `logo-potato.jpg`、圆底必须有 `.avatar-upload-mask`、`.avatar-upload-text` 必须是 `#ffffff`、`.avatar-camera` 的样式与标记都不许再出现、欢迎语两行文案必须在 wxml 里；相关专项合集 **60/60**（+ gate / profile / miniprogram-platform-content / logout-workspace / settings-pages）。逐项可见性 `tmp/verify-onboarding-steps.js` 重写为第七版 **255/255 PASS**（3 档屏宽 × 3 步，每项都读 `getComputedStyle` / `getBoundingClientRect`）：新增「欢迎语三行文案 + 左对齐 + 在头像上方」「商标图片 `naturalWidth > 100`（真加载，不是空 alt）」「商标不溢出圆」「压条颜色算出 `rgba(0, 0, 0, 0.32)` 且贴圆底」「白字压在压条上」「页面无横向溢出」等判据；截图在 `tmp/screenshots/onboarding-steps/`。
+  - 附带修工具本身：渲染脚本原来放 1px 透明占位图，截图里只会出现 alt 文字，看不出真实观感 —— 改为用 `pathToFileURL` 加载真 jpg（路径含中文，必须编码，否则 Chromium 不加载外部图片）。另外本轮误用 `Set-Content -Encoding utf8` 把该脚本写成 BOM + GBK 乱码（AGENTS §8 明确禁止），已用 `write` 整文重写并确认 BOM=False / CRLF=0。
+- 未验证：**真机未验收**——168rpx 圆里土豆商标的清晰度、压条与白字的可读性、欢迎语三行在系统字体放大后的换行。
+- 待产品负责人确认的文案：第三行「让别人更容易找到你」是社交类产品措辞，与本产品"题库工具、不做社交"的定位有出入；若要换成「方便给你对题库和复习节奏」这类表述，改 `onboarding.wxml` 一行即可。
+
+
+## 2026-10-17｜Agent｜昵称框不再被压扁 + 头像换成他给的那张土豆
+
+- 现场：产品负责人看真机截图指出两处——「1.昵称被挤压」「2.头像跟我发给你的不是同一张图，见图 2」。
+- 问题 1（昵称被挤压）：`.step-body` 是 flex 列，`.optional-input` 作为 flex item 默认可收缩（`flex-shrink: 1`），页面内容一多就被压扁、文字上下被裁。
+  - 修法：`apps/miniprogram/pages/onboarding/onboarding.wxss` 的 `.optional-input` 改为 `flex: none` + 固定 `height: 96rpx` + `line-height: 96rpx` + 左右 `padding: 0 28rpx`（原来靠上下 padding 撑高，一旦被压缩就露馅）。
+- 问题 2（头像不是同一张图）：上一版引用的是 `/assets/logo-potato.jpg` —— 那是带浅灰圆底 + 白描边 + 投影的**商标版**（登录页那张，源自他 2026-09-2x 给的 1280 原图），并不是他要的纯土豆。
+  - 新素材：`apps/miniprogram/assets/potato-avatar.png`（512×512，125KB，在仓库「单图 ≤200KB」约束内）。
+  - 生成方式：写 `tmp/make-potato-avatar.py`（Pillow）——按非白像素包围盒紧裁 → 留 6% 边距补正方形 → 缩到 512 → 把**从图片边缘连通可达**的近白区域抠成透明（土豆内部高光不连通，因此不会被误抠）→ 蒙版模糊 1px 羽化除白边。
+  - 踩坑记录：①`ImageDraw.floodfill` 在本轮实测填不动（同一调用在独立脚本里能填 58%，在整脚本里返回 0%），改为显式逐轮膨胀判定连通性，行为可控且带轮数日志；②硬阈值直接转 alpha 那次只得到 16.8% 全透明 + 42% 半透明，圆底会透出色斑，同样改用连通判定解决。
+  - 引用改动：`onboarding.wxml` 的 `src` 改为 `/assets/potato-avatar.png`；`.avatar-upload` 圆底由 `#eef4f3` 回到 `#f2f4f3`（素材已透明，不需要再贴素材底色）。
+- 验证：`tests/onboarding-page.test.js` **21/21**——素材路径断言改为 `potato-avatar.png`，新增两条守卫「`.optional-input` 必须 `flex: none`」「`.optional-input` 必须固定 `height: 96rpx`」；相关专项合集 **60/60**。逐项可见性 `tmp/verify-onboarding-steps.js` **258/258 PASS**（3 档屏宽 × 3 步），新增「昵称框高度实读 ≥ 设计 96rpx」三档各一条（实读 48.0 / 41.0 / 62.4 px，分别对应 375 / 320 / 375×1.3）；头像相关判据（真图片 `naturalWidth > 100`、不溢出圆、压条 `rgba(0,0,0,0.32)` 贴圆底、白字压在压条上）全部保持通过。截图 `tmp/screenshots/onboarding-steps/`。
+- 未验证：**真机未验收**——土豆在 168rpx 圆里的清晰度（512 源图缩到 84pt 显示，理论上够）、压条与白字可读性、昵称框在系统字体放大后的垂直居中。
+
+
+## 2026-10-17｜Agent｜第 2 步改成选生日 + 第 2/3 步顶部进度条 + 第 1 步整体下移
+
+- 现场（产品负责人三条）：「1.第二步改成生日，如图1」「2.加个进度条第二步和第三步的顶部，如图2」「3.头像上面可以多留点空白，整体下移一点点」。
+- ①**第 2 步：年龄段 → 生日三列滚轮**
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml`：原 `ageBandOptions` 胶囊行整段替换为 `<picker-view>` + 三个 `picker-view-column`（年 / 月 / 日），标题改「你的生日是哪一天？」，说明改「生日只用来把你归到同龄段，不会公开展示。」，滚轮下方加一行已选回显。
+  - `pages/onboarding/onboarding.js`：新增 `BIRTH_YEAR_START`(1940) / `DEFAULT_BIRTH_YEAR`(2000) / `daysInMonth()` / `ageBandFromBirthday()` / `initBirthdayWheels()` / `onBirthdayChange()`；`STEP_FIELDS[2]` 由 `ageBand` 改为 `birthday`。
+  - `apps/miniprogram/utils/onboarding-options.js`：`ONBOARDING_FIELDS` 第 2 项 key 由 `ageBand` 改为 `birthday`、label 改为「生日」（提示语随之变成「请先选择生日」）；`onboardingPatch` **保持不变**，仍发 `ageBand`。
+  - **关键取舍**：滚轮初始停在 2000-01-01，但 `birthday` 初始是空串——不动滚轮就当作"还没选"，**不把默认值当真实生日写进账号**；滚动后按 `birthday` 换算 `ageBand` 一并 setData。服务端契约零改动 → **本轮不需要重启 3212**。
+  - 服务端目前**不保存生日**（`user-auth-store.js` 白名单里没有 `birthday`），已登记 `docs/OPEN_DECISIONS.md` §1.28 待产品负责人定。
+- ②**进度条**：`onboarding.wxml` 在 `.step-header` 之后、`.step-body` 之前加 `.step-progress`（`wx:if="{{step > 1}}"`，三段 `.step-progress-bar`，`item <= step` 加 `.step-progress-on`）；`onboarding.wxss` 新增 `.step-progress`（flex + 16rpx gap + 左右 44rpx 内边距）、`.step-progress-bar`（`flex: 1 1 0`、8rpx 高、圆角 999rpx、`#e8ecea`）、`.step-progress-on`（`#0b9588`）。
+- ③**整体下移**：`.intro` 的 `margin-top` 由 20rpx 改为 56rpx。
+- 验证：
+  - `tests/onboarding-page.test.js` **21/21**：新增 `pickBirthday(page, year, month, day)` helper（按真实 `bindchange` 形状喂索引），把 5 处 `tap(page, "ageBand", …)` 全部替换；`firstMissingField` 断言改「第 2 项是 `birthday`」；新增「第 2 步未选提示生日」「选 2007-03-02 → `birthday` 与 `ageBand("19_22")` 都对」。
+  - 逐项可见性 `tmp/verify-onboarding-steps.js` **279/279 PASS**（3 档屏宽 × 3 步）：新增 4 条——第 1 步无进度条；第 2/3 步各三段且点亮段数 = 步号；第 2 步是三列滚轮且有固定高度（300rpx）；滚轮下方有生日回显。同时把「主按钮距视口底 ≥150px」放宽到 ≥60px（第 2 步内容变高后按钮自然下移，"紧跟内容"由另一条判据守着）。
+  - 渲染脚本额外注入两段**仅用于等价渲染**的样式（`picker-view` 三列横向等宽 + 容器裁切），因为它是小程序原生组件、浏览器没有对应布局；已注明不进小程序代码。
+- 未验证：**真机未验收**——`picker-view` 的滚动手感与吸附、`indicator-style` 两条细线位置、默认停在 2000 年是否会让用户误以为"已填生日"。
+- 文档：`docs/modules/01-identity-auth.md` §6 新增第九条；`docs/OPEN_DECISIONS.md` 新增 §1.28（生日是否落库 / DEC-109 表述是否同步）。
+
+
+## 2026-10-17｜Agent｜生日落库、不再换算年龄段；第 2 步文案布局照参考图 1；第 1 步只下移头像及以下
+
+- 现场（产品负责人在第九次调整后追加两条修正）：
+  - 「1.不是全部整体下移，头像和头像以下的下移，所以你把文字上移回去就行」
+  - 「2.首先生日的文案和图标布局也要模仿，其次是既然能保存具体生日，那就不再需要换算年龄段」
+- ①**第 1 步下移范围收敛**：`apps/miniprogram/pages/onboarding/onboarding.wxss` 的 `.intro` 的 `margin-top` 从 56rpx **回到 20rpx**（欢迎语回原位），下移量挪到 `.avatar-upload-row` 的 `margin-top: 64rpx`——只有头像及其以下（昵称框 / 性别胶囊 / 按钮 / 跳过）一起下移。
+- ②**第 2 步文案与图标照参考图 1**：`onboarding.wxml` 把 `.sheet-title`/`.sheet-note` 换成 `.birthday-head`（内含 `.birthday-title`「遇见同龄人」+ `.birthday-emoji`「🎉」+ `.birthday-subtitle`「你的生日是哪一天？」），滚轮下方换成居中的 `.birthday-privacy`「生日信息和年龄会为你保密，他人不可见」；`onboarding.wxss` 新增 `.birthday-head`（左对齐、左右 44rpx）、`.birthday-title`（52rpx/700）、`.birthday-emoji`（44rpx）、`.birthday-subtitle`（30rpx 灰）、`.birthday-privacy`（24rpx 灰、居中），删除 `.birthday-hint`；`.wheel-item` 补 `width: 100%` 让每行文字真正居中。第 2 步不再用居中的 `.sheet-title`/`.sheet-note`（那两个只留给第 3 步）。
+- ③**生日落库、取消年龄段换算**（本轮唯一改口径的改动，依据产品负责人原话）：
+  - 服务端 `apps/api/src/user-auth-store.js`：新增 `normalizeBirthday(value, now)`——只收 `YYYY-MM-DD`，用 `Date.UTC` 逐段回读校验"日期真实存在"（`2000-02-30`、`2000-13-01` 一律拒绝），范围 `[1940-01-01, 今天]`（未来日期拒绝）；新增读路径兜底 `normalizeBirthdayOrBlank()`（老数据/脏数据读出来不抛错，当未填）。
+  - `onboardingCompleted(user)` 由「性别 + ageBand + 项目 + 年份」改为「性别 + **birthday** + 项目 + 年份」。
+  - `publicUser` 增加 `birthday` 投影；`initialState` 的新账号增加 `birthday: ""`；`updateProfile` 的白名单、校验、落库三处都加上 `birthday`。
+  - `apps/api/src/server.js`：资料更新接口的字段白名单加 `birthday`，400 错误码清单加 `birthday_invalid`。
+  - 客户端 `apps/miniprogram/utils/onboarding-options.js`：`onboardingPatch` 发 `birthday`（不再发 `ageBand`）；`apps/miniprogram/pages/onboarding/onboarding.js` 删除 `ageBandFromBirthday()` 与 `AGE_BAND_OPTIONS` 依赖、删除 `data.ageBand`/`ageBandLabel`，`ERROR_TEXT` 加 `birthday_invalid: "生日不在可选范围内，请重新选择"`。
+  - `ageBand` 字段保留（老账号仍有值、接口继续回传），只是不再参与必填判定、也不再由生日反推。
+- 验证：
+  - `tests/onboarding-page.test.js` **21/21**：patch 断言改为发 `birthday`；`data.birthday` 字符串约定断言取代 `data.ageBand`；三步用例改为「选 2007-03-02 → `birthday === "2007-03-02"`」。
+  - `tests/onboarding-profile.test.js` **5/5**：round-trip / 清空 / 原子性三处改用 `birthday`，并新增 6 条生日非法取值（格式、假日期、过早、未来）。
+  - `tests/onboarding-gate.test.js` 7/7、`tests/auth-profile-api.test.js` 4/4、`tests/profile-privacy-pickers.test.js` 2/2、`tests/settings-pages.test.js` 7/7、`tests/miniprogram-platform-content.test.js` 5/5。
+  - 逐项可见性 `tmp/verify-onboarding-steps.js` **300/300 PASS**（3 档屏宽 × 3 步）：新增 14 条针对第 2 步布局的判据（大标题左对齐且含「遇见同龄人」、🎉 可见、副标题文案与字号小于标题且位于其下方、滚轮在标题区下方、保密小字文案与居中）；同时把「标题居中」判据收窄为只对第 3 步生效（第 2 步按参考图是左对齐）。
+- **必须重启 3212**：改了 `apps/api/src/**`（AGENTS §8）。重启前旧后端不认 `birthday`，提交会返回 `profile_patch_required`。
+- 已知缺口：2026-10-17 之前完成引导的老账号只有 `ageBand`、没有 `birthday`，会被要求重填第 2 步；处理选项见 `docs/OPEN_DECISIONS.md` §1.28 遗留一。
+- 未验证：**真机未验收**——`picker-view` 滚动手感与吸附、`indicator-style` 两条细线位置、默认停在 2000 年是否让人误以为已填、🎉 在低版本安卓上的字形。
+
+
+## 2026-10-17｜Agent｜生日滚轮选中框加高 + 每行改 flex 居中；「后面要做社交了」登记为待定范围
+
+- 现场（产品负责人真机截图 + 参考图）：「1.后面要做社交了」「2.这个地方字有点没居中」「而且上下可以高一点的，这个选中框，你看这个图」（红框圈的是参考图右上角的「跳过」+ 选中行）。
+- ①**选中框加高**：`apps/miniprogram/pages/onboarding/onboarding.wxss` 的 `.wheel-item { height }` 与 `onboarding.wxml` 的 `indicator-style` 高度**同步**由 88rpx → **112rpx**（两者必须相等，否则选中框与行会错位）；`.birthday-wheel { height }` 由 300rpx → **336rpx**（按 3 行给）。
+- ②**文字居中方式修正**：`.wheel-item` 原来靠 `line-height: 88rpx` 居中——`line-height` 的居中点受中文字体 ascent/descent 影响，真机上看着偏上；改为 `display: flex; align-items: center; justify-content: center` 并去掉 `line-height`/`text-align`，与指示框严格对齐。
+- ③**产品方向登记**：他说「后面要做社交了」——这推翻了产品手册 §1.4 非目标里「首期不做私信/关注/好友」这条已确认口径，属重大取舍（AGENTS §4/§5），已登记 `docs/OPEN_DECISIONS.md` §1.29（C24）等他给范围（社交形态、生日/年龄可见性、陌生人边界、与"工具"定位的关系、数据归属）。**在此之前不改任何社交功能代码，也不改产品手册 §1.4 与 `docs/PRODUCT.md` §1 的定位正文**。此前我在交付里把「遇见同龄人」「让别人更容易找到你」标成"社交措辞与定位有出入"，这两处提醒**作废**，文案继续保留。
+- ④**参考图右上角的「跳过」未跟进**：当前实现仍是第五次调整他要求的「放到下一步下面」（右上角会被微信胶囊遮挡），本轮未动。
+- 验证：`tmp/verify-onboarding-steps.js` **258/258 PASS**（3 档屏宽 × 3 步）。新增 5 条滚轮行判据：行高实读 ≥ 设计值、行是 flex 容器、`align-items: center`、`justify-content: center`、`line-height` 回到 `normal`。
+- **事故与修复（必须记账）**：本轮用 `Set-Content -Path ... -Encoding utf8` 改这个核对脚本的断言文案，直接把脚本写坏——`Get-Content -Raw` 按 GBK 解码 UTF-8 正文，再以 UTF-8 写回，中文变成 `銆?`/`鈥?` 这类不可逆乱码（部分字节被替换成 `?`），脚本 `SyntaxError`。这**正是 AGENTS §8 明令禁止的写法**，我违反了。核对脚本未被 git 追踪、无法回滚，只能按原有判据**整体重写**：条目从 315 变为 258（结构更紧凑，判据类别未减），并补上两处此前缺的细节——必须从 `file://` 打开页面才能加载 `file://` 头像图（`about:blank` 下 `naturalWidth` 恒为 0）；本机 Playwright 自带 Chromium 版本目录缺失，需指定系统 Chrome 的 `executablePath`。此后所有文本改动只用 `edit`/`write`，不再碰 `Set-Content`。
+- 未验证：**真机未验收**——112rpx 选中框与文字的实际对齐、滚轮吸附手感、🎉 字形。
+
+
+## 2026-10-17｜Agent｜生日滚轮再放松：行间距加大、副标题到滚轮留更多白
+
+- 现场（产品负责人：「是不是这个行间距可以拉得再看点，然后这个年月日距离上方文案要留更多白，你看图 2 会更轻盈一点，我喜欢那种感觉」）：给了两张对比图，参考图的行更松、选中框上方到文案的空白明显更大。
+- 改动（都是 `apps/miniprogram/pages/onboarding/` 内的样式与行高，均为可逆样式调整）：
+  - `onboarding.wxss`：`.wheel-item { height }` 112rpx → **120rpx**；`.birthday-wheel { height }` 336rpx → **400rpx**（3.3 行，上下各露一点渐隐，和参考图一样不是整数行）；`.birthday-wheel { margin-top }` 32rpx → **76rpx**（拉开"年月日"与副标题之间的白）。
+  - `onboarding.wxml`：`indicator-style` 高度与 `.wheel-item` **同步**改 120rpx（两者不等会让选中框和行错位）。
+- 验证：`tmp/verify-onboarding-steps.js` **258/258 PASS**（3 档屏宽 × 3 步）——行高实读 = 设计 120rpx、选中行仍是 flex 居中、主按钮仍不贴底（第 2 步内容整体变高后，320 窄屏下按钮距底仍 ≥ 60px）。
+- 未验证：**真机未验收**——400rpx 滚轮在 320 宽小屏上是否挤到主按钮、渐隐过渡的自然程度。
+
+
+## 2026-10-17｜Agent｜三段进度条移到底部并等比缩小
+
+- 现场（产品负责人红框圈住顶部进度条 + 红箭头指到页面底部）：「把这个进度条移动到底部把，然后不用这么大，可以适当等比例缩小」。
+- 改动：
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml`：`.step-progress` 从 `.step-header` 之后移到 `.step-footer` 末尾（顺序：hint → 主按钮 → 跳过 → 进度条），成为内容区最底；第 1 步仍不渲染（`wx:if="{{step > 1}}"`）。
+  - `apps/miniprogram/pages/onboarding/onboarding.wxss`：`.step-progress` 的 `padding` 由 `8rpx 44rpx 0` 改为 `0 150rpx`（左右各留 150rpx，三段实际跨度 ≈ 60%），`gap` 16rpx → **12rpx**，`margin-top` 设为 36rpx（与「跳过」之间）；`.step-progress-bar` 的 `height` 8rpx → **6rpx**。
+- 验证：`tmp/verify-onboarding-steps.js` **282/282 PASS**（3 档屏宽 × 3 步）。新增 4 条：进度条在「跳过」下方、三段实际跨度 ≤ 屏宽 70%（实读 331×0.6 ≈ 183px，容器盒宽不计 padding）、整体厚度 ≤ 10px、没有掉出首屏。原「第 1 步没有进度条」与「点亮段数 = 步号」继续通过。
+- 未验证：**真机未验收**——6rpx 细条在低端机上的可见度、进度条与屏幕底边之间的留白观感（现在是跟内容走、不贴底）。
+
+
+## 2026-10-17｜Agent｜第 1 步补性别说明行、男选中色改主题绿、进度条沉底并与「‹」/胶囊对齐
+
+- 现场（产品负责人三张截图 + 三句要求）：「1.图2学图1这里插入红框这行字，字的颜色与跳过一致」「2.把男的按钮颜色改成和下一步按钮意义的绿色」「3.图3进度条上移到底部和左右两个红框对齐」。
+- 改动：
+  - ①**性别说明行**：`apps/miniprogram/pages/onboarding/onboarding.wxml` 在 `.gender-row` 之后新增 `<view class="gender-note">* 注册成功后性别不可随意修改哦</view>`；`onboarding.wxss` 新增 `.gender-note { margin-top: 16rpx; font-size: 24rpx; line-height: 1.5; color: #8a938d; text-align: center }`——`#8a938d` 正是 `.step-skip`（「跳过」）的颜色值。
+  - ②**男选中色改主题绿**：`.gender-male.gender-chip-on` 的 `background` 由 `#3d8bfd`（蓝）改为 **`#0b9588`**，与 `.primary-button`（「下一步」）同一主题色；女选中态 `#f0639b`（粉）本轮未动。
+  - ③**进度条沉底 + 对齐**：`onboarding.wxml` 把 `.step-progress` 从 `.step-footer` 内部移出，成为 `.sheet` 的最后一个子元素（顺序：header → body → footer（hint／主按钮／跳过）→ 进度条）；`onboarding.wxss` 的 `.step-progress` 改为 `margin-top: auto; padding-top: 24rpx`（去掉上一轮的 `0 150rpx` 左右内边距）——`margin-top: auto` 在 `.sheet` 这个 flex 列里把它顶到页面底部，左右直接吃 `.sheet` 的 44rpx 内容边距，与左上「‹」左边缘、右上微信胶囊右边缘对齐。条身仍 6rpx、段间距 12rpx（上一轮缩小的尺寸保留）。
+- 测试：`tests/onboarding-page.test.js` **21/21**。断言的性别选中色由 `#3d8bfd` 改为 `#0b9588`，并新增三条静态守卫：男选中色必须等于 `.primary-button` 的背色、说明行文案存在、`.gender-note` 与 `.step-skip` 同为 `#8a938d`（防止将来只改其中一处）。
+- 逐项可见性：`tmp/verify-onboarding-steps.js` **324/324 PASS**（3 档屏宽 × 3 步）。新增判据 14 条——说明行可见／文案精确／颜色 `rgb(138,147,141)`／与「跳过」同色／居中／在性别胶囊下方／在主按钮上方；男选中色 = 主按钮色 = `rgb(11,149,136)`；进度条左边缘 ≈ 44rpx（实读 22px@375）、右留白 ≈ 44rpx、三段跨度 ≥ 屏宽 80%、条身 ≤ 6px、距底 ≤ 60px、不掉出首屏。
+- 未验证：**真机未验收**——①进度条与微信胶囊右边缘是否真的齐平（胶囊位置由微信控制，页面只能按 44rpx 内容边距对齐）；②第 1 步多一行说明后，主按钮与「跳过」在小屏上是否仍不贴底；③女选中态还是粉色，是否也要改绿等产品负责人确认。
+
+
+## 2026-10-17｜Agent｜第 3 步整体左对齐 + 目标考试项目与上方文案拉开
+
+- 现场（产品负责人第 3 步真机截图 + 红框）：「1.文案和按钮左对齐」「2.目标考试项目与上方文案留出更多空白」。
+- 改动（`apps/miniprogram/pages/onboarding/onboarding.wxss`，纯样式）：
+  - `.sheet-title`、`.sheet-note` 的 `text-align`：`center` → **`left`**。
+  - `.step-body .field-label` 的 `text-align`：`center` → **`left`**。
+  - `.chip-row` 的 `justify-content`：`center` → **`flex-start`**（项目胶囊与年份胶囊都从左边起排，左边缘与主按钮同一条竖线）。
+  - 新增 `.sheet-note + .field-group { margin-top: 56rpx }`，把「目标考试项目」与上方说明之间的空白从 22rpx 拉到 56rpx。
+  - 影响面核对：`.sheet-title` / `.sheet-note` 只在第 3 步使用（第 2 步是独立的 `.birthday-title` / `.birthday-subtitle`，本来就左对齐），第 1 步不受影响。`apps/miniprogram/pages/onboarding/onboarding.wxml` 本轮无需改动。
+- 测试：`tests/onboarding-page.test.js` **21/21**、`tests/onboarding-gate.test.js` **7/7**（两者都没有钉死第 3 步的对齐方式，无需改断言）。
+- 逐项可见性：`tmp/verify-onboarding-steps.js` **339/339 PASS**（3 档屏宽 × 3 步）。第 3 步的「居中」判据整组替换为左对齐 6 条：标题左对齐且左边缘 = 内容边距、说明左对齐、标题与主按钮左边线差 ≤ 1px、说明与主按钮左边线差 ≤ 1px、项目/年份胶囊 `justify-content: flex-start`、年份行左边缘 ≈ 44rpx；另加一条「项目区与上方说明之间留白 ≥ 20rpx」。
+- 未验证：**真机未验收**——4 颗年份胶囊（2026 年（今年）/2027/2028/2029）在 375 宽下是否仍排成一行：浏览器等价渲染里第 4 颗会换到第二行，而产品负责人的真机截图是一行，判断为字体度量差异；若真机也换行，缩小 `.chip` 的左右 padding 或字号即可，等他确认。
+
+
+## 2026-10-17｜Agent｜年份胶囊去掉「（今年）」后缀
+
+- 现场（产品负责人第 3 步真机截图，红框圈住「（今年）」）：「去掉这个今年」。
+- 改动：`apps/miniprogram/utils/onboarding-options.js` 的 `examYearOptions()`——当年那一档的 label 由 `` `${year} 年（今年）` `` 改为与其它三档一致的 `` `${year} 年` ``；四档现在一律只显示「YYYY 年」。档位数量（4 档 = 当年 + 之后 3 年）与 `id`（`"2026"` 这类纯年份字符串）不变，服务端 `user-auth-store.js` 的 `EXAM_YEAR_SPAN` 同口径未动，因此**本轮不需要重启 3212**（没碰 `apps/api/src/**`）。
+- 顺带效果：少两个字后，4 颗年份胶囊在 375 宽下确定能排成一行，上一轮记录的「第 4 颗可能换行」风险自动消解。
+- 测试：`tests/onboarding-page.test.js` **21/21**。原断言「第一档 label 含『今年』」反向改为：四档 label 精确等于 `["2026 年","2027 年","2028 年","2029 年"]`，且任何一档都不含「今年」、不含任何括号后缀（防止将来又加回来）。
+- 逐项可见性：`tmp/verify-onboarding-steps.js` **339/339 PASS**（3 档屏宽 × 3 步，5 次运行结果一致）。
+- 未验证：**真机未验收**——去掉后缀后四颗胶囊的实际排布（模拟渲染已是一行）、以及用户对「当年」这一档是否还能一眼认出（现在与其它三年视觉上无差别）。
+
+
+## 2026-10-17｜Agent｜进度条回到顶部，与「‹」和微信胶囊同一水平带
+
+- 现场（产品负责人更正上一轮判断）：「这里刚说错了，是进度条等比例缩小然后上移到顶部和上一步按钮以及右边的按钮一起对齐」，并附红框（左圈「‹」、右圈胶囊、底部圈进度条）+ 红箭头由进度条指向顶部。
+- 改动：
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml`：`.step-progress` 由「`.sheet` 末尾」移入 `.step-header` 内部，成为「‹」之后的 flex 兄弟；`wx:if="{{step > 1}}"` 与「第 1 步不显示」的口径不变。
+  - `apps/miniprogram/pages/onboarding/onboarding.wxss`：`.step-progress` 改为 `flex: 1 1 auto; display: flex; align-items: center; gap: 12rpx; min-width: 0; margin-left: 24rpx; margin-right: 200rpx`，去掉上一轮的 `margin-top: auto` 与 `padding-top: 24rpx`。`margin-right: 200rpx` 是让出的微信胶囊区（约 175rpx 胶囊宽 + 20rpx 右距 + 余量）。`.step-header` 本身已是 `display: flex; align-items: center; height: 88rpx`，无需改；进度条与「‹」共处一行，垂直中线自动对齐。
+  - 条身尺寸不变：6rpx 高、12rpx 段间距、三段等宽、走过/当前段 `#0b9588`、未到段 `#e8ecea`。
+- 验证：`tmp/verify-onboarding-steps.js` **339/339 PASS**（3 档屏宽 × 3 步）。进度条判据整组替换为 7 条：与「‹」中线差 ≤ 3px、`top ≤ 140px`（确认在顶部）、左端 ≥「‹」右边缘、右留 ≈ 244rpx（200rpx 自留 + 44rpx 内容边距，三档实读 122/104/159px 全部符合）、三段跨度合理、条身 ≤ 6px、不再压在底部按钮区。`tests/onboarding-page.test.js` **21/21**、`tests/onboarding-gate.test.js` **7/7** 未受影响。
+- 未验证：**真机未验收**——进度条右端与微信胶囊左边缘的实际间距（胶囊宽度随机型与微信版本略有差异，200rpx 是留余量的估值）；若某机型上仍与胶囊重叠或离得太远，按该机型实测调整 `margin-right`。
+
+
+## 2026-10-17｜Agent｜生日的月、日两列改成循环滚动（重复 5 份 + 中段起点）
+
+- 现场（产品负责人真机截图圈住月/日两列）：「月日做个循环滚动」。
+- 改动：
+  - `apps/miniprogram/pages/onboarding/onboarding.js` 新增常量 `WHEEL_LOOP_COPIES = 5`、`WHEEL_LOOP_MIDDLE = 2`、`MONTHS_PER_YEAR = 12`。
+  - `initBirthdayWheels()`：月列数据重复 5 份（60 项）、日列重复 5 份（当前月天数 × 5，默认 2000-01 即 31×5 = 155 项），初始索引停在中段 `[年索引, 24, 62]`（即 2000-01-01）。年列仍为 1940→今年单份，不循环。
+  - `onBirthdayChange()`：取模还原真实值——`month = (monthIndex % 12) + 1`；`day = (dayIndex % 变化前天数) + 1` 并按当月天数夹住。只有"当月天数变了"才重建日列并把选中日停到中段；天数没变则保留用户所在索引（否则会把滚到第 4 份的用户硬拉回第 3 份，产生跳动）。`birthday` / `birthdayLabel` 的语义与 `YYYY-MM-DD` 格式不变。
+  - `data` 新增 `birthDaySpan`（当前日列一天数），用于判断是否需要重建日列。
+- **限制（如实记录，不夸大）**：微信 `picker-view` 没有 `circular` 属性，原生不支持首尾相接。这是"数据重复 5 份 + 初始停中段"的近似方案——上下各能连滚 2 份（月 = 24 个月、日 = 2 个整月），滚到最外一份仍会停住，不是数学意义上的无限循环。要真正无限滚动只能改用 `scroll-view` 自绘三列（工作量与回归面都大得多），等他明确要求再做。
+- 验证：
+  - `tests/onboarding-page.test.js` **21/21**：`pickBirthday()` helper 改为 `indexOf(month, 12 * 2)` / `indexOf(day, birthDaySpan * 2)` 落到中段。
+  - `tests/onboarding-profile.test.js` **5/5**、`tests/onboarding-gate.test.js` **7/7**、`tests/auth-profile-api.test.js` **4/4**、`tests/profile-privacy-pickers.test.js` **2/2**、`tests/settings-pages.test.js` **7/7**、`tests/miniprogram-platform-content.test.js` **5/5**。
+  - 一次性行为脚本 `tmp/check-wheel-loop.js`（纯 JS 驱动页面逻辑，无需 Playwright）覆盖 6 组：①同一数字在 5 份里都还原成同一月份；②闰年 2 月 29 日可选中；③1 月 20 日切 2 月仍是 20 日；④1 月 31 日切 2 月夹到 29 日；⑤同一日号连滚 3 份不错位；⑥越界索引 `[999,999,9999]` 被夹住且仍产出合法生日（实测 `2026-12-31`）。
+  - 逐项可见性 `tmp/verify-onboarding-steps.js` **339/339 PASS**（wxml 未改，滚动行为不在等价渲染范围内）。
+- 未验证：**真机未验收**——上下滑动的连续感、吸附手感，以及滚到最外一份到底时用户的感知（理论上要滚 24 个月 / 2 个整月才会触到）。
+
+
+## 2026-10-17｜Agent｜顶部那行改成按微信胶囊实测矩形对齐
+
+- 现场（产品负责人真机截图 + 红线）：「实际效果没有对齐」——进度条比微信胶囊和「‹」都低一截，且右端伸到胶囊底下。
+- 根因：上一轮把 `.step-header` 写死 `height: 88rpx`、把胶囊让位写死 `margin-right: 200rpx`。各机型的状态栏高度、胶囊高度与上下留白都不同（截图这台机的胶囊中线明显高于 88rpx 行的中线），写死必然错位。
+- 改动：
+  - `apps/miniprogram/pages/onboarding/onboarding.js`：`measureNavigation()` 增加 `wx.getMenuButtonBoundingClientRect()` 读取胶囊实测矩形，计算 `navBarHeight = 胶囊 height + (胶囊 top − statusBarHeight) × 2`（上下留白对称 → header 垂直中线 = 胶囊中线）与 `menuRightGap = windowWidth − 胶囊 left + 8`（进度条右端停在胶囊左侧 8px）；拿不到胶囊时回退 44px / 100px。`data` 新增 `navBarHeight`、`menuRightGap` 两个字段。
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml`：`.step-header` 加内联 `style="height: {{navBarHeight}}px"`，`.step-progress` 加内联 `style="margin-right: {{menuRightGap}}px"`。
+  - `apps/miniprogram/pages/onboarding/onboarding.wxss`：`.step-progress` 的 `margin-right: 200rpx` 保留为旧基础库兜底（会被内联覆盖），注释改写说明新增的两处内联值来源。
+- 测试：`tests/onboarding-page.test.js` **23/23**（新增 2 条 + 修正 1 条正则）——①胶囊 top 28 / height 32 / statusBar 24 / 屏宽 375 / left 281 → `navBarHeight = 40`、`menuRightGap = 102`；②`menuRect: null`（旧基础库）时回退 44 / 100；③原来匹配 `<view class="step-header">` 的正则放宽为允许内联属性，否则断言直接失败。
+- 逐项可见性：`tmp/verify-onboarding-steps.js` **339/339 PASS**（等价渲染按 40px header + 102px 右让位渲染，断言「与「‹」中线差 ≤ 3px」「右留 ≈ 102px + 44rpx 内容边距」）。
+- 其它相关测试同批通过：`onboarding-gate` 7/7、`onboarding-profile` 5/5、`auth-profile-api` 4/4、`profile-privacy-pickers` 2/2、`settings-pages` 7/7、`miniprogram-platform-content` 5/5。
+- 未验证：**真机未验收**——不同机型上进度条是否真的与胶囊同一条横线、右端与胶囊左边缘的间距（8px 是估的舒适值）。
+
+
+## 2026-10-17｜Agent｜去掉 .sheet 顶部 16rpx，修正顶部那行整体偏低
+
+- 现场（产品负责人真机截图 + 从「‹」指向胶囊的红色箭头）：「还是没对齐，感觉偏低了」。
+- 根因：上一轮 `navBarHeight` 的公式前提是"`.step-header` 紧贴在页面 `padding-top: 状态栏高` 之后"，但 `.sheet` 自己还有 `padding-top: 16rpx`，把整行又往下推了 8px——真机上的偏低量级正好是这 8px。
+- 改动：`apps/miniprogram/pages/onboarding/onboarding.wxss` 的 `.sheet` — `padding: 16rpx 44rpx calc(40rpx + env(safe-area-inset-bottom))` → `padding: 0 44rpx calc(40rpx + env(safe-area-inset-bottom))`，并加注释说明"顶部内边距必须是 0，否则破坏 navBarHeight 的对齐前提"。页面其余部分的顶部留白由 `.step-header` 自身高度（已含状态栏到胶囊顶的距离）与 `.intro` 的 `margin-top` 承担。
+- 测试：`tests/onboarding-page.test.js` **23/23**；同批 `onboarding-gate` 7/7、`onboarding-profile` 5/5、`auth-profile-api` 4/4、`profile-privacy-pickers` 2/2、`settings-pages` 7/7、`miniprogram-platform-content` 5/5。
+- 逐项可见性：`tmp/verify-onboarding-steps.js` **339/339 PASS**（3 档屏宽 × 3 步）。
+- 未验证：**真机未验收**——这是第三次调整这一处对齐，需要产品负责人确认是否终于齐平；若仍偏差，请给出偏差方向（进度条比胶囊高/低）与大致像素。
+
+
+## 2026-10-17｜Agent｜返回键改成 CSS 箭头（不再用 `‹` 字形）
+
+- 现场（产品负责人真机截图，红框圈住左上返回键）：「上一步按钮好像低了」——此时进度条与胶囊已经齐平，只有返回键偏低。
+- 根因：不是布局问题。`.step-back` 早已是 `display: flex; align-items: center`，几何上居中；但它里面打的是 `‹` 这个**字符**，CJK 字体基线让字形在行内偏下，几何居中 ≠ 视觉居中，而且各端字体不同、偏差不可预测。过程中先用 `transform: translateY(-10rpx)`、再改 `-21rpx` 试过，等价渲染读数反而从 5.5px 恶化到 11px——说明靠位移补字形这条路没有稳定解（不同设备上会各偏各的）。
+- 改动：
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml`：`<view class="step-back …">‹</view>` → `<view class="step-back …" aria-label="上一步"><view class="step-back-arrow"></view></view>`（`aria-label` 保留，无障碍语义不丢）。
+  - `apps/miniprogram/pages/onboarding/onboarding.wxss`：`.step-back` 变成纯容器（`display:flex; align-items:center; justify-content:center; width:88rpx; height:100%; color:#1f2421`），删掉 `font-size` / `line-height` / `transform`；新增 `.step-back-arrow { width:20rpx; height:20rpx; margin-left:6rpx; border-style:solid; border-color:currentColor; border-width:0 3rpx 3rpx 0; transform: rotate(135deg) }`。视觉中心 = 盒子中心，天然与进度条、微信胶囊同一条中线，不再受字形影响。`.step-back-hidden { visibility: hidden }` 仍然生效（第 1 步不显示）。
+- 测试：
+  - `tests/onboarding-page.test.js` **24/24**（新增 1 条守卫 "the back button is a css arrow, not a `‹` glyph"：必须存在 `.step-back-arrow`、wxml 不得再出现裸 `‹` 字形、wxss 必须是 `border-width: 0 3rpx 3rpx 0` + `rotate(135deg)`、`.step-back` 不得再靠 `font-size` 定位）。
+  - 同批：`onboarding-gate` 7/7、`onboarding-profile` 5/5、`auth-profile-api` 4/4、`profile-privacy-pickers` 2/2、`settings-pages` 7/7、`miniprogram-platform-content` 5/5。
+- 逐项可见性：`tmp/verify-onboarding-steps.js` **345/345 PASS**（3 档屏宽 × 3 步）。本轮把"返回键"的判据从量 `‹` 的文本视觉盒（Range）改为量箭头盒中心，新增 2 条：箭头中心与进度条中线差 ≤ 3px、与 header 中线（= 按胶囊算出的中线）差 ≤ 3px。
+- 未验证：**真机未验收**——箭头的大小（20rpx）、边框粗细（3rpx）与视觉重量是否合适；如果偏小或偏细，给个方向我调。另外注意：顶部内容因为上一轮去掉 16rpx 整体上移了 8px，标题区的呼吸感也需要他一起看。
+
+
+## 2026-10-17｜Agent｜去掉三段进度条 + 返回箭头与文案左对齐
+
+- 现场（产品负责人真机截图）：「1.返回图标和下方文案左对齐 2.去掉进度条」。
+- 改动：
+  - ①**返回箭头左对齐**：`apps/miniprogram/pages/onboarding/onboarding.wxss` 的 `.step-back` 由 `justify-content: center` 改为 **`flex-start`**；`.step-back-arrow` 的 `margin-left` 由 6rpx 改为 **4rpx**（20rpx 盒子旋转 45° 后左右各溢出 4rpx，抵掉后可见左缘正好落在内容边界上）。同时修正两处叠加内边距：`.birthday-head` 的 `padding: 16rpx 44rpx 0` → `16rpx 0 0`、`.birthday-privacy` 的 `padding: 0 44rpx` → `0`——`.sheet` 已有 44rpx 内容边距，这两处再叠一层会让第 2 步文案比第 1、3 步内缩 22px，也与返回箭头对不上。
+  - ②**去掉进度条**：`onboarding.wxml` 删掉 `.step-progress` 整块（含 `wx:for="{{progressBars}}"` 与相关注释）；`onboarding.wxss` 删掉 `.step-progress` / `.step-progress-bar` / `.step-progress-on` 三条样式；`onboarding.js` 删掉 `data.progressBars`。`navBarHeight` / `menuRightGap` 保留——顶部 header 的高度仍按微信胶囊算，只是里面现在只放返回箭头。
+- 测试：`tests/onboarding-page.test.js` **25/25**，新增 1 条守卫 "the top row keeps only the back arrow, flush with the copy's left edge"：wxml 不得再有 `class="step-progress"`、wxss 不得再有那三条样式、页面 js 不得再有 `progressBars`、`.step-back` 必须 `justify-content: flex-start`、`.step-back-arrow` 必须 `margin-left: 4rpx`、`.birthday-head` / `.birthday-privacy` 不得再叠 44rpx。
+- 逐项可见性：`tmp/verify-onboarding-steps.js` **309/309 PASS**（3 档屏宽 × 3 步）。删掉 12 条进度条判据（存在性、点亮段数、位置、条身厚度、与胶囊间距等），新增 3 条：三步都读不到 `step-progress` 元素、返回箭头左缘 ≈ 44rpx 内容边距、返回箭头左缘 = 文案左边界（差 ≤ 3px，三档实读 21.7/18.5/28.3px 与 21.7/18.5/28.3px 完全相等）。
+- 同批其它测试：`onboarding-gate` 7/7、`onboarding-profile` 5/5、`auth-profile-api` 4/4、`profile-privacy-pickers` 2/2、`settings-pages` 7/7、`miniprogram-platform-content` 5/5。
+- 未验证：**真机未验收**——①箭头与标题是否真的同一条竖线；②第 2 步文案左移 22px 后，与第 1、3 步的左边界是否一致；③没有进度条之后，用户是否还能感到"共 3 步"的节奏（现在只有返回箭头暗示非首屏）。
+
+
+## 2026-10-17｜Agent｜主按钮本身变成"深绿 + 浅绿"的进度条
+
+- 现场（产品负责人在第 1 步「下一步」按钮上画红线，约 1/3 处）：「使下一步按钮具有进度条效果，如果这里红线左边（三分之一）是深绿和红线右边是三分之二浅绿，第二步就是三分之二深绿和三分之一浅绿，开始使用是三分之三深绿，能明白吗」。
+- 改动：
+  - `apps/miniprogram/pages/onboarding/onboarding.wxss` 的 `.primary-button`：`background: #0b9588` → `linear-gradient(90deg, #0b9588 0%, #0b9588 var(--step-progress, 100%), #5cb3a7 var(--step-progress, 100%), #5cb3a7 100%)`。深绿仍是主题色 `#0b9588`，浅绿取 `#5cb3a7`。
+  - `apps/miniprogram/pages/onboarding/onboarding.wxml` 的主按钮加内联 `style="--step-progress: {{(step / stepTotal) * 100}}%;"` —— 第 1 步 33.33%、第 2 步 66.67%、第 3 步 100%（整条深绿）。登录页和其它不传该变量的地方由 `var(…, 100%)` 兜底为整条深绿，与改动前完全一致。
+  - 用 CSS 变量而不是把渐变直接写进 `background`，是为了保住 `.primary-button-busy`（`opacity: .55`）以及将来任何背景覆盖的能力。
+- 顺带修掉一个回归：`.avatar-upload` 缺 `position: relative`，导致绝对定位的 `.avatar-upload-mask`（圆底半透明压条）贴到页面底部——核对脚本读到 mask 底边 780px、圆底 301px。已补回该声明。**来源未查明**（不排除前几轮某次编辑失手），"压条贴圆底"这条判据是唯一发现入口。
+- 测试：`tests/onboarding-page.test.js` **25/25**。原断言「`.primary-button` 的 background 必须是 `#0b9588`」改写为 5 条：必须是 `90deg` 横向渐变、起色 `#0b9588 0%`、深绿按 `--step-progress` 收边、浅绿从同一点起算、浅绿铺到 `100%`。
+- 逐项可见性：`tmp/verify-onboarding-steps.js` **342/342 PASS**（3 档屏宽 × 3 步）。新增 5 条按步数核：主按钮底色是 `linear-gradient`、浅绿起点 ≈ 步数/3（实读 33.3% / 66.7%）、浅绿铺到 100%、最后一步浅绿起点已在 100%（= 整条深绿）、主按钮起色仍是 `rgb(11, 149, 136)`。
+- 同批其它测试：`onboarding-gate` 7/7、`onboarding-profile` 5/5、`auth-profile-api` 4/4、`profile-privacy-pickers` 2/2、`settings-pages` 7/7、`miniprogram-platform-content` 5/5、`practice-page-flow` 5/5。
+- 未验证：**真机未验收**——①白字压在浅绿 `#5cb3a7` 上的可读性（对比度约 2.3:1，低于 WCAG AA 的 4.5:1；要更稳可把浅绿调深到 `#3d9d92`）；②深浅分界在小尺寸按钮上的视觉锐利度；③忙碌态（`.primary-button-busy` 降透明度）与渐变叠加后的观感。
+
+
+## 2026-10-17｜Agent｜头像被拉成宽扁胶囊 → 尺寸钉死
+
+- 现场（产品负责人真机截图，红框圈住头像）：「这里怎么变了」——头像圆变成横向拉长的胶囊，土豆图随之拉伸。
+- 根因：头像是 `<button open-type="chooseAvatar">`，同时是 `.avatar-upload-row`（`display: flex`）的子项；真机上被拉伸。浏览器等价渲染里复现不出来（那边一直是 168rpx 正圆），所以这一轮只能靠加固尺寸约束，而不是改布局结构。
+- 改动（`apps/miniprogram/pages/onboarding/onboarding.wxss`）：
+  - `.avatar-upload`：加 `flex: 0 0 168rpx`（钉死主轴尺寸），并补 `min-width` / `max-width` / `min-height` / `max-height` 全为 `168rpx`、`box-sizing: border-box`。
+  - `.avatar-upload-row`：补 `align-items: center`（交叉轴居中，不做拉伸）。
+  - `.avatar-upload-img`：加 `display: block`（去掉行内图片的基线空隙，否则圆被压扁）。
+- 测试：`tests/onboarding-page.test.js` **26/26**，新增守卫 "the avatar button keeps a 168rpx square and cannot be stretched"：`.avatar-upload` 必须有 `flex: 0 0 168rpx` / `width` / `height` / `min-width` / `max-width` / `box-sizing: border-box` / `position: relative`；`.avatar-upload-row` 必须 `align-items: center`；`.avatar-upload-img` 必须 `display: block`。
+- 逐项可见性：`tmp/verify-onboarding-steps.js` **348/348 PASS**（3 档屏宽 × 3 步）。新增 2 条：头像宽高比 = 1（正圆）、宽高都 ≈ 168rpx。同批：`onboarding-gate` 7/7、`onboarding-profile` 5/5、`auth-profile-api` 4/4、`profile-privacy-pickers` 2/2、`settings-pages` 7/7、`miniprogram-platform-content` 5/5、`practice-page-flow` 5/5。
+- 未验证：**真机未验收**——头像是否恢复正圆。这是本轮唯一无法在本机复现的项；若加固后仍变形，下一步会把结构改成「外层 `view` 定尺寸 + 内层透明 `button` 绝对铺满」，彻底摆脱 button 的原生盒模型。
+
+
+## 2026-10-17｜Agent｜登记三条"维持现状"的口径答复（无代码改动）
+
+- 现场：产品负责人对我在上一轮提的三个可选项一次性答复「1.不调 2.不改 3.不移」。
+- 登记结论（详见 `docs/OPEN_DECISIONS.md` §1.30 C25）：
+  1. **浅绿不调**：主按钮未到段保持 `#5cb3a7`，不为白字对比度（约 2.3:1）再改色。
+  2. **女的选中态不改**：保留 `#f0639b` 粉，与「男」的 `#0b9588` 绿形成性别色差；两者不同色是有意的。
+  3. **「跳过」不移**：继续在主按钮下方居中，不照参考图移到右上角（那里被微信胶囊占用）。
+- 代码/测试/截图：**本轮零改动**，不涉及任何文件内容变化，因此没有重新跑测试；上一轮状态（`tests/onboarding-page.test.js` 26/26、逐项可见性 348/348）仍为最新。
+- 文档：新增 `docs/OPEN_DECISIONS.md` §1.30；本条为变更日志记录（属样式/口径确认，按 AGENTS §5 不新增 DEC）。
 
 
 

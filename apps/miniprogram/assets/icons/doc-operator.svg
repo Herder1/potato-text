@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#474d49" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <!-- 关于页法务入口统一图标组（2026-10-17）：楼宇＋客服＝运营主体与客服信息，线宽与颜色同组。 -->
+  <path d="M3 21h18"/>
+  <path d="M4.5 21V5.6A1.6 1.6 0 0 1 6.1 4h5.3a1.6 1.6 0 0 1 1.6 1.6V21"/>
+  <path d="M13 10.5h4.4A1.6 1.6 0 0 1 19 12.1V21"/>
+  <path d="M7.2 8h2.4"/>
+  <path d="M7.2 12h2.4"/>
+  <path d="M7.2 16h2.4"/>
+  <path d="M15.8 14.5h1.6"/>
+  <path d="M15.8 18h1.6"/>
+</svg>

@@ -407,9 +407,10 @@ test("mini program sources use the compliant avatar/nickname pickers and never c
   assert.match(editWxss, /\.avatar-change\s*\{[^}]*color:\s*#0b9588/, "「更换头像」文字要品牌绿");
   assert.match(editWxss, /\.avatar-change\s*\{[^}]*justify-content:\s*center/, "「更换头像」内容要居中");
   assert.match(editWxml, /\/assets\/icons\/camera-brand\.svg/, "相机图标用品牌青绿版");
-  // 2026-09-22 真机反馈「太长了，文字用细一点的」：胶囊视觉归 view，采集入口是覆盖其上的透明 button。
-  assert.match(editWxml, /class="avatar-change-button"[^>]*open-type="chooseAvatar"/, "chooseAvatar 只能由 button 承载，作为胶囊的点击覆盖层");
-  assert.match(editWxss, /\.avatar-change-button\s*\{[^}]*position:\s*absolute/, "覆盖层必须绝对定位铺满胶囊");
+  // 2026-10-18 真机反馈：透明覆盖层收不到点击。胶囊本身必须是原生 button。
+  assert.match(editWxml, /<button class="avatar-change"[^>]*open-type="chooseAvatar"/, "「更换头像」胶囊本身必须是 chooseAvatar button");
+  assert.doesNotMatch(editWxml, /avatar-change-button/, "不得再使用空内容的透明覆盖层");
+  assert.match(editWxss, /\.avatar-change\s*\{[^}]*display:\s*flex/, "原生 button 的尺寸与布局仍由胶囊样式控制");
   assert.match(editWxss, /\.avatar-change-label\s*\{[^}]*font-weight:\s*400/, "「更换头像」文字要细一点");
   assert.match(editWxss, /\.avatar-change-icon\s*\{[^}]*width:\s*26rpx/, "图标同步收小");
   assert.match(fs.readFileSync(path.join(root, "assets/icons/camera-brand.svg"), "utf8"), /stroke="#0b9588"/);

@@ -8,14 +8,18 @@
 //   已发布 → 200 { success:true, published:true, document:{ key,title,version,effectiveDate,publishedAt,body } }
 //   未发布 → 200 { success:true, published:false, status:"empty"|"draft", document:{ key,title } }（不含 body）
 
+// 图标（2026-10-17 产品负责人指出「图标风格太乱、颜色不统一」）：
+//   七份文档改用专用图标组 doc-*.svg，同一套 24 视口 / stroke-width 1.8 / 统一中性色 #474d49 /
+//   round cap+join，与仓库其它线性图标一致；不再借用 list、format-magic、user-outline 这类
+//   属于别的入口（未登录头像、编辑器工具栏）的图标，也不再混用品牌绿与橙色填充。
 const DOCS = [
-  { key: "terms", title: "用户协议", icon: "/assets/icons/list.svg", desc: "使用薯考时的权利义务" },
-  { key: "privacy", title: "隐私政策", icon: "/assets/icons/shield-check.svg", desc: "我们如何处理你的个人信息" },
-  { key: "ai-service", title: "AI 服务说明", icon: "/assets/icons/format-magic.svg", desc: "AI 功能范围与扣费规则" },
-  { key: "refund", title: "退款政策", icon: "/assets/icons/file-download.svg", desc: "套餐订单与豆币的退款口径" },
-  { key: "account-deletion", title: "账号注销说明", icon: "/assets/icons/user-outline.svg", desc: "注销后数据的处置方式" },
-  { key: "operator", title: "运营主体与客服信息", icon: "/assets/icons/customer-service.svg", desc: "经营主体、营业执照与联系方式" },
-  { key: "personal-info", title: "个人信息收集清单", icon: "/assets/icons/sliders.svg", desc: "收集了哪些信息、用来做什么" },
+  { key: "terms", title: "用户协议", icon: "/assets/icons/doc-terms.svg", desc: "使用薯考时的权利义务" },
+  { key: "privacy", title: "隐私政策", icon: "/assets/icons/doc-privacy.svg", desc: "我们如何处理你的个人信息" },
+  { key: "ai-service", title: "AI 服务说明", icon: "/assets/icons/doc-ai.svg", desc: "AI 功能范围与扣费规则" },
+  { key: "refund", title: "退款政策", icon: "/assets/icons/doc-refund.svg", desc: "套餐订单与豆币的退款口径" },
+  { key: "account-deletion", title: "账号注销说明", icon: "/assets/icons/doc-account-deletion.svg", desc: "注销后数据的处置方式" },
+  { key: "operator", title: "运营主体与客服信息", icon: "/assets/icons/doc-operator.svg", desc: "经营主体、营业执照与联系方式" },
+  { key: "personal-info", title: "个人信息收集清单", icon: "/assets/icons/doc-personal-info.svg", desc: "收集了哪些信息、用来做什么" },
 ];
 
 /** 未发布时的统一口径（各页共用一处文案，避免页面各写一套）。 */

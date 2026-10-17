@@ -7,6 +7,7 @@ const { createMemoryLearningStateStore } = require("../apps/api/src/learning-sta
 const { createMemoryBillingStore } = require("../apps/api/src/billing-store");
 const { createMemoryQuestionStore } = require("../apps/api/src/question-store");
 const { listExamProjects } = require("../apps/api/src/exam-project-registry");
+const { EXAM_YEAR_SPAN } = require("../apps/api/src/user-auth-store");
 
 // 注册引导四项（2026-10-03 产品负责人确认）：性别、年龄段、目标考试项目、报考年份。
 // 必填只在引导层把关（客户端引导层不填完不发奖励、不放行首页），
@@ -74,13 +75,13 @@ test("the four onboarding answers round-trip and drive the derived completed fla
 
   const saved = await updateProfile(token, {
     gender: "female",
-    ageBand: "19_22",
+    birthday: "2000-05-04",
     examProjectId,
     examYear: currentYear + 1,
   });
   assert.equal(saved.status, 200);
   assert.equal(saved.payload.user.gender, "female");
-  assert.equal(saved.payload.user.ageBand, "19_22");
+  assert.equal(saved.payload.user.birthday, "2000-05-04");
   assert.equal(saved.payload.user.examProjectId, examProjectId);
   assert.equal(saved.payload.user.examYear, currentYear + 1);
   assert.equal(saved.payload.user.onboardingCompleted, true);
@@ -94,19 +95,26 @@ test("the four onboarding answers round-trip and drive the derived completed fla
   // 只改一项：其余三项保持，派生字段仍为 true。
   const partial = await updateProfile(token, { examYear: currentYear });
   assert.equal(partial.payload.user.examYear, currentYear);
-  assert.equal(partial.payload.user.ageBand, "19_22");
+  assert.equal(partial.payload.user.birthday, "2000-05-04", "只改年份不该动生日");
   assert.equal(partial.payload.user.onboardingCompleted, true);
 });
 
 test("onboarding answers reject anything outside the fixed choices, and reject atomically", async (context) => {
   const { login, updateProfile, me } = await startServer(context);
   const { token } = await login("onboarding-device-3");
-  await updateProfile(token, { gender: "male", ageBand: "23_26", examProjectId, examYear: currentYear + 2 });
+  await updateProfile(token, { gender: "male", birthday: "1990-03-15", examProjectId, examYear: currentYear + 2 });
 
   const rejected = [
     [{ gender: "其他" }, "gender_invalid"],
     [{ gender: "MALE" }, "gender_invalid"],
     [{ ageBand: "18-22" }, "age_band_invalid"],
+    // 生日：格式错 / 日期不存在 / 超出 [1940-01-01, 今天] 一律拒绝（2026-10-17 第九次调整）
+    [{ birthday: "2000/01/01" }, "birthday_invalid"],
+    [{ birthday: "20000101" }, "birthday_invalid"],
+    [{ birthday: "2000-13-01" }, "birthday_invalid"],
+    [{ birthday: "2000-02-30" }, "birthday_invalid"],
+    [{ birthday: "1899-12-31" }, "birthday_invalid"],
+    [{ birthday: "2999-01-01" }, "birthday_invalid"],
     [{ examProjectId: "not-a-project" }, "exam_project_invalid"],
     [{ examYear: currentYear + 6 }, "exam_year_invalid"],
     [{ examYear: currentYear - 1 }, "exam_year_invalid"],
@@ -132,12 +140,12 @@ test("onboarding answers reject anything outside the fixed choices, and reject a
 test("empty strings clear the onboarding answers and flip the completed flag back", async (context) => {
   const { login, updateProfile } = await startServer(context);
   const { token } = await login("onboarding-device-4");
-  await updateProfile(token, { gender: "undisclosed", ageBand: "31_plus", examProjectId, examYear: currentYear + 3 });
+  await updateProfile(token, { gender: "undisclosed", birthday: "1985-12-31", examProjectId, examYear: currentYear + 3 });
 
-  const cleared = await updateProfile(token, { gender: "", ageBand: "", examProjectId: "", examYear: "" });
+  const cleared = await updateProfile(token, { gender: "", birthday: "", examProjectId: "", examYear: "" });
   assert.equal(cleared.status, 200);
   assert.equal(cleared.payload.user.gender, "");
-  assert.equal(cleared.payload.user.ageBand, "");
+  assert.equal(cleared.payload.user.birthday, "");
   assert.equal(cleared.payload.user.examProjectId, "");
   assert.equal(cleared.payload.user.examYear, 0);
   assert.equal(cleared.payload.user.onboardingCompleted, false);
@@ -147,9 +155,14 @@ test("the onboarding boundary years are accepted on the last allowed year", asyn
   const { login, updateProfile } = await startServer(context);
   const { token } = await login("onboarding-device-5");
 
-  const lastAllowed = await updateProfile(token, { examYear: currentYear + 5 });
+  const lastAllowed = await updateProfile(token, { examYear: currentYear + EXAM_YEAR_SPAN });
   assert.equal(lastAllowed.status, 200);
-  assert.equal(lastAllowed.payload.user.examYear, currentYear + 5);
+  assert.equal(lastAllowed.payload.user.examYear, currentYear + EXAM_YEAR_SPAN);
   // 只填年龄项时其他三项仍为空：不因为一项合法就伪装成填全。
   assert.equal(lastAllowed.payload.user.onboardingCompleted, false);
+
+  // 再往后一年就必须拒（2026-10-17 起只给 4 档：当年 + 3 年）。
+  const overflow = await updateProfile(token, { examYear: currentYear + EXAM_YEAR_SPAN + 1 });
+  assert.equal(overflow.status, 400);
+  assert.equal(overflow.payload.error, "exam_year_invalid");
 });

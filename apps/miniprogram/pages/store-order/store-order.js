@@ -183,13 +183,10 @@ Page({
     this.setData({ selectedProductId: id }, () => this.applyGroups());
   },
 
+  // 购买须知 · 退款说明（2026-10-17 产品负责人要求）：改为打开《退款政策》文档，
+  // 正文由后台「平台设置」维护（DEC-110），本页不再硬编码退款口径。
   openPurchaseNotice() {
-    wx.showModal({
-      title: "购买须知与退款说明",
-      content: "套餐订单与赠送豆币分账，权益以支付确认页为准。微信支付通道尚未启用；启用后如需退款，请通过「帮助与反馈」联系我们。",
-      showCancel: false,
-      confirmText: "我知道了",
-    });
+    wx.navigateTo({ url: "/pages/legal/legal?doc=refund" });
   },
 
   startPurchase(event) {

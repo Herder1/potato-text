@@ -117,9 +117,11 @@
 
   <!-- 未登录提示按设计稿放页面底部（加载中/失败仍在顶部，便于立刻看到原因） -->
   <view class="state-line state-line-guest" wx:if="{{accountState === 'guest'}}">登录后可同步订阅与豆币记录</view>
-  <view class="store-footnote">套餐订单与赠送豆币分账，权益以支付确认页为准。</view>
+  <!-- 2026-10-17：这里原本写死了一段退款口径文字，与后台《退款政策》双写；
+       改为可点入口，正文只保留在「平台设置」的 refund 文档（DEC-110）。 -->
+  <view class="store-footnote store-footnote-link" bindtap="openPurchaseNotice" role="button" aria-label="购买须知与退款政策">购买须知与退款政策 ›</view>
 
-  <!-- 充值：下滑弹窗（余额 + 规格 + 支付方式 + 固定底栏「立即支付」） -->
+  <!-- 充值：下滑弹窗（余额 + 规格 + 支付方式 + 固定底栏状态） -->
   <view class="sheet-mask" wx:if="{{rechargeSheetOpen}}" bindtap="closeRechargeSheet"></view>
   <view class="sheet" wx:if="{{rechargeSheetOpen}}">
     <view class="sheet-handle"></view>
@@ -151,10 +153,10 @@
       </view>
     </scroll-view>
     <view class="sheet-bar">
-      <!-- 按钮居中、金额进按钮里；下方是豆币用户协议入口（口径同其他法务文本） -->
-      <button class="sheet-button sheet-button-wide" bindtap="paySelectedBeanPack">立即支付{{selectedBean ? ' ' + selectedBean.priceLabel : ''}}</button>
+      <!-- 真实支付未接入时禁用按钮，不摆出可以付款的假入口。 -->
+      <button class="sheet-button sheet-button-wide" bindtap="paySelectedBeanPack" disabled="{{!paymentChannelEnabled}}">{{paymentChannelEnabled ? '立即支付' + (selectedBean ? ' ' + selectedBean.priceLabel : '') : '暂未开放'}}</button>
     </view>
-    <view class="sheet-agreement">点击支付即代表同意<text class="sheet-agreement-link" bindtap="openLegal" data-doc="terms" role="button" aria-label="用户协议">《用户协议》</text>与<text class="sheet-agreement-link" bindtap="openLegal" data-doc="refund" role="button" aria-label="退款政策">《退款政策》</text></view>
+    <view class="sheet-agreement">购买前请阅读<text class="sheet-agreement-link" bindtap="openLegal" data-doc="terms" role="button" aria-label="用户协议">《用户协议》</text>与<text class="sheet-agreement-link" bindtap="openLegal" data-doc="refund" role="button" aria-label="退款政策">《退款政策》</text></view>
   </view>
 
   <!-- 订单记录：沿用同一套行样式的轻量弹层（orders 来自账户接口） -->

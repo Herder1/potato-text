@@ -549,6 +549,7 @@ function isLocalMachineAddress(value) {
 // 这样新增后台接口不会因为“兜底放行”而悄悄对运营开放；新增业务接口必须显式加进运营白名单。
 const SUPER_ADMIN_ONLY_ADMIN_PATHS = [
   "/api/admin/accounts",   // 后台账号管理
+  "/api/admin/users",      // 用户账号目录、注册/注销统计与个人资料（仅超管）
   "/api/admin/ai-config",  // 模型供应商与密钥配置（含掩码后的密钥信息）
   "/api/admin/ai/",        // 供应商/模型/场景路由/提示词/连通性测试
   "/api/admin/billing",    // 收费、商品与豆币发放
@@ -7839,6 +7840,49 @@ function createServer(options = {}) {
         }
         return;
       }
+
+      // 用户管理：注册、注销、引导完成与当前限制的统一只读视图。权限清单已把本前缀登记为超管专属。
+      if (request.method === "GET" && url.pathname === "/api/admin/users") {
+        const now = Date.now();
+        const query = String(url.searchParams.get("query") || "").trim().toLowerCase();
+        const page = Math.max(1, Number.parseInt(url.searchParams.get("page"), 10) || 1);
+        const pageSize = Math.min(100, Math.max(1, Number.parseInt(url.searchParams.get("pageSize"), 10) || 20));
+        const users = userAuthStore.listUsers()
+          .filter((user) => !query || [user.publicId, user.id, user.nickname]
+            .some((value) => String(value || "").toLowerCase().includes(query)))
+          .sort((left, right) => Number(right.createdAt || 0) - Number(left.createdAt || 0));
+        const pageUsers = users.slice((page - 1) * pageSize, page * pageSize);
+        const restrictions = typeof userRestrictionStore.statusesFor === "function"
+          ? userRestrictionStore.statusesFor(pageUsers.map((user) => user.id), now)
+          : {};
+        sendJson(response, 200, {
+          success: true,
+          summary: userAuthStore.accountSummary(now),
+          users: pageUsers.map((user) => {
+            const restriction = restrictions[user.id] || { restricted: false, activeTypeLabels: [], expiresAt: 0, untilLabel: "" };
+            return {
+              userId: user.id,
+              publicId: user.publicId,
+              nickname: user.nickname,
+              createdAt: user.createdAt,
+              lastLoginAt: user.lastLoginAt,
+              onboardingCompleted: user.onboardingCompleted,
+              examProjectId: user.examProjectId,
+              examYear: user.examYear,
+              restriction: {
+                restricted: restriction.restricted === true,
+                typeLabels: restriction.activeTypeLabels || [],
+                expiresAt: Number(restriction.expiresAt) || 0,
+                untilLabel: restriction.untilLabel || "",
+              },
+            };
+          }),
+          total: users.length,
+          page,
+          pageSize,
+        });
+        return;
+      }
     }
 
     if (!["GET", "HEAD"].includes(request.method)
@@ -7952,7 +7996,7 @@ function createServer(options = {}) {
         const payload = await readJsonBody(request, 512 * 1024);
         const patch = {};
         for (const field of ["nickname", "avatarUrl", "signature", "region", "studyField", "dailyGoalMinutes", "publicLearningStats",
-          "gender", "ageBand", "examProjectId", "examYear"]) {
+          "gender", "birthday", "ageBand", "examProjectId", "examYear"]) {
           if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field];
         }
         const user = userAuthStore.updateProfile(session.user.id, patch);
@@ -7963,7 +8007,7 @@ function createServer(options = {}) {
           "nickname_invalid", "avatar_invalid_format", "avatar_too_large",
           "signature_invalid", "region_invalid", "study_field_invalid",
           "daily_goal_invalid", "public_learning_stats_invalid",
-          "gender_invalid", "age_band_invalid", "exam_project_invalid", "exam_year_invalid",
+          "gender_invalid", "birthday_invalid", "age_band_invalid", "exam_project_invalid", "exam_year_invalid",
           "profile_patch_required", "invalid_json",
         ].includes(message);
         sendJson(response, clientError ? 400 : message === "payload_too_large" ? 413 : 500, { success: false, error: message });

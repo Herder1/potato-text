@@ -1977,6 +1977,11 @@
   border-radius: 10rpx;
 }
 
+.exam-export-cache-note {
+  color: #2f6f51;
+  background: #edf7f0;
+}
+
 .exam-export-files {
   margin-top: 18rpx;
   overflow: hidden;

@@ -19,7 +19,7 @@ const {
   migrateLegacyStoredBeans,
   roundBeans,
 } = require("./utils/bean-pricing");
-const { ONBOARDING_SKIP_KEY, PRIVACY_AGREED_KEY } = require("./utils/onboarding-options");
+const { ONBOARDING_SKIP_KEY } = require("./utils/onboarding-options");
 
 const OFFICIAL_QUESTIONS_CACHE_KEY = "shukao_official_questions";
 const OFFICIAL_QUESTIONS_CACHE_TTL = 15 * 1000;
@@ -50,7 +50,6 @@ App({
   },
 
   onLaunch() {
-    this.setupPrivacyAuthorization();
     const savedBeans = wx.getStorageSync(BEAN_STORAGE_KEY);
     const hasSavedBeans = savedBeans !== "" && savedBeans !== null && savedBeans !== undefined && Number.isFinite(Number(savedBeans));
     if (hasSavedBeans) {
@@ -101,27 +100,6 @@ App({
     if (String(current && current.route || "") === "pages/onboarding/onboarding") return false;
     if (typeof wx.reLaunch !== "function") return false;
     wx.reLaunch({ url: "/pages/onboarding/onboarding" });
-    return true;
-  },
-
-  /**
-   * 隐私授权协同（2026-10-03）：引导页的勾选是**我们自己**的授权入口（同意标记只写本机）；
-   * 这里接管微信侧的原生授权询问——用户已经在本机同意过（或已登录，等于走过引导闸门）就直接放行，
-   * 否则明确拒绝并给出可见提示，避免头像等隐私接口静默失败、也避免同一次同意问两遍。
-   * 注册前的能力探测是必须的：低版本基础库没有这个接口。
-   */
-  setupPrivacyAuthorization() {
-    if (typeof wx.onNeedPrivacyAuthorization !== "function") return false;
-    wx.onNeedPrivacyAuthorization((resolve) => {
-      const agreed = Boolean(wx.getStorageSync(PRIVACY_AGREED_KEY)) || this.globalData.loggedIn === true;
-      if (typeof resolve !== "function") return;
-      if (agreed) {
-        resolve({ event: "agree" });
-        return;
-      }
-      resolve({ event: "disagree" });
-      if (typeof wx.showToast === "function") wx.showToast({ title: "请先同意《用户隐私保护指引》", icon: "none" });
-    });
     return true;
   },
 

@@ -24,6 +24,12 @@ const { buildCatalogOutline, buildSubjectCatalogOutline, createProjectedCatalogC
 const { noteAutoArchiveEnabled, questionNoteContent, saveQuestionNote, setNoteAutoArchiveEnabled } = require("../../utils/question-note-store");
 const { BEAN_COST_PER_AI_CALL, isBeanAmount } = require("../../utils/bean-pricing");
 const { normalizeQuestionTypeFields } = require("../../utils/question-type");
+const {
+  createExamExportCacheKey,
+  readExamExportCache,
+  removeExamExportCache,
+  saveExamExportCache,
+} = require("../../utils/exam-export-cache");
 
 const RULE_EXAM_STORAGE_KEY = "shukao_rule_exam_session";
 
@@ -844,6 +850,7 @@ Page({
     examExportResult: null,
     examExportFiles: [],
     examExportError: "",
+    examExportSavedLocally: false,
     examDurationMinutes: 0,
     aiDialogOpen: false,
     aiGenerating: false,
@@ -1155,6 +1162,7 @@ Page({
       examSelectionRules: session.selectionRules || [],
       examDeclaredTotalScore: session.totalScore,
       examExportExamId: "",
+      examExportCacheVersion: String(session.createdAt || ""),
     }, session.questions, true);
   },
 
@@ -1186,6 +1194,7 @@ Page({
           examSelectionRules: exam.selectionRules || [],
           examDeclaredTotalScore: exam.totalScore,
           examExportExamId: exam.id,
+          examExportCacheVersion: String(exam.updatedAt || ""),
         }, questions, true);
       },
       fail: () => {
@@ -1304,9 +1313,33 @@ Page({
       : createCatalogChapters(questionBank, question.id, initialCatalogOutline);
     this._catalogChapters = catalogChapters;
     const catalogLocation = findCatalogLocation(catalogChapters, question.id);
+    const app = getApp();
+    const apiBaseUrl = String(app.globalData.apiBaseUrl || "").replace(/\/$/, "");
+    const examExportCacheKey = practiceMode === "exam"
+      ? createExamExportCacheKey({
+        userId: app.globalData.userId || "test-user",
+        apiBaseUrl,
+        examId: options.examExportExamId || "",
+        examVersion: options.examExportCacheVersion || "",
+        title: options.examTitle || options.scopeTitle || "汉语言文学学科基础试卷",
+        durationMinutes: examDurationMinutes,
+        totalScore: Number(options.examDeclaredTotalScore) || 0,
+        questions: questionQueue,
+      })
+      : "";
+    this._examExportCacheKey = examExportCacheKey;
+    const cachedExamExport = examExportCacheKey ? readExamExportCache(examExportCacheKey) : null;
+    const cachedExamExportFiles = cachedExamExport
+      ? cachedExamExport.files.map((file) => ({
+        ...file,
+        remoteUrl: /^https?:\/\//i.test(file.remoteUrl || "")
+          ? file.remoteUrl
+          : (file.remoteUrl && apiBaseUrl ? `${apiBaseUrl}${file.remoteUrl}` : ""),
+      }))
+      : [];
     this.setData(
       {
-        beans: getApp().globalData.beans,
+        beans: app.globalData.beans,
         practiceMode,
         submitted: practiceMode === "memorize",
         bookmarked,
@@ -1332,6 +1365,9 @@ Page({
         examDurationMinutes: practiceMode === "exam" ? examDurationMinutes : 0,
         examExportAvailable: practiceMode === "exam",
         examExportExamId: practiceMode === "exam" ? String(options.examExportExamId || "") : "",
+        examExportResult: cachedExamExport ? cachedExamExport.exportRecord : null,
+        examExportFiles: cachedExamExportFiles,
+        examExportSavedLocally: Boolean(cachedExamExport),
         examSelectionRules: practiceMode === "exam" && Array.isArray(options.examSelectionRules) ? options.examSelectionRules : [],
         examDeclaredTotalScore: practiceMode === "exam" ? Math.max(0, Number(options.examDeclaredTotalScore) || 0) : 0,
         questionVote: storedVote.vote || "",
@@ -2219,7 +2255,7 @@ Page({
       this.setData({ examExportError: "暂时无法连接导出服务器" });
       return;
     }
-    this.setData({ examExporting: true, examExportError: "", examExportResult: null, examExportFiles: [] });
+    this.setData({ examExporting: true, examExportError: "" });
     wx.request({
       url: `${baseUrl}/api/exam-exports`,
       method: "POST",
@@ -2251,14 +2287,36 @@ Page({
     const baseUrl = String(getApp().globalData.apiBaseUrl || "").replace(/\/$/, "");
     const files = exportRecord.files.slice(0, 2);
     const downloaded = [];
+    const previousResult = this.data.examExportResult;
+    const previousFiles = this.data.examExportFiles;
+    const previousSavedLocally = this.data.examExportSavedLocally;
+    const failDownload = (label) => {
+      this.setData({
+        examExporting: false,
+        examExportResult: previousResult || exportRecord,
+        examExportFiles: previousFiles.length ? previousFiles : downloaded,
+        examExportSavedLocally: previousSavedLocally,
+        examExportError: `${label}下载失败，可重新下载整套`,
+      });
+    };
     const next = (index) => {
       if (index >= files.length) {
         const normalizedRecord = {
           ...exportRecord,
           reviewQuestionText: (exportRecord.reviewQuestionNumbers || []).join("、"),
         };
-        this.setData({ examExporting: false, examExportResult: normalizedRecord, examExportFiles: downloaded, examExportError: "" });
-        wx.showToast({ title: "试卷和答案已生成", icon: "success" });
+        const savedLocally = saveExamExportCache(this._examExportCacheKey, {
+          exportRecord: normalizedRecord,
+          files: downloaded,
+        });
+        this.setData({
+          examExporting: false,
+          examExportResult: normalizedRecord,
+          examExportFiles: downloaded,
+          examExportSavedLocally: savedLocally,
+          examExportError: "",
+        });
+        wx.showToast({ title: savedLocally ? "试卷和答案已保留" : "试卷和答案已生成", icon: "success" });
         return;
       }
       const file = files[index];
@@ -2272,18 +2330,22 @@ Page({
         timeout: 30000,
         success: (result) => {
           if (result.statusCode !== 200 || !result.tempFilePath) {
-            this.setData({ examExporting: false, examExportResult: exportRecord, examExportFiles: downloaded, examExportError: `${file.label}下载失败，可重新下载整套` });
+            failDownload(file.label);
             return;
           }
-          const complete = (localPath) => {
-            downloaded.push({ ...file, remoteUrl, localPath });
+          const complete = (localPath, persistent) => {
+            downloaded.push({ ...file, remoteUrl, localPath, persistent });
             next(index + 1);
           };
           if (typeof wx.saveFile === "function") {
-            wx.saveFile({ tempFilePath: result.tempFilePath, success: (saved) => complete(saved.savedFilePath || result.tempFilePath), fail: () => complete(result.tempFilePath) });
-          } else complete(result.tempFilePath);
+            wx.saveFile({
+              tempFilePath: result.tempFilePath,
+              success: (saved) => complete(saved.savedFilePath || result.tempFilePath, Boolean(saved.savedFilePath)),
+              fail: () => complete(result.tempFilePath, false),
+            });
+          } else complete(result.tempFilePath, false);
         },
-        fail: () => this.setData({ examExporting: false, examExportResult: exportRecord, examExportFiles: downloaded, examExportError: `${file.label}下载失败，可重新下载整套` }),
+        fail: () => failDownload(file.label),
       });
     };
     next(0);
@@ -2292,11 +2354,26 @@ Page({
   openExamExportFile(event) {
     const kind = String(event.currentTarget.dataset.kind || "");
     const file = this.data.examExportFiles.find((item) => item.kind === kind);
+    const invalidateLocalCache = () => {
+      removeExamExportCache(this._examExportCacheKey);
+      this.setData({
+        examExportResult: null,
+        examExportFiles: [],
+        examExportSavedLocally: false,
+        examExportError: "本地文件已失效，请重新生成并下载",
+      });
+    };
     if (!file || !file.localPath || typeof wx.openDocument !== "function") {
-      wx.showToast({ title: "文件尚未下载完成", icon: "none" });
+      if (this.data.examExportSavedLocally) invalidateLocalCache();
+      else wx.showToast({ title: "文件尚未下载完成", icon: "none" });
       return;
     }
-    wx.openDocument({ filePath: file.localPath, fileType: "pdf", showMenu: true, fail: () => wx.showToast({ title: "文件打开失败", icon: "none" }) });
+    wx.openDocument({
+      filePath: file.localPath,
+      fileType: "pdf",
+      showMenu: true,
+      fail: invalidateLocalCache,
+    });
   },
 
   onShareAppMessage() {

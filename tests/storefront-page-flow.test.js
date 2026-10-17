@@ -205,7 +205,9 @@ test("account page interactions keep recharge, ledger, orders and renewal usable
   assert.equal(page.data.selectedBeanId, "beans");
   page.openRechargeSheet();
   page.paySelectedBeanPack();
-  assert.match(context.getModal().content, /不会扣款/);
+  assert.equal(page.data.paymentChannelEnabled, false);
+  assert.match(context.getModal().title, /充值暂未开放/);
+  assert.match(context.getModal().content, /不会扣款.*不会生成订单/);
   page.setData({ rechargeSheetOpen: true });
   page.onHide();
   assert.equal(page.data.rechargeSheetOpen, false);
@@ -289,6 +291,9 @@ test("profile keeps one account entry and registers the order page", () => {
   assert.match(store, /总资产（豆币）/);
   assert.match(store, /收支明细/);
   assert.doesNotMatch(store, /AI 额度/);
+  assert.match(store, /disabled="\{\{!paymentChannelEnabled\}\}"/);
+  assert.match(store, /暂未开放/);
+  assert.doesNotMatch(store, />立即支付\{\{/);
   assert.equal(storeConfig.navigationBarTitleText, "我的账户");
   assert.ok(appConfig.pages.includes("pages/store-order/store-order"));
 });

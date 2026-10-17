@@ -98,6 +98,8 @@ Page({
     selectedBeanId: "",
     selectedBean: null,
     rechargeSheetOpen: false,
+    // 真实微信支付未接入前始终关闭；接入并验收后由支付通道状态决定。
+    paymentChannelEnabled: false,
     loading: false,
     loadFailed: false,
     // 四种可见状态：guest（未登录）/ loading（加载中）/ failed（加载失败）/ ready
@@ -266,10 +268,19 @@ Page({
     this.setData({ rechargeSheetOpen: false });
   },
 
-  // 弹窗底栏「立即支付」：仍走原有购买确认（微信支付通道未启用，不扣款）。
+  // 弹窗底栏：支付通道未启用时只说明现状，不发起扣款，也不生成待支付订单。
   paySelectedBeanPack() {
     const selected = this.data.selectedBean;
     if (!selected) return;
+    if (!this.data.paymentChannelEnabled) {
+      wx.showModal({
+        title: "充值暂未开放",
+        content: "微信支付通道尚未启用，本次不会扣款，也不会生成订单。",
+        showCancel: false,
+        confirmText: "我知道了",
+      });
+      return;
+    }
     this.startPurchase({ currentTarget: { dataset: { id: selected.id } } });
   },
 
@@ -313,14 +324,11 @@ Page({
     wx.navigateTo({ url: `/pages/store-order/store-order?packageKey=${encodeURIComponent(packageKey)}` });
   },
 
-  // 购买须知 / 退款说明：沿用原有口径文案（套餐订单与赠送豆币分账），不新造规则。
+  // 购买须知 / 退款说明（2026-10-17 产品负责人要求）：不再弹硬编码文案，
+  // 直接打开后台「平台设置」维护的《退款政策》已发布版本（口径唯一维护处＝平台设置模块，DEC-110）。
+  // 未发布/读不到时由 legal 页如实显示「尚未发布 / 暂时读不到」，本页不补写任何退款口径。
   openPurchaseNotice() {
-    wx.showModal({
-      title: "购买须知与退款说明",
-      content: "套餐订单与赠送豆币分账，权益以支付确认页为准。微信支付通道尚未启用；启用后如需退款，请通过「帮助与反馈」联系我们。",
-      showCancel: false,
-      confirmText: "我知道了",
-    });
+    wx.navigateTo({ url: "/pages/legal/legal?doc=refund" });
   },
 
   openLegal(event) {

@@ -31,8 +31,8 @@ const STUDY_FIELD_NAMES = new Set(subjects.map((subject) => String(subject.name 
  */
 const GENDER_CHOICES = ["male", "female", "undisclosed"];
 const AGE_BAND_CHOICES = ["16_18", "19_22", "23_26", "27_30", "31_plus"];
-/** 报考年份只收"当年 ~ 当年+5"的整数：跨年后不改历史值，只影响新填写的档位。 */
-const EXAM_YEAR_SPAN = 5;
+/** 报考年份只收"当年与之后 3 年（共 4 档）"的整数（2026-10-17 产品负责人口径，与客户端 onboarding-options 同值）：跨年后不改历史值，只影响新填写的档位。 */
+const EXAM_YEAR_SPAN = 3;
 const PUBLIC_ID_MIN = 100000000;
 const PUBLIC_ID_MAX = 1000000000;
 
@@ -70,7 +70,21 @@ function assignPublicIds(users) {
 }
 
 function initialState() {
-  return { users: [], sessions: [] };
+  return { users: [], sessions: [], accountDeletions: [] };
+}
+
+/**
+ * 旧 users.json / 旧内存夹具没有 `accountDeletions`。读路径统一补齐，
+ * 其余字段原样保留；注销记录只存时间与随机事件 ID，不保留账号身份。
+ */
+function normalizeState(value) {
+  const state = value && typeof value === "object" ? value : {};
+  return {
+    ...state,
+    users: Array.isArray(state.users) ? state.users : [],
+    sessions: Array.isArray(state.sessions) ? state.sessions : [],
+    accountDeletions: Array.isArray(state.accountDeletions) ? state.accountDeletions : [],
+  };
 }
 
 function tokenHash(token) {
@@ -129,6 +143,41 @@ function normalizePublicLearningStats(value) {
   return value;
 }
 
+/**
+ * 生日（2026-10-17 第九次调整：注册引导第 2 步由年龄段改为具体生日，产品负责人明确"既然能保存具体生日，
+ * 那就不再需要换算年龄段"）。
+ * 只接受 `YYYY-MM-DD` 或空串（空串＝清空）；必须是真实存在的日期（2 月 30 日这类直接拒绝），
+ * 并且落在 [1940-01-01, 今天] 之间——未来日期明显是客户端造假或时区错乱，不接受。
+ */
+function normalizeBirthday(value, now = Date.now()) {
+  const raw = String(value == null ? "" : value).trim();
+  if (!raw) return "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw new Error("birthday_invalid");
+  const [year, month, day] = raw.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year
+    || parsed.getUTCMonth() !== month - 1
+    || parsed.getUTCDate() !== day
+  ) {
+    throw new Error("birthday_invalid");
+  }
+  const today = new Date(now);
+  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  if (parsed.getTime() > todayUtc) throw new Error("birthday_invalid");
+  if (parsed.getTime() < Date.UTC(1940, 0, 1)) throw new Error("birthday_invalid");
+  return raw;
+}
+
+/** 读路径上的生日兜底：历史账号没有该字段、或存的值已不合法，都当作未填，不让读接口抛错。 */
+function normalizeBirthdayOrBlank(value, now = Date.now()) {
+  try {
+    return normalizeBirthday(value, now);
+  } catch (error) {
+    return "";
+  }
+}
+
 /** 固定档位字段（性别 / 年龄段）：空串=未填，其余必须是登记过的档位码。 */
 function normalizeChoice(value, choices, errorCode) {
   const text = String(value == null ? "" : value).trim();
@@ -156,10 +205,14 @@ function normalizeExamYear(value, now = Date.now()) {
   return year;
 }
 
-/** 引导项是否填全（性别 + 年龄段 + 目标考试项目 + 报考年份）：派生值，不落库，避免与四个字段双写。 */
+/**
+ * 引导项是否填全（性别 + 生日 + 目标考试项目 + 报考年份）：派生值，不落库，避免与四个字段双写。
+ * 2026-10-17 第九次调整：第 2 项由「年龄段」改为「具体生日」——产品负责人明确不再需要换算年龄段，
+ * 因此这里只认 birthday；ageBand 字段保留（老账号仍有值、接口继续回传），但不再参与必填判定。
+ */
 function onboardingCompleted(user) {
   return GENDER_CHOICES.includes(String(user && user.gender || ""))
-    && AGE_BAND_CHOICES.includes(String(user && user.ageBand || ""))
+    && Boolean(normalizeBirthdayOrBlank(user && user.birthday))
     && Boolean(normalizeExamProjectIdOrBlank(user && user.examProjectId))
     && Number(user && user.examYear) > 0;
 }
@@ -186,6 +239,8 @@ function publicUser(user) {
     publicLearningStats: user.publicLearningStats === true,
     // 注册引导收集的用户属性（2026-10-03）：读路径统一兜底，接口形状对老账号保持稳定。
     gender: GENDER_CHOICES.includes(String(user.gender || "")) ? String(user.gender) : "",
+    // 2026-10-17 第九次调整：引导第 2 项改存具体生日；ageBand 保留回传，供老账号与设置页兼容。
+    birthday: normalizeBirthdayOrBlank(user.birthday),
     ageBand: AGE_BAND_CHOICES.includes(String(user.ageBand || "")) ? String(user.ageBand) : "",
     examProjectId: normalizeExamProjectIdOrBlank(user.examProjectId),
     examYear: Number(user.examYear) > 0 ? Number(user.examYear) : 0,
@@ -210,10 +265,10 @@ function normalizeAgreements(raw) {
 }
 
 function createUserAuthStore(adapter) {
-  const read = () => clone(adapter.read());
+  const read = () => normalizeState(clone(adapter.read()));
   const write = (state) => adapter.write(clone(state));
   return {
-    exportState: () => clone(adapter.read()),
+    exportState: () => clone(normalizeState(adapter.read())),
     assignPublicIds() {
       const state = read();
       const assigned = assignPublicIds(state.users);
@@ -222,6 +277,45 @@ function createUserAuthStore(adapter) {
     },
     listUsers() {
       return read().users.map((user) => publicUser(user));
+    },
+    /**
+     * 后台用户管理总览。累计注册 = 当前账号 + 有记录的注销账号。
+     * `accountDeletions` 是本次功能上线后才开始写的；`deletionTrackingSince` 用来说明边界，
+     * 不能把它当成"全生命周期注销数"。
+     */
+    accountSummary(now = Date.now()) {
+      const state = read();
+      const startOfToday = new Date(now);
+      startOfToday.setHours(0, 0, 0, 0);
+      const todayStart = startOfToday.getTime();
+      const sevenDayStart = todayStart - 6 * 24 * 60 * 60 * 1000;
+      const users = state.users;
+      const deletions = state.accountDeletions
+        .map((item) => ({ id: String(item && item.id || ""), deletedAt: Number(item && item.deletedAt) || 0 }))
+        .filter((item) => item.deletedAt > 0);
+      const activeSessionUsers = new Set(
+        state.sessions
+          .filter((session) => Number(session && session.expiresAt) > now)
+          .map((session) => String(session && session.userId || ""))
+          .filter(Boolean),
+      );
+      const deletionTrackingSince = deletions.reduce(
+        (earliest, item) => (earliest ? Math.min(earliest, item.deletedAt) : item.deletedAt),
+        0,
+      );
+      return {
+        currentUsers: users.length,
+        registeredTotal: users.length + deletions.length,
+        newToday: users.filter((user) => Number(user.createdAt) >= todayStart).length,
+        newLast7Days: users.filter((user) => Number(user.createdAt) >= sevenDayStart).length,
+        onboardedUsers: users.filter((user) => onboardingCompleted(user)).length,
+        activeSessions: activeSessionUsers.size,
+        deletedTotal: deletions.length,
+        deletedToday: deletions.filter((item) => item.deletedAt >= todayStart).length,
+        deletedLast7Days: deletions.filter((item) => item.deletedAt >= sevenDayStart).length,
+        deletionTrackingSince,
+        latestDeletionAt: deletions.reduce((latest, item) => Math.max(latest, item.deletedAt), 0),
+      };
     },
     resolveUserId(identifier) {
       const value = String(identifier || "").trim();
@@ -254,7 +348,9 @@ function createUserAuthStore(adapter) {
           // 学习数据公开与否属隐私开关：默认不公开，由用户自己在资料页打开。
           publicLearningStats: false,
           // 注册引导四项：新账号一律未填，由引导层必填提交（2026-10-03）。
+          // 2026-10-17 第九次调整：第 2 项改存 birthday（ageBand 仍保留键位，老数据继续可读）。
           gender: "",
+          birthday: "",
           ageBand: "",
           examProjectId: "",
           examYear: 0,
@@ -296,7 +392,7 @@ function createUserAuthStore(adapter) {
       const changes = patch && typeof patch === "object" ? patch : {};
       const has = (field) => Object.prototype.hasOwnProperty.call(changes, field);
       const fields = ["nickname", "avatarUrl", "signature", "region", "studyField", "dailyGoalMinutes", "publicLearningStats",
-        "gender", "ageBand", "examProjectId", "examYear"];
+        "gender", "birthday", "ageBand", "examProjectId", "examYear"];
       if (!fields.some(has)) throw new Error("profile_patch_required");
       const state = read();
       const user = state.users.find((item) => item.id === target);
@@ -310,6 +406,7 @@ function createUserAuthStore(adapter) {
       const dailyGoalMinutes = has("dailyGoalMinutes") ? normalizeDailyGoalMinutes(changes.dailyGoalMinutes) : 0;
       const publicLearningStats = has("publicLearningStats") ? normalizePublicLearningStats(changes.publicLearningStats) : false;
       const gender = has("gender") ? normalizeChoice(changes.gender, GENDER_CHOICES, "gender_invalid") : "";
+      const birthday = has("birthday") ? normalizeBirthday(changes.birthday, now) : "";
       const ageBand = has("ageBand") ? normalizeChoice(changes.ageBand, AGE_BAND_CHOICES, "age_band_invalid") : "";
       const examProjectId = has("examProjectId") ? normalizeTargetExamProject(changes.examProjectId) : "";
       const examYear = has("examYear") ? normalizeExamYear(changes.examYear, now) : 0;
@@ -324,6 +421,7 @@ function createUserAuthStore(adapter) {
       if (has("dailyGoalMinutes")) user.dailyGoalMinutes = dailyGoalMinutes;
       if (has("publicLearningStats")) user.publicLearningStats = publicLearningStats;
       if (has("gender")) user.gender = gender;
+      if (has("birthday")) user.birthday = birthday;
       if (has("ageBand")) user.ageBand = ageBand;
       if (has("examProjectId")) user.examProjectId = examProjectId;
       if (has("examYear")) user.examYear = examYear;
@@ -410,12 +508,19 @@ function createUserAuthStore(adapter) {
       return removed;
     },
 
-    deleteUser(userId) {
+    deleteUser(userId, now = Date.now()) {
       const state = read();
       const before = state.users.length;
       state.users = state.users.filter((item) => item.id !== userId);
       state.sessions = state.sessions.filter((item) => item.userId !== userId);
-      if (state.users.length !== before) write(state);
+      if (state.users.length !== before) {
+        // 隐私边界：只记录"发生过一次注销"与时间，不保留 userId、openid、昵称或任何可回溯身份。
+        state.accountDeletions.push({
+          id: `account-deletion-${crypto.randomUUID()}`,
+          deletedAt: now,
+        });
+        write(state);
+      }
       return state.users.length !== before;
     },
   };
@@ -437,7 +542,7 @@ function createFileUserAuthStore(filePath = path.resolve(__dirname, "../../../.r
 }
 
 function createMemoryUserAuthStore(state = initialState()) {
-  let value = clone(state);
+  let value = clone(normalizeState(state));
   return createUserAuthStore({ read: () => clone(value), write: (next) => { value = clone(next); } });
 }
 

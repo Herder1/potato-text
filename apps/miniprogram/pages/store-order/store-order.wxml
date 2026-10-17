@@ -69,6 +69,6 @@
     </view>
   </view>
 
-  <view class="order-footnote" bindtap="openPurchaseNotice" role="button" aria-label="购买须知与退款说明">购买须知 · 退款说明 ›</view>
+  <view class="order-footnote" bindtap="openPurchaseNotice" role="button" aria-label="购买须知与退款政策">购买须知 · 退款政策 ›</view>
   </block>
 </view>

@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { ONBOARDING_SKIP_KEY, PRIVACY_AGREED_KEY } = require("../apps/miniprogram/utils/onboarding-options");
+const { ONBOARDING_SKIP_KEY } = require("../apps/miniprogram/utils/onboarding-options");
 
 // 启动闸门（2026-10-03 口径）：未登录冷启动拦一次进注册引导页；「先随便看看」之后不再拦。
 // 这里锁的是闸门本身的四个边界：已登录放行、有跳过标记放行、已经在引导页不重复跳（防循环）、跳转只发一次。
@@ -29,20 +29,21 @@ function createApp(options = {}) {
   const { storage, ...storageApi } = storageMock(options.storage || []);
   const launches = [];
   const syncs = [];
-  const privacyHandlers = [];
   const definition = loadApp({
     ...storageApi,
     reLaunch: ({ url }) => launches.push(url),
     switchTab: ({ url }) => launches.push(url),
     showToast: () => {},
-    onNeedPrivacyAuthorization: (handler) => privacyHandlers.push(handler),
+    onNeedPrivacyAuthorization: () => {
+      throw new Error("must not intercept the native privacy dialog");
+    },
   });
   const app = {
     ...definition,
     globalData: structuredClone(definition.globalData),
     syncPersonalAssets: () => syncs.push(Date.now()),
   };
-  return { app, storage, launches, syncs, privacyHandlers };
+  return { app, storage, launches, syncs };
 }
 
 function unload() {
@@ -113,37 +114,12 @@ test("the gate stays inert where reLaunch is unavailable instead of throwing", (
   }
 });
 
-test("the native privacy ask is answered from the local consent flag, or refused with a visible hint", () => {
-  const { app, storage, privacyHandlers } = createApp({});
+test("the app leaves the native privacy dialog to WeChat instead of auto-answering it", () => {
+  createApp({});
   try {
-    assert.equal(app.setupPrivacyAuthorization(), true);
-    assert.equal(privacyHandlers.length, 1, "微信侧的原生授权询问只接管一次");
-
-    const answers = [];
-    const resolve = (value) => answers.push(value);
-    privacyHandlers[0](resolve);
-    assert.deepEqual(answers[0], { event: "disagree" }, "没同意过就不能替用户点头");
-
-    storage.set(PRIVACY_AGREED_KEY, true);
-    privacyHandlers[0](resolve);
-    assert.deepEqual(answers[1], { event: "agree" }, "本机已同意过就直接放行，不再弹第二个框");
-
-    storage.delete(PRIVACY_AGREED_KEY);
-    app.globalData.loggedIn = true;
-    privacyHandlers[0](resolve);
-    assert.deepEqual(answers[2], { event: "agree" }, "已登录等于走过引导闸门");
-  } finally {
-    unload();
-  }
-});
-
-test("the privacy hook never throws on base libraries that lack it, and onLaunch wires it up", () => {
-  const { app } = createApp({});
-  try {
-    delete global.wx.onNeedPrivacyAuthorization;
-    assert.equal(app.setupPrivacyAuthorization(), false);
     const source = fs.readFileSync(require.resolve("../apps/miniprogram/app.js"), "utf8");
-    assert.match(source, /onLaunch\(\) \{\s*this\.setupPrivacyAuthorization\(\);/);
+    assert.doesNotMatch(source, /onNeedPrivacyAuthorization/);
+    assert.doesNotMatch(source, /setupPrivacyAuthorization/);
   } finally {
     unload();
   }

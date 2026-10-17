@@ -203,6 +203,16 @@ function createUserRestrictionStore(adapter) {
       return statusFrom(itemsForUser(state, String(userId || ""), now), String(userId || ""));
     },
 
+    /** 后台用户列表一次取齐当前限制状态，避免逐用户重复读整个 Store。 */
+    statusesFor(userIds = [], now = Date.now()) {
+      const targets = [...new Set((Array.isArray(userIds) ? userIds : []).map((item) => String(item || "").trim()).filter(Boolean))];
+      const byUser = new Map(targets.map((userId) => [userId, []]));
+      activeItems(read(), now).forEach((item) => {
+        if (byUser.has(item.userId)) byUser.get(item.userId).push(item);
+      });
+      return Object.fromEntries(targets.map((userId) => [userId, statusFrom(byUser.get(userId) || [], userId)]));
+    },
+
     apply({ userId, types, type, reason, durationDays, expiresAt, createdBy, createdById, note } = {}, now = Date.now()) {
       const target = cleanText(userId, 80);
       if (!target) throw new Error("user_restriction_target_required");

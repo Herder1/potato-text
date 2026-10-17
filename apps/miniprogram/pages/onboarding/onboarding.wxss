@@ -1,88 +1,326 @@
-/* 注册引导层：半透明背景 + 底部上滑面板。
-   2026-10-03 真机反馈两处：① 面板被撑满全屏，下面一大片空着 → 改成"贴着内容高度、底对齐"；
-   ② 一键登录按钮与字号偏大 → 整页字号/内边距下调一档，走轻盈感。
+/* 注册引导层（2026-10-17 改版，产品负责人指定参照得物登录页的干净风格）：
+   ① 深色遮罩 + 底部上滑面板（白卡 + 手柄）整块去掉，改成整页白底；
+   ② 品牌从"左对齐小方块 + 标题 + 副标题"改成居中的大方块 logo + 一行副标题；
+   ③ 主按钮下方那行文字入口由「先随便看看」承担（对位得物的「手机号登录」）；
+   ④ 协议勾选行挪到页面最底部、居中排布，三个文档入口同一行。
    配色沿用仓库既有品牌青 #0b9588；尺寸单位一律 rpx（渲染验证脚本按 375pt 宽 → 1rpx = 0.5px 换算）。 */
+page {
+  background: #ffffff;
+}
+
 .onboarding-page {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
   min-height: 100vh;
   box-sizing: border-box;
-}
-
-.onboarding-backdrop {
-  position: fixed;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(16, 22, 20, .82) 0%, rgba(16, 22, 20, .92) 100%);
-}
-
-/* 只包住内容：不再用 min-height 撑满，下面不会留一大片空白。 */
-.onboarding-sheet {
-  position: relative;
-  padding: 16rpx 36rpx calc(32rpx + env(safe-area-inset-bottom));
-  border-radius: 32rpx 32rpx 0 0;
   background: #ffffff;
-  box-sizing: border-box;
 }
 
-.sheet-handle {
-  width: 64rpx;
-  height: 6rpx;
-  margin: 6rpx auto 18rpx;
-  border-radius: 999rpx;
-  background: rgba(31, 36, 33, .14);
-}
-
-.sheet-brand {
+/* 登录阶段：竖向四段——品牌区（据上、留白由 vh 定）、按钮区、弹性留白、页底协议行。
+   比例对齐得物登录页：logo 顶约在 17% 高度、主按钮约在 41%。 */
+.onboarding-page-login {
   display: flex;
-  align-items: center;
-  gap: 16rpx;
-  margin-bottom: 22rpx;
+  flex-direction: column;
+  padding: 0 64rpx calc(40rpx + env(safe-area-inset-bottom));
 }
 
-.brand-mark {
-  width: 64rpx;
-  height: 64rpx;
-  border-radius: 18rpx;
-  background: #0b9588;
+.login-hero {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 14vh;
+}
+
+/* 品牌位＝产品商标（土豆吉祥物）本身，直接显示图片，不再画黑底白字方块。
+   图片是「淡蓝双圆水泡罩 + 土豆」（照产品负责人最初那张商标图的双圆结构做的蓝色版），
+   圆外 3% 透明边：容器 200rpx 时圆罩视觉直径约 188rpx。 */
+.brand-badge {
+  width: 200rpx;
+  height: 200rpx;
+  display: block;
+}
+
+.login-hero .brand-sub {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  text-align: center;
+}
+
+.login-actions {
+  margin-top: 12vh;
+  padding-bottom: 8rpx;
+}
+
+/* 主按钮：整宽、方角微圆（得物按钮是矩形微圆角），高度 96rpx 保住点击热区。 */
+.primary-button {
+  padding: 0;
+  height: 96rpx;
+  line-height: 96rpx;
+  border-radius: 12rpx;
+  /* 2026-10-17 第二十二次调整（产品负责人：把主按钮本身当成进度条）：
+     左侧 `--step-progress` 比例填主题深绿、其余填浅绿；第 1/3 步就是 1/3、2/3，最后一步整条深绿。
+     比例由 wxml 内联 `style="--step-progress: {{…}}%"` 给；登录页不传该变量，默认 100%（整条深绿）。
+     用 CSS 变量而不是直接写 background，是为了让 `.primary-button-busy` 的样式仍能覆盖背景。 */
+  background: linear-gradient(
+    90deg,
+    #0b9588 0%,
+    #0b9588 var(--step-progress, 100%),
+    #5cb3a7 var(--step-progress, 100%),
+    #5cb3a7 100%
+  );
   color: #ffffff;
   font-size: 30rpx;
   font-weight: 600;
+  text-align: center;
+}
+
+.primary-button-busy {
+  opacity: .55;
+}
+
+/* 三步采集阶段的主按钮由 .step-footer 统一留白，自身不再带上边距（它已沉到页面底部）。 */
+.sheet .primary-button {
+  margin-top: 0;
+}
+
+/* 文字副入口（对位得物的「手机号登录」）：无边框、无底色，纯文字居中。
+   2026-10-17 产品负责人：把这里改成原来那行小字的灰绿色（原 .skip-note 的 #a6ada8）。
+   同一轮把那行小字「可以浏览题库和练习，但这次的数据不会保存」整行删掉了。 */
+.skip-entry {
+  margin-top: 36rpx;
+  font-size: 28rpx;
+  line-height: 1.5;
+  color: #a6ada8;
+  text-align: center;
+}
+
+/* 页底协议行：居中、可换行；勾选框是圆形（得物也是圆点式），文字与框顶端对齐。
+   左右各放宽 20rpx（比页面内边距宽一点），让三个协议名尽量排在一行；
+   每个 <text> 单独 nowrap，宁可整段折行也不要把「《隐私政策》」拆成两半。 */
+.consent-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10rpx;
+  margin: auto -20rpx 0;
+  padding: 20rpx 0 8rpx;
+}
+
+.consent-copy text {
+  white-space: nowrap;
+}
+
+.consent-box {
+  flex: none;
+  width: 32rpx;
+  height: 32rpx;
+  margin-top: 6rpx;
+  border-radius: 999rpx;
+  border: 2rpx solid rgba(31, 36, 33, .22);
+  background: #ffffff;
+  color: #ffffff;
+  font-size: 20rpx;
+  line-height: 28rpx;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.consent-box-on {
+  border-color: #0b9588;
+  background: #0b9588;
+}
+
+.consent-copy {
+  flex: 0 1 auto;
+  font-size: 22rpx;
+  line-height: 1.75;
+  color: #8a938d;
+  text-align: left;
+}
+
+.consent-link {
+  color: #0b9588;
+}
+
+.hint {
+  margin-top: 16rpx;
+  font-size: 24rpx;
+  line-height: 1.5;
+  color: #c0392b;
+  text-align: center;
+}
+
+/* 登录后的三步采集阶段：同一个页面、白底，内容从上往下排，主按钮沉到底部（参考图布局）。 */
+.onboarding-page-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* 2026-10-17 第十九次调整：顶部内边距必须是 0。
+     `.step-header` 的高度已经包含"状态栏到胶囊顶部"的留白（见 onboarding.js 的 navBarHeight），
+     这里再留 16rpx 会把整行往下推 8px，真机上看就是进度条比胶囊低一截。 */
+  padding: 0 44rpx calc(40rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+
+/* 三步采集页顶部：只剩左边「‹」返回（品牌行与进度圆点按参考图删了）。
+   2026-10-17：右上角原来的「跳过」会被微信胶囊挡住，已挪到「下一步」按钮下面。 */
+.step-header {
+  display: flex;
+  align-items: center;
+  height: 88rpx;
+}
+
+.step-back {
+  display: flex;
+  align-items: center;
+  /* 2026-10-17 第二十一次调整（产品负责人：「返回图标和下方文案左对齐」）：
+     容器内改左对齐，箭头贴在内容左边界，与标题/说明/胶囊同一条竖线。 */
+  justify-content: flex-start;
+  width: 88rpx;
+  height: 100%;
+  color: #1f2421;
+}
+
+/* 2026-10-17 第二十次调整：原来打的是 `‹` 字符，各端字体基线不同，几何居中后视觉仍偏低
+   （产品负责人：「上一步按钮好像低了」）。改成 CSS 画的箭头：右+下两条边框旋转 135°，
+   视觉中心就是盒子中心，与微信胶囊同一条中线，不受字形影响。
+   第二十一次：`margin-left: 4rpx` 抵掉旋转后视觉外框向左溢出的那一点（20rpx 盒子转 45° 的外接框
+   比原盒宽约 8rpx，左右各溢出 4rpx），使箭头的可见左缘正好落在内容左边界上。 */
+.step-back-arrow {
+  width: 20rpx;
+  height: 20rpx;
+  margin-left: 4rpx;
+  border-style: solid;
+  border-color: currentColor;
+  border-width: 0 3rpx 3rpx 0;
+  transform: rotate(135deg);
+}
+
+.step-back-hidden {
+  visibility: hidden;
+}
+
+/* 2026-10-17 第二十一次调整（产品负责人：「去掉进度条」）：
+   `.step-progress` / `.step-progress-bar` / `.step-progress-on` 三条样式整段移除，
+   wxml 里对应的三段进度条也一并删掉——顶部现在是「返回箭头 + 微信胶囊」，不再有步骤指示。 */
+
+/* 第 2 步的标题区（照参考图 1）：左对齐大标题 + 紧跟的灰色副标题。 */
+.birthday-head {
+  /* 2026-10-17 第二十一次调整：左右内边距归零。`.sheet` 已经有 44rpx 内容边距，
+     这里再叠 44rpx 会让第 2 步的标题比第 1、3 步内缩一截，
+     也让返回箭头（只吃 `.sheet` 那一层）跟标题左边界对不上（产品负责人：「返回图标和下方文案左对齐」）。 */
+  padding: 16rpx 0 0;
+  text-align: left;
+}
+
+.birthday-title {
+  font-size: 52rpx;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #1f2421;
+}
+
+.birthday-emoji {
+  margin-left: 8rpx;
+  font-size: 44rpx;
+}
+
+.birthday-subtitle {
+  margin-top: 6rpx;
+  font-size: 30rpx;
+  line-height: 1.4;
+  color: #8a938d;
+}
+
+/* 生日三列滚轮（照参考图 1）：常驻显示、选中行夹在两条细线之间。
+   2026-10-17 第十一次调整：产品负责人要"行间距再拉大一点"、年月日与上方文案之间"留更多白"、
+   整体更轻盈——行高与 indicator 一起从 112rpx 提到 120rpx（两者必须相等），
+   容器高度提到 400rpx（3.3 行，上下各留一点渐隐），与副标题之间的间距由 32rpx 放到 76rpx。 */
+.birthday-wheel {
+  width: 100%;
+  height: 400rpx;
+  margin-top: 76rpx;
+}
+
+.wheel-item {
+  width: 100%;
+  height: 120rpx;
+  /* 真机上选中行的字看着偏上：原来靠 `line-height: 88rpx` 居中，而 line-height
+     的居中点受中文字体 ascent/descent 影响，视觉上会偏高；改成 flex 居中与指示框严格对齐。 */
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.brand-title {
-  font-size: 30rpx;
-  font-weight: 600;
-  color: #1f2421;
-  line-height: 1.2;
-}
-
-.brand-sub {
-  margin-top: 2rpx;
-  font-size: 22rpx;
-  color: #7c857f;
-}
-
-.sheet-title {
   font-size: 34rpx;
+  color: #1f2421;
+}
+
+/* 滚轮下方的保密小字：参考图里这行是居中的灰字。 */
+.birthday-privacy {
+  margin-top: 16rpx;
+  /* 2026-10-17 第二十一次调整：同 `.birthday-head`，不再叠一层 44rpx（`.sheet` 已有）。 */
+  padding: 0;
+  text-align: center;
+  font-size: 24rpx;
+  line-height: 1.5;
+  color: #8a938d;
+}
+
+/* 「跳过」现在跟在主按钮下面，居中、纯文字、不抢主按钮的注意力。 */
+.step-skip {
+  margin-top: 28rpx;
+  font-size: 26rpx;
+  line-height: 1.6;
+  color: #8a938d;
+  text-align: center;
+}
+
+/* 内容区：2026-10-17 三次调整——主按钮不再贴页面底部（参考图按钮紧跟性别下面），
+   所以内容区不再吃掉剩余高度，宽度撑满即可。 */
+.step-body {
+  display: flex;
+  flex-direction: column;
+  padding-top: 24rpx;
+}
+
+/* 第 3 步（2026-10-17 第十四次调整，产品负责人：文案和按钮左对齐）：
+   标题、说明、标签、胶囊行一律左对齐，与主按钮的左边缘同一条竖线。 */
+.sheet-title {
+  font-size: 40rpx;
   font-weight: 600;
   color: #1f2421;
-  line-height: 1.3;
+  line-height: 1.35;
+  text-align: left;
 }
 
 .sheet-note {
-  margin-top: 8rpx;
+  margin-top: 10rpx;
   font-size: 24rpx;
   line-height: 1.55;
   color: #7c857f;
+  text-align: left;
+}
+
+.step-footer {
+  padding-top: 40rpx;
 }
 
 .field-group {
   margin-top: 22rpx;
+}
+
+/* 2026-10-17 第十四次调整：第一个分组（目标考试项目）与上方说明之间留更多白。 */
+.sheet-note + .field-group {
+  margin-top: 56rpx;
+}
+
+/* 2026-10-17 第十四次调整（产品负责人：文案和按钮左对齐）：
+   标签与胶囊行改为从左边起排，不再居中。 */
+.step-body .field-label {
+  text-align: left;
 }
 
 .field-label {
@@ -94,13 +332,14 @@
 .chip-row {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-start;
   gap: 12rpx;
   margin-top: 12rpx;
 }
 
 .chip {
   min-width: 108rpx;
-  box-sizing: border-box; /* 宽胶囊用 min-width:100%，不加这条内边距会把容器撑破（横向溢出） */
+  box-sizing: border-box; /* 内边距不把容器撑破（横向溢出） */
   padding: 12rpx 22rpx;
   border-radius: 999rpx;
   background: #f1f4f2;
@@ -110,17 +349,9 @@
   text-align: center;
 }
 
-.chip-wide {
-  min-width: 100%;
-  text-align: left;
-}
-
-.chip-sub {
-  display: block;
-  margin-top: 2rpx;
-  font-size: 20rpx;
-  color: #7c857f;
-}
+/* 2026-10-17 产品负责人：目标考试项目不再整行拉满、不再文字靠左，也不再带「广东 · 普通专升本」副标题。
+   原来的 .chip-wide（min-width:100% + text-align:left）与 .chip-sub 已在此删除；
+   项目胶囊现在与性别/年龄段/年份走同一套 .chip：宽度随内容、文字居中、多项目自动换行。 */
 
 .chip-active {
   background: rgba(11, 149, 136, .12);
@@ -134,204 +365,172 @@
   color: #c0392b;
 }
 
-.optional-row {
+/* 2026-10-17 三次调整（照产品负责人给的参考图）：
+   头像 = 一个浅灰圆、中间一枚相机图标 + 「上传头像」四个字；命中区是整个圆。 */
+.avatar-upload-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 22rpx;
-  padding: 18rpx 0;
-  border-top: 1rpx solid rgba(31, 36, 33, .06);
-  font-size: 26rpx;
-  color: #474d49;
-}
-
-.optional-arrow {
-  font-size: 22rpx;
-  color: #0b9588;
-}
-
-.optional-body {
-  padding-bottom: 4rpx;
-}
-
-.avatar-row {
-  display: flex;
-  align-items: center;
-  gap: 20rpx;
-}
-
-.optional-avatar {
-  width: 92rpx;
-  height: 92rpx;
-  border-radius: 999rpx;
-  background: #f1f4f2;
-}
-
-.optional-avatar-fallback {
-  display: flex;
+  /* 2026-10-17 第二十三次调整：交叉轴改为 center，避免头像被 flex 拉伸。 */
   align-items: center;
   justify-content: center;
-  font-size: 34rpx;
-  color: #0b9588;
+  /* 2026-10-17 第九次调整（产品负责人：不是全部整体下移，头像和头像以下下移）：
+     下移量落在这里，欢迎语保持原位。 */
+  margin-top: 64rpx;
 }
 
-/* 采集入口是覆盖在胶囊上的透明 button（同编辑资料页）。
-   2026-10-04 真机反馈"头像点不了"：老写法 `position: absolute; inset: 0; opacity: 0` 有两个坑——
-   ① `inset` 简写在部分安卓 X5 / 旧 iOS WebView 不生效，absolute 元素失去 size，
-      空内容的 button 宽度塌成 0，整块区域根本点不到；
-   ② `opacity: 0` 的元素在个别机型上被当成不可交互（也没有按下反馈，用户以为没反应）。
-   改为显式的 top/left/width/height + 视觉透明（background: transparent）。 */
-.avatar-shot-wrap {
-  position: relative;
-  flex: none;
-  width: 92rpx;
-  height: 92rpx;
-  border-radius: 999rpx;
-}
-.avatar-shot-button {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 999rpx;
-  line-height: normal;
-}
-.avatar-shot-button:active { background: rgba(11, 149, 136, .10); }
-.avatar-shot-button::after { border: 0; }
-
-.avatar-button-wrap {
-  position: relative;
-  padding: 12rpx 26rpx;
-  border-radius: 999rpx;
-  background: #f1f4f2;
+/* 2026-10-17 第七处调整（产品负责人新给的参考图）：头像上方一段三行欢迎语，左对齐、字号依次递减；
+   「Hey~」与主标题大、说明句小灰字。 */
+.intro {
+  /* 2026-10-17 第九次调整：欢迎语回到原位（上一版把它一起往下推了，产品负责人要的是
+     "头像和头像以下下移"，所以下移量挪到 .avatar-upload-row 的 margin-top 上）。 */
+  margin-top: 20rpx;
+  text-align: left;
 }
 
-.avatar-button-label {
-  font-size: 24rpx;
-  color: #0b9588;
-}
-
-.avatar-button {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 999rpx;
-  line-height: normal;
-}
-
-.avatar-button:active { background: rgba(11, 149, 136, .08); }
-.avatar-button::after { border: 0; }
-
-.optional-input {
-  margin-top: 18rpx;
-  padding: 18rpx 22rpx;
-  border-radius: 18rpx;
-  background: #f7f9f8;
-  font-size: 26rpx;
+.intro-hey {
+  font-size: 36rpx;
+  line-height: 1.35;
   color: #1f2421;
 }
 
-/* 隐私授权行：勾选框 + 可点的官方指引链接（放在主按钮上方，未勾选时主按钮置灰）。 */
-.consent-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12rpx;
-  margin-top: 22rpx;
-}
-
-.consent-box {
-  flex: none;
-  width: 32rpx;
-  height: 32rpx;
+.intro-title {
   margin-top: 4rpx;
-  border-radius: 10rpx;
-  border: 2rpx solid rgba(31, 36, 33, .22);
-  background: #ffffff;
-  color: #ffffff;
-  font-size: 20rpx;
-  line-height: 28rpx;
-  text-align: center;
+  font-size: 46rpx;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #1f2421;
 }
 
-.consent-box-on {
-  border-color: #0b9588;
-  background: #0b9588;
-}
-
-.consent-copy {
-  flex: 1;
+.intro-note {
+  margin-top: 10rpx;
   font-size: 24rpx;
   line-height: 1.5;
-  color: #7c857f;
+  color: #8a938d;
 }
 
-.consent-link {
-  color: #0b9588;
-}
-
-/* DEC-110 ③：勾选行下面补一行我们自己的协议入口（未发布时法律页显示「尚未发布」）。 */
-.consent-docs {
+.avatar-upload {
+  /* 2026-10-17 第二十二次调整：补回相对定位——里面的 `.avatar-upload-mask` / `.avatar-upload-text`
+     是 absolute，没有定位祖先时会贴到页面底部（核对脚本读到 mask 底边 780px vs 圆底 301px 才发现）。 */
+  position: relative;
+  /* 2026-10-17 第二十三次调整（产品负责人：「这里怎么变了」——真机上头像被拉成宽扁的胶囊）：
+     它是 `<button>` 且是 flex 子项，真机上被拉伸到父宽。这里用 `flex: 0 0 168rpx` 把主轴尺寸钉死，
+     再补 `min/max-width` 与 `box-sizing`，保证任何父容器下都是 168rpx 的正圆。 */
+  flex: 0 0 168rpx;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
-  gap: 8rpx;
-  margin-top: 12rpx;
-  padding-left: 44rpx;
-  font-size: 22rpx;
-  line-height: 1.5;
-  color: #7c857f;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 168rpx;
+  min-width: 168rpx;
+  max-width: 168rpx;
+  height: 168rpx;
+  min-height: 168rpx;
+  max-height: 168rpx;
+  margin: 0;
+  padding: 0;
+  border-radius: 999rpx;
+  border: 0;
+  background: #f2f4f3;
+  overflow: hidden;
+  line-height: 1;
+}
+.avatar-upload:active { opacity: .82; }
+.avatar-upload::after { border: 0; }
+
+.avatar-upload-img {
+  /* 图片跟住 168rpx 的方形父级：`display: block` 去掉行内图片的基线空隙，
+     否则真机上高度会多出几像素、圆看起来被压扁。 */
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-.consent-docs-label {
-  color: #a3aaa6;
+/* 圆底部那条半透明压条 + 「上传头像」白字（照参考图的写法；有头像时不显示）。 */
+.avatar-upload-mask {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 46rpx;
+  background: rgba(0, 0, 0, .32);
 }
 
-.hint {
+.avatar-upload-text {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 46rpx;
+  line-height: 46rpx;
+  font-size: 20rpx;
+  text-align: center;
+  color: #ffffff;
+}
+
+/* 性别：参考图是"两颗并排的胶囊、各带性别图标、选中时整块上色"。男＝蓝、女＝粉。
+   2026-10-17 产品负责人："去掉这个不愿透露" —— 页面上只有这两颗，原来那枚小胶囊与
+   `.gender-extra` 那条样式一起删除（档位定义里的 undisclosed 仍保留，只为兼容历史账号）。 */
+.gender-row {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 28rpx;
+}
+
+.gender-chip {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  height: 96rpx;
+  border-radius: 999rpx;
+  background: #f2f4f3;
+  color: #9aa29d;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.gender-icon {
+  font-size: 32rpx;
+  line-height: 1;
+}
+
+.gender-male.gender-chip-on {
+  /* 2026-10-17 第十三次调整：产品负责人要「男的按钮颜色改成和下一步按钮一样的绿色」，
+     与 .primary-button 的 #0b9588 保持一致（原来的蓝 #3d8bfd 撤掉）。 */
+  background: #0b9588;
+  color: #ffffff;
+}
+
+.gender-female.gender-chip-on {
+  background: #f0639b;
+  color: #ffffff;
+}
+
+/* 性别胶囊下方的一行说明（照参考图 1）：颜色与「跳过」一致（#8a938d）。 */
+.gender-note {
   margin-top: 16rpx;
   font-size: 24rpx;
-  color: #c0392b;
-}
-
-/* 主按钮：2026-10-03 真机反馈"太大、要轻盈"——高度收一档、字号收一档。 */
-.primary-button {
-  margin-top: 26rpx;
-  padding: 20rpx 0;
-  border-radius: 999rpx;
-  background: #0b9588;
-  color: #ffffff;
-  font-size: 28rpx;
-  font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.5;
+  color: #8a938d;
   text-align: center;
 }
 
-.primary-button-busy {
-  opacity: .55;
-}
-
-.skip-entry {
-  margin-top: 18rpx;
-  font-size: 26rpx;
-  color: #7c857f;
-  text-align: center;
-}
-
-.skip-note {
-  margin-top: 4rpx;
-  font-size: 20rpx;
-  color: #a6ada8;
+.optional-input {
+  /* 2026-10-17 真机反馈「昵称被挤压」：`.step-body` 是 flex 列，input 作为 flex item 默认可收缩，
+     内容一多就被压低、文字上下被裁。固定高度 + `flex: none` 才能稳定不塌。 */
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  height: 96rpx;
+  margin-top: 24rpx;
+  padding: 0 28rpx;
+  border-radius: 16rpx;
+  background: #f5f7f6;
+  font-size: 30rpx;
+  line-height: 96rpx;
+  color: #1f2421;
+  /* 参考图里昵称是居中输入的大号框。 */
   text-align: center;
 }

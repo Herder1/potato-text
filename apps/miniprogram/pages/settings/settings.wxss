@@ -1,14 +1,26 @@
 /* 设置页（2026-10-02 新建）：结构按产品负责人给的图，配色沿用仓库现有的青绿主色 #0b9588。 */
 .settings-page { padding-bottom: calc(60rpx + env(safe-area-inset-bottom)); }
 
+/* 2026-10-17 修「有的机型按钮重叠」（产品负责人图2/图3：三星等窄屏 + 系统大字体上，
+   「导出我的数据」被挤到按钮边框上、与下方「个人资产已同步」压在一起）：
+   根因是 button 默认不收缩（缺 min-width）、也不允许内容换行，配合 x5/旧内核的 flex 差异，
+   文字溢出到按钮框外。修法是让按钮可收缩、内容能在框内换行并被裁住。
+   ⚠️ 同一轮先把窄屏改成了竖排单列，产品负责人看真机后否掉（「变成上下叠放的了」）——
+   **两个按钮必须始终同一行**，窄屏只许压缩内边距/字号/图标，不许改列数。
+   真机第二次复核仍见「按钮整体超出屏幕、压住下一行状态文字」，因此这两个动作已由原生
+   <button> 换成 view 自绘按钮（见 settings.wxml 注释）：不再受小程序 button 内置盒模型影响。 */
 .sync-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20rpx; }
 .sync-button {
   display: flex;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
   min-height: 96rpx;
-  margin: 0;
-  padding: 0 20rpx;
+  padding: 12rpx 16rpx;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+  flex-wrap: wrap;
   color: #0b9588;
   background: #ffffff;
   border: 1rpx solid #e6ece9;
@@ -16,11 +28,21 @@
   font-size: 25rpx;
   /* 2026-10-03 产品负责人逐处指定：两个按钮文字降到 500 档（字号/颜色不动）。 */
   font-weight: 500;
-  line-height: 1.2;
-  gap: 10rpx;
+  line-height: 1.25;
+  gap: 8rpx;
 }
-.sync-button[disabled] { color: #9aa5a0; background: #f4f5f4; }
-.sync-icon { font-size: 28rpx; }
+.sync-button-off { color: #9aa5a0; background: #f4f5f4; }
+.sync-icon { flex: 0 0 auto; font-size: 28rpx; line-height: 1; }
+/* 文字块允许在框内换行（而不是撑出边框压到下一行元素上）。 */
+.sync-label { min-width: 0; max-width: 100%; line-height: 1.25; text-align: center; word-break: break-word; }
+
+/* 窄屏（安卓小屏机 + 系统字体放大）：**仍然两列**，只把内边距、间距、图标与字号各收一档，
+   让「⇣ 导出我的数据」在每列里放得下；真放不下时由上面的 flex-wrap 在框内换行，不再出框。 */
+@media (max-width: 360px) {
+  .sync-actions { gap: 14rpx; }
+  .sync-button { padding: 10rpx 10rpx; font-size: 24rpx; gap: 6rpx; }
+  .sync-icon { font-size: 26rpx; }
+}
 
 .sync-status { margin: 18rpx 4rpx 0; color: #8b938d; font-size: 21rpx; line-height: 1.5; }
 .cloud-warning { margin-top: 14rpx; padding: 18rpx 22rpx; color: #8a6a1f; background: #fdf6e6; border-radius: 14rpx; font-size: 22rpx; line-height: 1.6; }

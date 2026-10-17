@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>薯考管理后台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="styles.css?v=20261016.115" />
-    <link rel="stylesheet" href="assessment-modes.css?v=20261016.115" />
+    <link rel="stylesheet" href="styles.css?v=20261017.11" />
+    <link rel="stylesheet" href="assessment-modes.css?v=20261017.11" />
   </head>
   <body class="admin-locked">
     <aside class="sidebar">
@@ -46,6 +46,7 @@
         </button>
         <div class="nav-sub" data-nav-sub="社区管理" hidden>
           <button class="nav-item nav-sub-item" data-view="社区管理" data-community-admin-tab="moderation">审核与举报</button>
+          <button class="nav-item nav-sub-item" data-view="用户管理" id="nav-user-management">用户管理</button>
           <button class="nav-item nav-sub-item" data-view="社区管理" data-community-admin-tab="restrictions">用户限制</button>
           <button class="nav-item nav-sub-item" data-view="社区管理" data-community-admin-tab="announcements">公告管理</button>
         </div>
@@ -71,7 +72,8 @@
       </nav>
       <div class="sidebar-foot">
         <span class="env-dot"></span>
-        本地开发环境      </div>
+        <span id="admin-env-label">正在识别环境</span>
+      </div>
     </aside>
 
     <main class="main">
@@ -101,7 +103,7 @@
       <section class="content" id="dashboard">
         <div class="notice">
           <div>
-            <strong>第一阶段开发环境</strong>
+            <strong>教材目录发布提示</strong>
             <span>当前使用种子数据；正式接入后，教材目录必须人工确认才能进入知识库。</span>
           </div>
           <button id="dismiss-notice" aria-label="关闭提示">×</button>
@@ -987,6 +989,32 @@
               <thead><tr><th>用户 ID</th><th>限制类型</th><th>理由</th><th>到期时间</th><th>状态</th><th>下发人</th><th>操作</th></tr></thead>
               <tbody id="user-restriction-table-body"></tbody>
             </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="content user-management-view" id="user-management" hidden>
+        <div class="operation-summary" id="user-management-summary"></div>
+        <section class="section user-management-section">
+          <div class="section-head">
+            <div><h2>用户管理</h2><p>查看注册用户、最近登录、注册引导与当前限制状态</p></div>
+            <div class="operation-toolbar">
+              <input id="user-management-search" type="search" placeholder="搜索数字 ID、内部 ID 或昵称" aria-label="搜索用户" />
+              <button class="secondary-action" id="user-management-search-button" type="button">搜索</button>
+              <button class="secondary-action" id="user-management-refresh" type="button">刷新</button>
+            </div>
+          </div>
+          <p class="user-management-tracking-note" id="user-management-tracking-note"></p>
+          <div class="table-wrap">
+            <table class="operation-table user-management-table">
+              <thead><tr><th>数字 ID / 昵称</th><th>注册时间</th><th>最近登录</th><th>注册引导</th><th>当前限制</th><th>操作</th></tr></thead>
+              <tbody id="user-management-table-body"></tbody>
+            </table>
+          </div>
+          <div class="billing-pagination">
+            <span id="user-management-page-label"></span>
+            <button class="secondary-action" id="user-management-prev" type="button">上一页</button>
+            <button class="secondary-action" id="user-management-next" type="button">下一页</button>
           </div>
         </section>
       </section>
@@ -2619,12 +2647,12 @@
       </form>
     </div>
 
-    <script src="knowledge-inspection-apply-guard.js?v=20261016.115"></script>
-    <script src="library-workspace.js?v=20261016.115"></script>
-    <script src="question-enrichment-diff.js?v=20261016.115"></script>
-    <script src="question-review-model.js?v=20261016.115"></script>
-    <script src="question-editor-help.js?v=20261016.115"></script>
-    <script src="assessment-modes.js?v=20261016.115"></script>
-    <script src="app.js?v=20261016.115"></script>
+    <script src="knowledge-inspection-apply-guard.js?v=20261017.11"></script>
+    <script src="library-workspace.js?v=20261017.11"></script>
+    <script src="question-enrichment-diff.js?v=20261017.11"></script>
+    <script src="question-review-model.js?v=20261017.11"></script>
+    <script src="question-editor-help.js?v=20261017.11"></script>
+    <script src="assessment-modes.js?v=20261017.11"></script>
+    <script src="app.js?v=20261017.11"></script>
   </body>
 </html>

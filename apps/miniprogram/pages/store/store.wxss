@@ -147,6 +147,8 @@
 .amount-out { flex: 0 0 auto; color: #b6534c; font-size: 30rpx; font-weight: 700; }
 
 .store-footnote { margin-top: 34rpx; color: #a3aaa6; font-size: 24rpx; line-height: 1.6; text-align: center; }
+/* 购买须知与退款政策入口（2026-10-17）：可点，用品牌色与普通说明文字区分。 */
+.store-footnote-link { color: #0b9588; }
 
 /* ── 5. 详情 / 订单：底部弹层（内容滚动、底栏固定） ── */
 .sheet-mask { position: fixed; z-index: 40; top: 0; right: 0; bottom: 0; left: 0; background: rgba(21, 30, 25, .32); }

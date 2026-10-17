@@ -770,6 +770,7 @@
         <view class="exam-export-note">将同时生成试卷和答案，两份文件题号与版本完全对应。</view>
         <view wx:if="{{examExportError}}" class="exam-export-error">{{examExportError}}</view>
         <view wx:if="{{examExportResult}}" class="exam-export-files">
+          <view wx:if="{{examExportSavedLocally}}" class="exam-export-note exam-export-cache-note">已保留在本机，下次进入这份试卷可直接打开。</view>
           <view class="exam-export-file" data-kind="paper" bindtap="openExamExportFile" hover-class="exam-export-file-pressed" role="button">
             <view class="exam-export-file-icon">卷</view><view><text>试卷 PDF</text><label>{{examExportResult.files[0].pageCount}} 页</label></view><text class="share-action-chevron">打开</text>
           </view>

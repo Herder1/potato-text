@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#474d49" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <!-- 关于页法务入口统一图标组（2026-10-17）：lucide 几何、24 视口、stroke 1.8、统一 #474d49，
+       与仓库其它线性图标（list / sliders 等）同一套线宽与颜色，不再混用彩色与粗线。 -->
+  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+  <path d="M14 2v6h6"/>
+  <path d="M8 13h8"/>
+  <path d="M8 17h5"/>
+</svg>

@@ -31,11 +31,25 @@ test("settings page keeps the cloud controls and wires every row to a real targe
   const styles = read("pages", "settings", "settings.wxss");
 
   // 顶部两个动作 + 退出登录 + 版本号
-  assert.match(markup, /bindtap="retryPersonalAssets"[\s\S]{0,120}<text>重试同步<\/text>/);
-  assert.match(markup, /bindtap="exportPersonalAssets"[\s\S]{0,120}<text>导出我的数据<\/text>/);
+  // 2026-10-17：两个动作由原生 <button> 改为 view 自绘按钮（真机上 button 内置盒模型会把按钮撑出屏幕，
+  // 压住下一行状态文字），禁用态与 loading 改用 class 与文案表达。
+  assert.match(markup, /bindtap="retryPersonalAssets"[\s\S]{0,260}<text class="sync-icon">⟳<\/text><text class="sync-label">\{\{cloudBusy \? '同步中…' : '重试同步'\}\}<\/text>/);
+  assert.match(markup, /bindtap="exportPersonalAssets"[\s\S]{0,260}<text class="sync-icon">⤓<\/text><text class="sync-label">导出我的数据<\/text>/);
+  assert.doesNotMatch(markup, /<button class="sync-button/, "同步/导出不再用原生 button，尺寸由本页 wxss 决定");
+  assert.match(markup, /aria-label="重试同步"[\s\S]{0,40}aria-disabled="\{\{cloudBusy \|\| !loggedIn\}\}"/);
   assert.match(markup, /bindtap="logoutAccount"/);
   assert.match(markup, /当前版本 \{\{version\}\}/);
   assert.match(styles, /\.sync-actions \{ display: grid; grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  // 2026-10-17 修「有的机型按钮重叠」（窄屏 + 系统大字体时文字压到边框与下一行）：
+  // 按钮必须可收缩、内容可换行且裁在框内。
+  assert.match(styles, /\.sync-button \{[^}]*min-width: 0/);
+  assert.match(styles, /\.sync-button \{[^}]*overflow: hidden/);
+  assert.match(styles, /\.sync-button \{[^}]*flex-wrap: wrap/);
+  assert.match(styles, /\.sync-label \{[^}]*min-width: 0/);
+  // 2026-10-17 同日追加（产品负责人看真机后否掉竖排）：「两个按钮始终同一行」，
+  // 窄屏只许压缩内边距/字号/图标，不许把列数改成 1。
+  assert.match(styles, /@media \(max-width: 360px\) \{[\s\S]{0,200}\.sync-button \{ padding: 10rpx 10rpx; font-size: 24rpx; gap: 6rpx; \}/);
+  assert.doesNotMatch(styles, /grid-template-columns: 1fr/, "窄屏不得把两个按钮改成上下单列");
   // 2026-10-03 产品负责人逐处指定：两个按钮文字与五行标题都降到 500 档；
   // 「退出登录」与行说明未在框内，保持原样（退出登录仍 600）。
   assert.match(styles, /\.sync-button \{[^}]*font-weight: 500/);
@@ -90,6 +104,12 @@ test("about page shows the app identity and opens every platform document", () =
     const file = path.join(ROOT, doc.icon.replace("/assets/icons/", "assets/icons/"));
     assert.ok(fs.existsSync(file), `${doc.icon} 应存在`);
   }
+  // 2026-10-17 产品负责人指出「图标风格太乱、颜色不统一」：七份文档改用专用图标组，
+  // 不再借用未登录头像 / 编辑器工具栏等其它入口的图标。
+  for (const doc of platformContent.docList()) {
+    assert.match(doc.icon, /^\/assets\/icons\/doc-[a-z-]+\.svg$/, `${doc.key} 应使用统一的 doc-* 图标`);
+  }
+  assert.equal(new Set(platformContent.docList().map((doc) => doc.icon)).size, 7, "七份文档不能用重复图标");
 });
 
 test("legal page renders the published version and never fakes content", async () => {

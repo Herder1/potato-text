@@ -9532,6 +9532,45 @@ body.admin-locked .site-filing {
 /* 用户限制页工具条按钮多，禁止换行避免“刷/新”折成两行 */
 .user-restriction-view .operation-toolbar { flex-wrap: wrap; justify-content: flex-end; }
 .user-restriction-view .operation-toolbar button { white-space: nowrap; }
+.user-management-view .operation-toolbar { flex-wrap: wrap; justify-content: flex-end; }
+.user-management-view .operation-toolbar button { white-space: nowrap; }
+.user-management-section { margin-top: 16px; }
+.user-management-tracking-note {
+  margin: -4px 0 12px;
+  color: #6f7c75;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.user-management-table th:nth-child(1) { width: 20%; }
+.user-management-table th:nth-child(2) { width: 15%; }
+.user-management-table th:nth-child(3) { width: 15%; }
+.user-management-table th:nth-child(4) { width: 12%; }
+.user-management-table th:nth-child(5) { width: 24%; }
+.user-management-table th:nth-child(6) { width: 14%; }
+.user-management-table { min-width: 860px; }
+.user-management-table td { vertical-align: middle; }
+.user-management-restriction {
+  display: grid;
+  gap: 3px;
+}
+.user-management-restriction strong {
+  color: #8a3f36;
+  font-size: 12px;
+  font-weight: 600;
+}
+.user-management-restriction span {
+  color: #7b8781;
+  font-size: 10px;
+}
+@media (max-width: 900px) {
+  .user-management-view .operation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .user-management-view .operation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 360px) {
+  .user-management-view .operation-summary { grid-template-columns: minmax(0, 1fr); }
+}
 .admin-account-identity strong { display: block; }
 .admin-account-identity span { color: #7b8781; font-size: 12px; }
 

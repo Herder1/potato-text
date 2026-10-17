@@ -136,3 +136,14 @@ test("后台横幅静态契约：默认隐藏、有 [hidden] 兜底、会拿 /he
   assert.ok(version, "index.html 缺少 app.js 版本号");
   assert.match(html, new RegExp(`styles\\.css\\?v=${version[1].replace(".", "\\.")}`));
 });
+
+test("后台环境标识按实际域名显示，不再把线上后台写死成本地开发环境", () => {
+  assert.match(html, /id="admin-env-label">正在识别环境</);
+  assert.doesNotMatch(html, />\s*本地开发环境\s*</);
+  assert.match(html, /<strong>教材目录发布提示<\/strong>/);
+  assert.match(appJs, /function renderAdminEnvironment\(\)/);
+  assert.match(appJs, /window\.location\.hostname/);
+  assert.match(appJs, /host === "localhost"/);
+  assert.match(appJs, /"本地开发环境" : "生产环境"/);
+  assert.match(appJs, /renderAdminEnvironment\(\);\nresetProviderForm\(\);/);
+});
