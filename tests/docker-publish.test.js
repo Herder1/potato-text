@@ -36,6 +36,8 @@ test("Docker publishing uses the built-in token and does not publish PR builds",
 test("Docker CI uses development auth and system Python without changing the production image", () => {
   assert.match(workflow, /NODE_ENV: development/);
   assert.match(workflow, /SHUKAO_PDF_PYTHON: \/usr\/bin\/python3/);
+  // runner 是 UTC；日期分组与启动日期标签按本地日期计算，必须钉住产品时区。
+  assert.match(workflow, /TZ: Asia\/Shanghai/);
   assert.match(workflow, /python3-reportlab fonts-noto-cjk fonts-wqy-zenhei/);
   assert.match(dockerfile, /ENV NODE_ENV=production/);
 });

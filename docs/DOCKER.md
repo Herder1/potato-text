@@ -110,7 +110,7 @@ docker compose -f docker-compose.yml -f docker-compose.postgres.yml run --rm api
 - 镜像落点：`ghcr.io/herder1/potato-text`（仓库名含大写，GHCR 要求全小写，故镜像名在 workflow 里显式写死）。
 - 构建平台默认 `linux/amd64`；要出 ARM 镜像，改 workflow 里的 `PLATFORMS`（arm64 走 QEMU 模拟，构建会明显变慢）。
 - 流水线里的 `test` 任务**刻意不阻塞镜像发布**（`continue-on-error: true` 且不是 `docker` 任务的依赖），避免无关的测试抖动把"提交即出镜像"堵死；要改成发布门禁的做法写在文件注释里。
-- **本地提交不等于发布**：提交后还要推送到远程 `main`。随后在仓库 `Actions → docker-publish` 查看对应提交的 `docker` 任务；成功后摘要会列出镜像标签、完整提交号和镜像 digest。测试任务明确使用开发态鉴权与系统 Python；镜像运行环境仍为生产态。
+- **本地提交不等于发布**：提交后还要推送到远程 `main`。随后在仓库 `Actions → docker-publish` 查看对应提交的 `docker` 任务；成功后摘要会列出镜像标签、完整提交号和镜像 digest。测试任务明确使用开发态鉴权、系统 Python 与产品时区 `Asia/Shanghai`（runner 默认 UTC，而日期分组按本地日期计算）；镜像运行环境仍为生产态，不受这些测试变量影响。
 - **发布镜像不等于服务器已升级**：工作流不会连接服务器或更新容器。确认 `docker` 任务成功后，再按 §9 在 1Panel 拉取镜像并重新部署；需要精确对应某次提交时使用摘要中的 `sha-<完整提交号>` 标签。
 
 ## 8. 排错

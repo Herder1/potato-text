@@ -41,6 +41,10 @@ jobs:
     env:
       NODE_ENV: development
       SHUKAO_PDF_PYTHON: /usr/bin/python3
+      # 产品时区（广东，UTC+8）。runner 默认 UTC，而消息中心的「今天/昨天/M月D日」
+      # 与 /health 的启动日期标签都按本地日期计算，测试里也按 UTC+8 写死了期望值；
+      # 不钉住时区就会在 CI 上出现本地绿、云端红（2026-10-17 实测 3 条失败）。
+      TZ: Asia/Shanghai
     steps:
       - uses: actions/checkout@v4
         with:
