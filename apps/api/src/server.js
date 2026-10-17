@@ -8847,6 +8847,11 @@ function createServer(options = {}) {
         });
         sendJson(response, 201, { success: true, export: exportRecord });
       } catch (error) {
+        console.error("[exam-export] failed", {
+          message: error.message || "unknown_error",
+          code: error.code || "",
+          cause: error.cause && (error.cause.message || String(error.cause)) || "",
+        });
         sendJson(response, error.message === "payload_too_large" ? 413 : 422, {
           success: false,
           error: error.message,

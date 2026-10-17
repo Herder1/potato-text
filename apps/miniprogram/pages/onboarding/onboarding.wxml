@@ -108,8 +108,13 @@
       </view>
       <view class="optional-body" wx:if="{{optionalOpen}}">
         <view class="avatar-row">
-          <image wx:if="{{avatarUrl}}" class="optional-avatar" src="{{avatarUrl}}" mode="aspectFill" />
-          <view wx:else class="optional-avatar optional-avatar-fallback">薯</view>
+          <!-- 命中区 = 视觉区（2026-10-04）：头像本体和「选择头像」胶囊各自叠一枚透明 button。
+               只给胶囊叠按钮时，用户点左边那个圆头像会毫无反应，读起来就是"头像点不了"。 -->
+          <view class="avatar-shot-wrap">
+            <image wx:if="{{avatarUrl}}" class="optional-avatar" src="{{avatarUrl}}" mode="aspectFill" />
+            <view wx:else class="optional-avatar optional-avatar-fallback">薯</view>
+            <button class="avatar-shot-button" open-type="chooseAvatar" bindchooseavatar="chooseAvatar" aria-label="选择头像"></button>
+          </view>
           <view class="avatar-button-wrap">
             <text class="avatar-button-label">选择头像</text>
             <!-- 微信现行合规采集方式：头像只能由用户自己点 open-type=chooseAvatar。 -->
@@ -121,9 +126,11 @@
           type="nickname"
           value="{{nickname}}"
           maxlength="32"
+          confirm-type="done"
           placeholder="昵称，不填就叫「薯考同学」"
           bindinput="inputNickname"
           bindblur="inputNickname"
+          bindconfirm="inputNickname"
         />
       </view>
 

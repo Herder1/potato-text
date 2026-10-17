@@ -175,7 +175,36 @@
   color: #0b9588;
 }
 
-/* 采集入口是一枚覆盖在胶囊上的透明 button：直接给 button 做视觉会被自带内边距撑宽（同编辑资料页）。 */
+/* 采集入口是覆盖在胶囊上的透明 button（同编辑资料页）。
+   2026-10-04 真机反馈"头像点不了"：老写法 `position: absolute; inset: 0; opacity: 0` 有两个坑——
+   ① `inset` 简写在部分安卓 X5 / 旧 iOS WebView 不生效，absolute 元素失去 size，
+      空内容的 button 宽度塌成 0，整块区域根本点不到；
+   ② `opacity: 0` 的元素在个别机型上被当成不可交互（也没有按下反馈，用户以为没反应）。
+   改为显式的 top/left/width/height + 视觉透明（background: transparent）。 */
+.avatar-shot-wrap {
+  position: relative;
+  flex: none;
+  width: 92rpx;
+  height: 92rpx;
+  border-radius: 999rpx;
+}
+.avatar-shot-button {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 999rpx;
+  line-height: normal;
+}
+.avatar-shot-button:active { background: rgba(11, 149, 136, .10); }
+.avatar-shot-button::after { border: 0; }
+
 .avatar-button-wrap {
   position: relative;
   padding: 12rpx 26rpx;
@@ -190,9 +219,21 @@
 
 .avatar-button {
   position: absolute;
-  inset: 0;
-  opacity: 0;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 999rpx;
+  line-height: normal;
 }
+
+.avatar-button:active { background: rgba(11, 149, 136, .08); }
+.avatar-button::after { border: 0; }
 
 .optional-input {
   margin-top: 18rpx;

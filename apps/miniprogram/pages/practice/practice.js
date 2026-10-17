@@ -2230,6 +2230,11 @@ Page({
         const payload = response && response.data || {};
         if (response.statusCode !== 201 || !payload.export || !Array.isArray(payload.export.files)) {
           const missing = Array.isArray(payload.missingQuestionNumbers) ? payload.missingQuestionNumbers : [];
+          console.warn("[exam-export] request failed", {
+            statusCode: response.statusCode,
+            error: payload.error || "",
+            missingQuestionNumbers: missing,
+          });
           this.setData({
             examExporting: false,
             examExportError: missing.length ? `第 ${missing.join("、")} 题缺少答案，补齐后才能导出` : "试卷生成失败，请稍后重试",

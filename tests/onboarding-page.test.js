@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const fs = require("node:fs");
 const { applyDataPatch } = require("./helpers/set-data");
 const {
   GENDER_CHOICES,
@@ -246,4 +247,79 @@ test("catalog payload shapes both work: multi-project and the legacy single proj
     [{ id: "b", label: "乙项目", sublabel: "" }],
   );
   assert.deepEqual(projectOptionsFromCatalog({}), []);
+});
+
+// 2026-10-04 真机反馈三项：头像点不了 / 年份点不了 / 昵称读不到微信昵称。
+// 前两项是代码 bug（下面锁住），第三项一是 blur 清空、二是微信侧隐私授权没跑完。
+test("picking a year leaves a selection the template can actually match", () => {
+  withPage({ loginUser: { id: "u5", onboardingCompleted: false } }, (page) => {
+    page.onLoad();
+    agreeAndLogin(page);
+    const option = page.data.yearOptions[1];
+    tap(page, "examYear", option.id);
+    // 模板写的是 `examYear === item.id`：必须同类型同值，否则点了不高亮，真机观感就是"点不了"。
+    assert.equal(typeof page.data.examYear, "string", "examYear 必须与 yearOptions[].id 同为字符串");
+    assert.equal(page.data.examYear, option.id);
+    assert.ok(page.data.yearOptions.some((item) => item.id === page.data.examYear), "选中值必须能在选项里找到");
+  });
+});
+
+test("other chips stay on the same string convention as the year chips", () => {
+  withPage({ loginUser: { id: "u6", onboardingCompleted: false } }, (page) => {
+    page.onLoad();
+    agreeAndLogin(page);
+    tap(page, "gender", "female");
+    tap(page, "ageBand", "19_22");
+    tap(page, "examProjectId", page.data.projectOptions[0].id);
+    assert.equal(typeof page.data.gender, "string");
+    assert.equal(typeof page.data.ageBand, "string");
+    assert.equal(typeof page.data.examProjectId, "string");
+  });
+});
+
+test("the avatar picker is reachable: explicit hit area, no inset shorthand, no opacity:0", () => {
+  const pageDir = path.join(__dirname, "..", "apps", "miniprogram", "pages", "onboarding");
+  const markup = fs.readFileSync(path.join(pageDir, "onboarding.wxml"), "utf8");
+  const style = fs.readFileSync(path.join(pageDir, "onboarding.wxss"), "utf8");
+  // 头像本体和「选择头像」胶囊各有一枚 open-type=chooseAvatar 的 button（命中区 = 视觉区）。
+  const pickers = markup.match(/<button[^>]*open-type="chooseAvatar"[^>]*>/g) || [];
+  assert.equal(pickers.length, 2, "头像本体与胶囊都要能点开微信头像选择");
+  pickers.forEach((tag) => assert.match(tag, /bindchooseavatar="chooseAvatar"/));
+
+  const block = (className) => {
+    const match = new RegExp(`\\.${className}\\s*\\{([^}]*)\\}`).exec(style);
+    assert.ok(match, `缺少样式块 .${className}`);
+    return match[1];
+  };
+  ["avatar-button", "avatar-shot-button"].forEach((className) => {
+    const body = block(className);
+    assert.match(body, /position:\s*absolute/, `.${className} 必须绝对定位覆盖视觉块`);
+    assert.match(body, /width:\s*100%/, `.${className} 必须显式撑满宽度`);
+    assert.match(body, /height:\s*100%/, `.${className} 必须显式撑满高度`);
+    assert.doesNotMatch(body, /inset\s*:/, `.${className} 不得用 inset 简写：安卓 X5 / 旧 iOS 不认，会塌成 0 宽点不到`);
+    assert.doesNotMatch(body, /opacity\s*:\s*0\b/, `.${className} 不得靠 opacity:0 隐形：个别机型上等于不可点`);
+  });
+});
+
+test("a blur without a value never wipes the nickname, and wechat-side privacy consent is requested on expand", () => {
+  withPage({ loginUser: { id: "u7", onboardingCompleted: false } }, (page, harness) => {
+    page.onLoad();
+    agreeAndLogin(page);
+    page.inputNickname({ detail: { value: "微信昵称" } });
+    assert.equal(page.data.nickname, "微信昵称");
+    // 部分基础库的 blur 不带 value：老写法会把刚填好的昵称清空。
+    page.inputNickname({ type: "blur", detail: {} });
+    page.inputNickname({});
+    assert.equal(page.data.nickname, "微信昵称", "拿不到字符串时保留原值，不清空");
+
+    // 展开「头像与昵称」要补一次微信侧隐私授权：不补时点头像会静默无反应。
+    harness.calls.privacyAuthorize = 0;
+    global.wx.requirePrivacyAuthorize = () => { harness.calls.privacyAuthorize += 1; };
+    page.toggleOptional();
+    assert.equal(page.data.optionalOpen, true);
+    assert.equal(harness.calls.privacyAuthorize, 1);
+    page.toggleOptional();
+    assert.equal(page.data.optionalOpen, false);
+    assert.equal(harness.calls.privacyAuthorize, 1, "收起时不重复请求授权");
+  });
 });

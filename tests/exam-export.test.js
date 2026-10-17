@@ -75,23 +75,25 @@ test("exam export API generates and downloads both files together", async (conte
   context.after(() => new Promise((resolve) => server.close(resolve)));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
 
-  const response = await fetch(`${baseUrl}/api/exam-exports`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ examId: "exam-official-001", userId: "test-user" }),
-  });
-  const payload = await response.json();
-  assert.equal(response.status, 201);
-  assert.equal(payload.export.status, "ready");
-  assert.deepEqual(payload.export.files.map((file) => file.kind), ["paper", "answer"]);
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const response = await fetch(`${baseUrl}/api/exam-exports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ examId: "exam-official-001", userId: "test-user" }),
+    });
+    const payload = await response.json();
+    assert.equal(response.status, 201, `attempt ${attempt}: ${JSON.stringify(payload)}`);
+    assert.equal(payload.export.status, "ready");
+    assert.deepEqual(payload.export.files.map((file) => file.kind), ["paper", "answer"]);
 
-  for (const file of payload.export.files) {
-    const downloaded = await fetch(`${baseUrl}${file.url}`);
-    const buffer = Buffer.from(await downloaded.arrayBuffer());
-    assert.equal(downloaded.status, 200);
-    assert.equal(downloaded.headers.get("content-type"), "application/pdf");
-    assert.equal(buffer.subarray(0, 8).toString("ascii"), "%PDF-1.7");
-    assert.equal(buffer.length, file.size);
+    for (const file of payload.export.files) {
+      const downloaded = await fetch(`${baseUrl}${file.url}`);
+      const buffer = Buffer.from(await downloaded.arrayBuffer());
+      assert.equal(downloaded.status, 200);
+      assert.equal(downloaded.headers.get("content-type"), "application/pdf");
+      assert.equal(buffer.subarray(0, 8).toString("ascii"), "%PDF-1.7");
+      assert.equal(buffer.length, file.size);
+    }
   }
 });
 

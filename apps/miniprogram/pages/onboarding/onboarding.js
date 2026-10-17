@@ -156,15 +156,36 @@ Page({
     });
   },
 
+  /**
+   * 四个档位一律按 dataset 里的**字符串**原样存（2026-10-04 修）：
+   * 早前 examYear 被转成 Number，而模板里比较的是 `examYear === item.id`，
+   * 而 examYearOptions 的 id 是 String(year)（utils/onboarding-options.js）。
+   * `2026 === "2026"` 在 WXML 里恒为 false → 点年份没有任何选中态，真机观感就是"年份点不了"。
+   * 类型转换只留在提交口 onboardingPatch（那里本来就会 Number()），选择态一律字符串对字符串。
+   */
   selectOption(event) {
     const field = String(event && event.currentTarget && event.currentTarget.dataset.field || "");
     const id = String(event && event.currentTarget && event.currentTarget.dataset.id || "");
     if (!field) return;
-    this.setData({ [field]: field === "examYear" ? Number(id) || 0 : id, hint: "" });
+    this.setData({ [field]: id, hint: "" });
   },
 
+  /**
+   * 展开「头像与昵称（选填）」时补一次微信侧隐私授权（2026-10-04）。
+   * 引导页的勾选只是我们自己的入口；`open-type=chooseAvatar` 与 `type="nickname"`
+   * 是微信隐私接口，微信侧授权没真正跑完时，点头像会**静默无反应**、昵称也拿不到填充。
+   * 这里显式触发一次 requirePrivacyAuthorize；不需要授权或低版本没有该接口时直接跳过。
+   */
   toggleOptional() {
+    if (!this.data.optionalOpen) this.ensurePrivacyAuthorization();
     this.setData({ optionalOpen: !this.data.optionalOpen });
+  },
+
+  ensurePrivacyAuthorization() {
+    if (typeof wx.requirePrivacyAuthorize !== "function") return;
+    wx.requirePrivacyAuthorize({
+      fail: () => this.setData({ hint: "微信侧隐私授权未通过，头像和昵称可能用不了；可回登录页重新同意《用户隐私保护指引》" }),
+    });
   },
 
   chooseAvatar(event) {
@@ -184,8 +205,16 @@ Page({
     });
   },
 
+  /**
+   * 昵称收值（2026-10-04 加固）：bindinput / bindblur / 微信昵称填充都走这里。
+   * 微信昵称填充是通过 detail.value 回传的；部分基础库的 blur 事件不带 value，
+   * 老写法 `|| ""` 会在失焦那一下把刚填好的微信昵称清空（表现为"读不到微信昵称"）。
+   * 所以只接受真正的字符串，拿不到就保留原值。
+   */
   inputNickname(event) {
-    this.setData({ nickname: String(event && event.detail && event.detail.value || "") });
+    const value = event && event.detail ? event.detail.value : undefined;
+    if (typeof value !== "string") return;
+    this.setData({ nickname: value });
   },
 
   /** 四项必填：缺哪一项就提示哪一项，不发请求。 */
